@@ -150,6 +150,11 @@ export const WEAPONS = {
     icon: '/UNSC/weapons/sniper/Sniper_icon.svg',
     grip: { pos: [0.08, 0.45, 0.02], rot: [-1.5, -0.25, -1.5] },
     fp: { pos: [0.15, 0.1, 0.02], rot: [0, 0, 0] },
+    // Live scope screen. `material` is matched case-insensitively against the
+    // authored material name. The camera sits at that mesh and is boresighted
+    // to the crosshair (see scopedisplay.js), so pos/rot are nudges from that
+    // — both zero is already correct. fov IS the magnification.
+    scope: { material: 'sniper_screen', fov: 12, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,
     falloff: [200, 500, 0.8], range: 700,

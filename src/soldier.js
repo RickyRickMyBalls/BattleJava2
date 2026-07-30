@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
-import { restoreBakedDisplays } from './ammodisplay.js';
+import { restoreBakedDisplays } from './drivenmaterial.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { CFG, WEAPONS, CLASSES, FP_DEFAULT } from './config.js';
 import { createAmmoDisplay } from './ammodisplay.js';
+import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 
 const P = CFG.player;
 const _dir = new THREE.Vector3();
@@ -203,6 +204,9 @@ export class Player {
     this.viewmodel.add(this.gunHolder);
     this.viewmodel.position.set(0.28, -0.24, -0.55);
     this.camera.add(this.viewmodel);
+    // Only the main camera sees the viewmodel layer; scope cameras must not,
+    // or the scope fills with the rifle it is bolted to.
+    this.camera.layers.enable(VIEWMODEL_LAYER);
 
     // radial glow texture — an untextured sprite renders as a solid square
     const flashMat = new THREE.SpriteMaterial({
@@ -228,6 +232,7 @@ export class Player {
 
   _mountGun() {
     while (this.gunHolder.children.length) this.gunHolder.remove(this.gunHolder.children[0]);
+    if (this.scopeDisplay) { this.scopeDisplay.dispose(); this.scopeDisplay = null; }
     const model = this.game.assets.weaponModels[this.weapon.key];
     if (model) {
       // per-weapon first-person offset (config `fp`, tuned in /chartest.html).
@@ -243,6 +248,10 @@ export class Player {
       // drive the gun's built-in ammo counter (weapons with a numbers_atlas)
       this.ammoDisplay = createAmmoDisplay(model);
       if (this.ammoDisplay) this.ammoDisplay.set(this.weapon.mag);
+      // live scope screen (weapons with a `scope` block in config)
+      this.scopeDisplay = createScopeDisplay(model, this.weapon.def);
+      // re-tag every mount: the gun that just joined is still on layer 0
+      tagViewmodelLayer(this.viewmodel);
     } else {
       this.ammoDisplay = null;
     }
@@ -499,6 +508,13 @@ export class Player {
     this.muzzleLight.intensity = 6 + Math.random() * 4;
 
     if (w.mag <= 0 && w.reserve > 0) this.startReload();
+  }
+
+  // Scope screens need their own pass, before the main render. Skipped whenever
+  // the gun is not actually on screen (dead, freecam, map view).
+  renderScope(renderer, scene) {
+    if (!this.scopeDisplay || this.freecam || !this.viewmodel.visible) return;
+    this.scopeDisplay.render(renderer, scene, this.camera);
   }
 
   updateFreecam(dt) {

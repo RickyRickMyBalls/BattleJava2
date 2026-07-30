@@ -203,6 +203,11 @@ export class Game {
   }
   togglePause() { this.setPaused(!this.paused); }
 
+  // Off-screen passes that must run before the main render.
+  renderScopes(renderer) {
+    this.player.renderScope(renderer, this.scene);
+  }
+
   cycleTimeScale() {
     const seq = [1, 2, 4, 8];
     this.setTimeScale(seq[(seq.indexOf(this.timeScale) + 1) % seq.length]);

@@ -150,7 +150,10 @@ function loop() {
     lobby.update(dt); // renders the character preview
   } else if (game) {
     if (deploy && deploy.visible) deploy.renderFrame(renderer);
-    else renderer.render(scene, camera);
+    else {
+      game.renderScopes(renderer); // scope screens: off-screen pass, must precede the main one
+      renderer.render(scene, camera);
+    }
   }
   if (menu) menu.render(dt);
 }
