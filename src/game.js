@@ -9,6 +9,7 @@ import { Combat } from './combat.js';
 import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
+import { prewarm, weaponClones, characterClones } from './assets.js';
 
 const BLUE_NAMES = ['Reyes', 'Okafor', 'Tanaka', 'Silva', 'Novak', 'Baptiste', 'Kowalski', 'Iversen', 'Mbeki', 'Duarte', 'Halvorsen', 'Cross', 'Vega', 'Antar', 'Riley', 'Song', 'Petrov', 'Lindqvist', 'Moreau', 'Adeyemi', 'Castillo', 'Brandt', 'Oyelaran', 'Whitaker', 'Nakamura', 'Sorenson', 'Blake', 'Ferreira', 'Zhou', 'Kaminski', 'Dubois'];
 const RED_NAMES = ['Zar\'Kul', 'Vestam', 'Ontar', 'Krellus', 'Sar\'Vek', 'Molvane', 'Teth', 'Uzek', 'Rathkar', 'Volsun', 'Ekar', 'Themos', 'Drax', 'Onvelu', 'Kaidon', 'Serevu', 'Tulkar', 'Wren', 'Ossek', 'Varn', 'Ilmar', 'Zetes', 'Korag', 'Mendu', 'Sulvan', 'Orrek', 'Talvu', 'Nezar', 'Ukam', 'Rhoss', 'Ventar', 'Ghelan'];
@@ -205,6 +206,23 @@ export class Game {
 
   // Off-screen passes that must run before the main render.
   renderScopes(renderer) {
+    this.player.renderScope(renderer, this.scene);
+  }
+
+  // Compile and upload everything the first FPS frame would otherwise pay for.
+  // Call this LAST in match setup: three keys programs on the scene's light
+  // counts, so anything that adds a light afterwards (the deploy screen) throws
+  // the whole cache away.
+  async prewarm(renderer) {
+    // Mount the kit the player actually spawns with, so its materials — and a
+    // scope screen's driven variant — are the ones that get compiled.
+    this.player.applyLoadout(this.playerLoadout);
+    // The 64 soldiers and the map are already in the scene and draw themselves;
+    // the clones cover weapons and characters nobody happens to be holding or
+    // wearing yet.
+    await prewarm(renderer, this.scene, this.camera,
+      [...weaponClones(this.assets), ...characterClones(this.assets)]);
+    // The scope pass renders through its own target, so warm that path too.
     this.player.renderScope(renderer, this.scene);
   }
 

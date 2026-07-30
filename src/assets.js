@@ -121,7 +121,10 @@ export async function prewarm(renderer, scene, camera, objects = []) {
     // compileAsync covers shaders only — geometry buffers and textures still
     // upload lazily on first draw. One offscreen render forces all of it
     // (weapon and character meshes have frustumCulled=false, so all get drawn).
-    const rt = new THREE.WebGLRenderTarget(8, 8);
+    // sRGB, matching the canvas. The output colour space is part of three's
+    // program key, so warming into a default (linear) target compiles a variant
+    // the real frame cannot use and every material compiles again on screen.
+    const rt = new THREE.WebGLRenderTarget(8, 8, { colorSpace: THREE.SRGBColorSpace });
     const prev = renderer.getRenderTarget();
     renderer.setRenderTarget(rt);
     renderer.render(scene, camera);
@@ -144,9 +147,6 @@ export function characterClones(assets) {
   return Object.values(assets.characters).map((c) => cloneSkeleton(c.template));
 }
 
-export async function prewarmWeapons(renderer, scene, camera, assets) {
-  return prewarm(renderer, scene, camera, weaponClones(assets));
-}
 
 export async function loadAssets(onProgress) {
   const out = { characters: {}, clips: {}, audio: {}, weaponModels: {} };
