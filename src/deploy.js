@@ -50,7 +50,7 @@ export class DeployScreen {
         </div>
         <div class="dp-killed" id="dpKilled"></div>
         <div class="dp-squad" id="dpSquadPanel">
-          <div class="dp-squad-head">SQUADS</div>
+          <div class="dp-squad-head">SQUADS <button id="dpTeamBtn"></button></div>
           <div id="dpSquad"></div>
         </div>
         <div class="dp-bottom">
@@ -77,6 +77,16 @@ export class DeployScreen {
       loIcons: el.querySelector('#dpLoIcons'),
       customize: el.querySelector('#dpCustomize'),
       deploy: el.querySelector('#dpDeploy'),
+      teamBtn: el.querySelector('#dpTeamBtn'),
+    };
+    this.el.teamBtn.onclick = () => {
+      const g = this.game;
+      if (g.setPlayerTeam(1 - g.playerTeam)) {
+        this.selected = 'hq';
+        this._buildMarkers();
+        this._updateSquadPanel();
+        this._updateTeamBtn();
+      }
     };
     this.ctx = this.el.dots.getContext('2d');
 
@@ -184,6 +194,7 @@ export class DeployScreen {
     this._buildMarkers();
     this._resizeCanvas();
     this.refreshLoadout();
+    this._updateTeamBtn();
     this.game.hud.setMode('map');
     // fog is tuned for ground level; it turns the overhead view milky
     const fog = this.game.scene.fog;
@@ -505,6 +516,12 @@ export class DeployScreen {
     const ok = this._spawnOk(this.selected) && !waiting && !this.game.gameOver;
     this.el.deploy.disabled = !ok;
     this.el.deploy.textContent = waiting ? `DEPLOY IN ${Math.ceil(this.timer)}` : 'DEPLOY';
+  }
+
+  _updateTeamBtn() {
+    const red = this.game.playerTeam === 1;
+    this.el.teamBtn.textContent = red ? 'DEFECT TO UNSC' : 'DEFECT TO COVENANT';
+    this.el.teamBtn.classList.toggle('red', !red);
   }
 
   _updateSquadPanel() {

@@ -180,8 +180,8 @@ export class Player {
     const s = this.soldier;
     if (s) {
       s.setLoadout(loadout.cls, loadout.primary, loadout.secondary);
-      // body model follows the class (marine vs spartan) — visible in freecam
-      const charKey = CLASSES[loadout.cls].model;
+      // body model follows the class (marine vs spartan); Covenant is always the Elite
+      const charKey = this.game.playerTeam === 1 ? 'elite' : CLASSES[loadout.cls].model;
       const char = this.game.assets.characters[charKey];
       if (char) s.setCharacter(char);
     }

@@ -92,6 +92,25 @@ export class Game {
     this.playerSquad = this.teams[this.playerTeam].squads[0];
   }
 
+  // Switch the player to the other team (deploy screen only, while not fielded).
+  setPlayerTeam(team) {
+    if (team === this.playerTeam || !this.playerDead || this.gameOver) return false;
+    const p = this.playerSoldier;
+    this.joinSquad(null);
+    const oldArr = this.teams[this.playerTeam].soldiers;
+    const i = oldArr.indexOf(p);
+    if (i >= 0) oldArr.splice(i, 1);
+    this.playerTeam = team;
+    p.team = team;
+    this.teams[team].soldiers.push(p);
+    // body model: Covenant is always the Elite; UNSC follows the class
+    const charKey = team === TEAM.RED ? 'elite' : (CLASSES[p.cls].model || 'marine');
+    const char = this.assets.characters[charKey];
+    if (char) p.setCharacter(char);
+    this.joinSquad(this.teams[team].squads[0]);
+    return true;
+  }
+
   // Join a squad (or null to go lone wolf). The joined squad escorts the
   // player; the departed squad returns to team-brain control.
   joinSquad(squad) {
@@ -341,7 +360,7 @@ export class Game {
   _checkWin() {
     if (this.teams[0].tickets <= 0 || this.teams[1].tickets <= 0) {
       this.gameOver = true;
-      const win = this.teams[TEAM.RED].tickets <= 0;
+      const win = this.teams[1 - this.playerTeam].tickets <= 0;
       const p = this.playerSoldier;
       const mins = Math.floor(this.elapsed / 60);
       const secs = Math.floor(this.elapsed % 60);
