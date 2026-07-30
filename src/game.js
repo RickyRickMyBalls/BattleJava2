@@ -14,12 +14,14 @@ const BLUE_NAMES = ['Reyes', 'Okafor', 'Tanaka', 'Silva', 'Novak', 'Baptiste', '
 const RED_NAMES = ['Zar\'Kul', 'Vestam', 'Ontar', 'Krellus', 'Sar\'Vek', 'Molvane', 'Teth', 'Uzek', 'Rathkar', 'Volsun', 'Ekar', 'Themos', 'Drax', 'Onvelu', 'Kaidon', 'Serevu', 'Tulkar', 'Wren', 'Ossek', 'Varn', 'Ilmar', 'Zetes', 'Korag', 'Mendu', 'Sulvan', 'Orrek', 'Talvu', 'Nezar', 'Ukam', 'Rhoss', 'Ventar', 'Ghelan'];
 
 export class Game {
-  constructor(scene, camera, assets, dom, mapDef, mapData) {
+  constructor(scene, camera, assets, dom, mapDef, mapData, session) {
     this.scene = scene;
     this.camera = camera;
     this.assets = assets;
+    this.session = session || null;
     this.playerTeam = TEAM.BLUE;
-    this.playerLoadout = { cls: 'assault', primary: 'ar', secondary: 'smg' };
+    // the session owns the loadout so lobby customization carries into the game
+    this.playerLoadout = session ? session.playerLoadout : { cls: 'assault', primary: 'ar', secondary: 'smg' };
 
     this.world = new World(scene, mapDef, mapData);
     this.audio = new GameAudio(this);
@@ -173,6 +175,15 @@ export class Game {
     this.playerDead = false;
     this.player.spawnAt(x, z);
     return true;
+  }
+
+  // Menu-open state lives on the session so the armory works pre-game too.
+  get menuOpen() {
+    return this.session ? this.session.menuOpen : this._menuOpen || false;
+  }
+  set menuOpen(v) {
+    if (this.session) this.session.menuOpen = v;
+    else this._menuOpen = v;
   }
 
   // True when the player's soldier is an active combatant on the field.

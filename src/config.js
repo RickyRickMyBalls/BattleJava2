@@ -164,6 +164,13 @@ export const CLASSES = {
   spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70 },
 };
 
+export const GAME_TYPES = {
+  conquest: {
+    id: 'conquest', name: 'SECTOR CONTROL',
+    desc: 'Capture and hold sectors to bleed enemy tickets. 32 v 32 combined arms.',
+  },
+};
+
 export const MAPS = {
   demo: {
     id: 'demo', name: 'Demo Map', type: 'procedural',

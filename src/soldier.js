@@ -13,7 +13,40 @@ const _v = new THREE.Vector3();
 // Held-weapon grip transform relative to the right-hand bone (meters / radians).
 // Tuned visually against the Mixamo rigs used by all three character models.
 // After the -90° X rotation the barrel runs along holder +Y (forward).
-const GRIP = { pos: [0.08, 0.12, 0.02], rot: [-Math.PI / 2, 0, 0] };
+export const GRIP = { pos: [0.08, 0.12, 0.02], rot: [-Math.PI / 2, 0, 0] };
+
+// Create a scale-compensated mount on a character's right-hand bone.
+// Shared by AI soldiers and the lobby character preview.
+export function makeWeaponMount(mesh) {
+  let handBone = null;
+  mesh.traverse((o) => {
+    if (!handBone && o.isBone &&
+        o.name.replace(/^.*?mixamorig[:_]?/i, '').replace(/[:_\s]/g, '').toLowerCase() === 'righthand') {
+      handBone = o;
+    }
+  });
+  if (!handBone) return null;
+  mesh.updateMatrixWorld(true);
+  const ws = new THREE.Vector3();
+  handBone.getWorldScale(ws);
+  const holder = new THREE.Group();
+  holder.scale.setScalar(1 / (ws.x || 1));
+  handBone.add(holder);
+  return holder;
+}
+
+export function setHeldWeapon(holder, key, weaponModels) {
+  while (holder.children.length) holder.remove(holder.children[0]);
+  const src = weaponModels[key];
+  if (!src) return;
+  const def = WEAPONS[key];
+  const gun = src.clone(true);
+  const pos = (def.grip && def.grip.pos) || GRIP.pos;
+  const rot = (def.grip && def.grip.rot) || GRIP.rot;
+  gun.position.set(pos[0], pos[1], pos[2]);
+  gun.rotation.set(rot[0], rot[1], rot[2]);
+  holder.add(gun);
+}
 
 let nextId = 1;
 
@@ -86,41 +119,17 @@ export class Soldier {
     this._initWeaponMount();
   }
 
-  // Mount point on the right hand for the held weapon. The holder inverts the
-  // bone's world scale so gun offsets stay in meters regardless of rig scale.
+  // Mount point on the right hand for the held weapon.
   _initWeaponMount() {
-    this.handBone = null;
-    this.weaponHolder = null;
+    this.weaponHolder = makeWeaponMount(this.mesh);
     this.heldKey = null;
-    this.mesh.traverse((o) => {
-      if (!this.handBone && o.isBone &&
-          o.name.replace(/^.*?mixamorig[:_]?/i, '').replace(/[:_\s]/g, '').toLowerCase() === 'righthand') {
-        this.handBone = o;
-      }
-    });
-    if (!this.handBone) return;
-    this.mesh.updateMatrixWorld(true);
-    const ws = new THREE.Vector3();
-    this.handBone.getWorldScale(ws);
-    this.weaponHolder = new THREE.Group();
-    this.weaponHolder.scale.setScalar(1 / (ws.x || 1));
-    this.handBone.add(this.weaponHolder);
-    if (this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
+    if (this.weaponHolder && this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
   }
 
   _setHeldWeapon(key) {
     if (!this.weaponHolder || this.heldKey === key) return;
     this.heldKey = key;
-    while (this.weaponHolder.children.length) this.weaponHolder.remove(this.weaponHolder.children[0]);
-    const src = this.game.assets.weaponModels[key];
-    if (!src) return;
-    const gun = src.clone(true);
-    const def = WEAPONS[key];
-    const pos = (def.grip && def.grip.pos) || GRIP.pos;
-    const rot = (def.grip && def.grip.rot) || GRIP.rot;
-    gun.position.set(pos[0], pos[1], pos[2]);
-    gun.rotation.set(rot[0], rot[1], rot[2]);
-    this.weaponHolder.add(gun);
+    setHeldWeapon(this.weaponHolder, key, this.game.assets.weaponModels);
   }
 
   playAnim(key, fade = 0.18) {

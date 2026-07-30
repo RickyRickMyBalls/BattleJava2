@@ -297,40 +297,68 @@
     #ssStart:hover { background: rgba(127,212,255,0.3); box-shadow: 0 0 24px rgba(127,212,255,0.25); }
     .ss-version { position: absolute; bottom: 16px; font-size: 10px; letter-spacing: 3px; color: #34495a; }
 
-    #lobby { padding: 40px 6vw; }
+    #lobby { background: none; }
+    .lb-panels {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 400px;
+      display: none; flex-direction: column; gap: 10px; padding: 34px 30px;
+      background: linear-gradient(90deg, rgba(4,8,13,0.96) 0%, rgba(6,12,20,0.9) 78%, transparent 100%);
+      overflow-y: auto;
+    }
     .lb-head { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--hud-cyan-dim); padding-bottom: 12px; }
-    .lb-title { font-size: 24px; letter-spacing: 7px; font-weight: 300; color: #e8f4fc; }
+    .lb-title { font-size: 22px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
     #lbBack { cursor: pointer; background: none; border: none; color: #6e93a8; font-size: 12px; letter-spacing: 2px; }
     #lbBack:hover { color: var(--hud-cyan); }
-    .lb-cards { display: flex; gap: 22px; margin-top: 30px; flex-wrap: wrap; }
-    .lb-card {
-      width: 330px; cursor: pointer; background: rgba(12,24,36,0.85); border: 1px solid #24404f;
-      transition: border-color 0.15s, transform 0.15s;
+    .lb-section { font-size: 10px; letter-spacing: 3px; color: #6e93a8; margin-top: 10px; }
+    .lb-row {
+      cursor: pointer; border: 1px solid #24404f; background: rgba(12,24,36,0.85);
+      padding: 10px 12px; margin: 3px 0;
     }
-    .lb-card:hover { border-color: var(--hud-cyan); transform: translateY(-3px); }
-    .lb-card.loading { pointer-events: none; opacity: 0.85; }
-    .lb-thumb {
-      height: 150px; display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(135deg, #101f30 0%, #16293e 50%, #0c1826 100%); position: relative; overflow: hidden;
+    .lb-row:hover { border-color: var(--hud-cyan); }
+    .lb-row.sel { border-color: var(--hud-cyan); background: rgba(58,160,255,0.12); }
+    .lb-row-name { font-size: 13px; letter-spacing: 2px; color: #e8f4fc; display: flex; justify-content: space-between; align-items: baseline; }
+    .lb-tag { font-size: 8px; letter-spacing: 2px; color: var(--hud-cyan); border: 1px solid var(--hud-cyan-dim); padding: 2px 5px; }
+    .lb-row-desc { font-size: 11px; color: #8fa9ba; line-height: 1.45; margin-top: 4px; }
+    .lb-row-progress { height: 3px; background: #13232f; margin-top: 6px; }
+    .lb-row-progress > div { height: 100%; width: 0%; background: var(--hud-cyan); transition: width 0.2s; }
+    #lbCustomize {
+      cursor: pointer; margin-top: 14px; background: rgba(127,212,255,0.08); color: var(--hud-cyan);
+      border: 1px solid var(--hud-cyan-dim); padding: 11px; font-size: 12px; letter-spacing: 3px;
     }
-    .lb-thumb::after {
-      content: ''; position: absolute; inset: 0;
-      background-image: linear-gradient(rgba(127,212,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(127,212,255,0.06) 1px, transparent 1px);
-      background-size: 26px 26px;
+    #lbCustomize:hover { border-color: var(--hud-cyan); background: rgba(127,212,255,0.2); }
+    #lbStart {
+      cursor: pointer; margin-top: 4px; background: rgba(127,212,255,0.15); color: var(--hud-cyan);
+      border: 1px solid var(--hud-cyan); padding: 15px; font-size: 15px; letter-spacing: 5px;
     }
-    .lb-thumb span { font-size: 34px; letter-spacing: 8px; color: rgba(127,212,255,0.4); font-weight: 200; z-index: 1; }
-    .lb-body { padding: 14px 16px; }
-    .lb-name { font-size: 17px; letter-spacing: 3px; color: #e8f4fc; display: flex; justify-content: space-between; align-items: baseline; }
-    .lb-tag { font-size: 9px; letter-spacing: 2px; color: var(--hud-cyan); border: 1px solid var(--hud-cyan-dim); padding: 2px 6px; }
-    .lb-desc { font-size: 12px; color: #8fa9ba; line-height: 1.5; margin-top: 8px; min-height: 36px; }
-    .lb-progress { height: 4px; background: #13232f; margin-top: 10px; display: none; }
-    .lb-progress > div { height: 100%; width: 0%; background: var(--hud-cyan); transition: width 0.2s; }
-    .lb-card.loading .lb-progress { display: block; }
-    .lb-status { margin-top: 26px; font-size: 12px; letter-spacing: 2px; color: #6e93a8; min-height: 16px; }
+    #lbStart:hover:not(:disabled) { background: rgba(127,212,255,0.32); }
+    #lbStart:disabled { opacity: 0.5; cursor: default; }
+    .lb-status { font-size: 11px; letter-spacing: 2px; color: #6e93a8; min-height: 14px; margin-top: 6px; }
+    .lb-charinfo { position: absolute; right: 40px; bottom: 34px; text-align: right; pointer-events: none; }
+    .lb-ci-class { font-size: 26px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
+    .lb-ci-guns { font-size: 11px; letter-spacing: 2px; color: #6e93a8; margin-top: 4px; }
+
+    /* ---- Team select ---- */
+    #teamSelect { position: fixed; inset: 0; z-index: 91; display: none; }
+    .ts-half {
+      flex: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
+      transition: flex 0.25s, background 0.25s;
+    }
+    .ts-half.ts-unsc { background: linear-gradient(115deg, rgba(10,30,55,0.94), rgba(20,60,110,0.82)); }
+    .ts-half.ts-cov { background: linear-gradient(245deg, rgba(55,12,10,0.94), rgba(110,30,24,0.82)); }
+    .ts-half:hover { flex: 1.35; }
+    .ts-half.ts-unsc:hover { background: linear-gradient(115deg, rgba(14,44,80,0.96), rgba(30,85,150,0.88)); }
+    .ts-half.ts-cov:hover { background: linear-gradient(245deg, rgba(80,18,14,0.96), rgba(150,45,35,0.88)); }
+    .ts-inner { text-align: center; }
+    .ts-inner h2 { font-size: 54px; letter-spacing: 14px; font-weight: 200; color: #eef7ff; }
+    .ts-inner p { font-size: 12px; letter-spacing: 3px; color: rgba(255,255,255,0.55); margin-top: 8px; }
+    .ts-join {
+      display: inline-block; margin-top: 30px; padding: 12px 46px; font-size: 13px; letter-spacing: 5px;
+      border: 1px solid rgba(255,255,255,0.45); color: #fff;
+    }
+    .ts-half:hover .ts-join { background: rgba(255,255,255,0.12); }
 
     /* ---- Armory / loadout menu ---- */
     #armory {
-      position: fixed; inset: 0; z-index: 80; display: none; flex-direction: column;
+      position: fixed; inset: 0; z-index: 93; display: none; flex-direction: column;
       background:
         /* spotlight behind the weapon display */
         radial-gradient(ellipse 46% 38% at 62% 36%, rgba(86, 160, 210, 0.14), transparent 70%),
@@ -501,12 +529,20 @@
   </div>
 
   <div id="lobby">
-    <div class="lb-head">
-      <div class="lb-title">SELECT BATTLEFIELD</div>
-      <button id="lbBack">← BACK</button>
+    <div class="lb-panels">
+      <div class="lb-head">
+        <div class="lb-title">GAME SETUP</div>
+        <button id="lbBack">← BACK</button>
+      </div>
+      <div class="lb-section">GAME TYPE</div>
+      <div id="lbTypes"></div>
+      <div class="lb-section">MAP</div>
+      <div id="lbMaps"></div>
+      <button id="lbCustomize">CUSTOMIZE LOADOUT</button>
+      <div class="lb-status" id="lbStatus"></div>
+      <button id="lbStart">START GAME</button>
     </div>
-    <div class="lb-cards" id="lbCards"></div>
-    <div class="lb-status" id="lbStatus"></div>
+    <div class="lb-charinfo" id="lbCharInfo"></div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

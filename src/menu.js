@@ -265,8 +265,9 @@ export class LoadoutMenu {
     this.el.summary.textContent =
       `${CLASSES[lo.cls].name.toUpperCase()} — ${WEAPONS[lo.primary].name} + ${WEAPONS[lo.secondary].name}`;
 
-    // keep the deploy screen's loadout strip in sync as the user picks
+    // keep the deploy screen's loadout strip and lobby preview in sync
     if (this.game.deployScreen) this.game.deployScreen.refreshLoadout();
+    if (this.game.lobby && this.game.lobby.active) this.game.lobby.refreshPreview();
   }
 
   render() {
