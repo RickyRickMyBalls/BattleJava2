@@ -5,7 +5,6 @@
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Reflector } from 'three/addons/objects/Reflector.js';
 import { MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
 import { makeWeaponMount, setHeldWeapon } from './soldier.js';
 
@@ -45,61 +44,6 @@ function makeScreenTexture() {
     ctx.stroke();
   }
   const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-// Hangar deck plating: panel grid, scuffs, grime. Semi-transparent so the
-// mirror reflection underneath ghosts through, strongest along panel seams.
-function makeDeckTexture() {
-  const c = document.createElement('canvas');
-  c.width = 512; c.height = 512;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = 'rgba(9,12,17,0.90)';
-  ctx.fillRect(0, 0, 512, 512);
-  // uneven grime patches
-  for (let i = 0; i < 90; i++) {
-    const x = Math.random() * 512, y = Math.random() * 512;
-    const r = 14 + Math.random() * 55;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    const dark = Math.random() > 0.5;
-    g.addColorStop(0, dark ? 'rgba(4,6,9,0.25)' : 'rgba(60,75,95,0.07)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-  }
-  // scuff streaks
-  ctx.lineCap = 'round';
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * 512, y = Math.random() * 512;
-    ctx.strokeStyle = `rgba(3,5,8,${0.12 + Math.random() * 0.2})`;
-    ctx.lineWidth = 1 + Math.random() * 2.5;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + (Math.random() - 0.5) * 90, y + (Math.random() - 0.5) * 24);
-    ctx.stroke();
-  }
-  // panel seams: slightly more transparent → reflection reads along them
-  ctx.strokeStyle = 'rgba(130,165,200,0.10)';
-  ctx.lineWidth = 2;
-  for (let p = 0; p <= 512; p += 128) {
-    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, 512); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(512, p); ctx.stroke();
-  }
-  // rivets at seam crossings
-  ctx.fillStyle = 'rgba(150,180,210,0.14)';
-  for (let px = 0; px <= 512; px += 128) {
-    for (let py = 0; py <= 512; py += 128) {
-      for (const [ox, oy] of [[10, 10], [-10, 10], [10, -10], [-10, -10]]) {
-        ctx.beginPath();
-        ctx.arc((px + ox + 512) % 512, (py + oy + 512) % 512, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(7, 7);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
@@ -167,32 +111,14 @@ export class Lobby {
     this.scene.add(spot);
     this.scene.add(spot.target);
 
-    // true planar reflection under semi-transparent deck plating
-    // (sits just above y=0 so an authored stage floor slots underneath)
-    const mirror = new Reflector(new THREE.PlaneGeometry(60, 60), {
-      textureWidth: 1024,
-      textureHeight: 1024,
-      color: 0x505c6c,
-      clipBias: 0.003,
-    });
-    mirror.rotation.x = -Math.PI / 2;
-    mirror.position.y = 0.006;
-    this.scene.add(mirror);
-
-    const deck = new THREE.Mesh(
+    // Fallback floor only — the Blender stage provides the real one
+    const fallbackFloor = new THREE.Mesh(
       new THREE.PlaneGeometry(60, 60),
-      new THREE.MeshStandardMaterial({
-        map: makeDeckTexture(),
-        transparent: true,
-        opacity: 0.86,
-        roughness: 0.9,
-        metalness: 0.1,
-        depthWrite: false,
-      })
+      new THREE.MeshStandardMaterial({ color: 0x07090d, roughness: 0.6, metalness: 0.3 })
     );
-    deck.rotation.x = -Math.PI / 2;
-    deck.position.y = 0.012;
-    this.scene.add(deck);
+    fallbackFloor.rotation.x = -Math.PI / 2;
+    this.scene.add(fallbackFloor);
+    this.fallbackFloor = fallbackFloor;
 
     // light pool under the character
     const pool = new THREE.Mesh(
@@ -335,6 +261,7 @@ export class Lobby {
       this.scene.add(root);
       this.stage = { root, markers };
       for (const s of this.screens) s.visible = false;
+      if (this.fallbackFloor) this.fallbackFloor.visible = false; // stage floor takes over
       if (this.scene.fog) this.scene.fog.far = 36; // room is deep; let the back wall breathe
       this._applyStageLayout();
       this.refreshPreview();
