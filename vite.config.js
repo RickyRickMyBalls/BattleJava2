@@ -15,11 +15,15 @@ function debugSavePlugin() {
           try {
             const url = new URL(req.url, 'http://x');
             const name = (url.searchParams.get('name') || 'shot').replace(/[^\w-]/g, '');
+            const ext = url.searchParams.get('ext') === 'png' ? 'png' : 'jpg';
+            // dir=textures writes into the served asset tree (for generated tiling textures)
+            const dir = url.searchParams.get('dir') === 'textures'
+              ? path.resolve('source/other/textures')
+              : path.resolve('debug');
             const m = body.match(/^data:image\/\w+;base64,(.+)$/);
             if (!m) { res.statusCode = 400; res.end('bad'); return; }
-            const dir = path.resolve('debug');
             fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(path.join(dir, `${name}.jpg`), Buffer.from(m[1], 'base64'));
+            fs.writeFileSync(path.join(dir, `${name}.${ext}`), Buffer.from(m[1], 'base64'));
             res.end('ok');
           } catch (e) { res.statusCode = 500; res.end(String(e)); }
         });

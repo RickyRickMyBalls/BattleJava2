@@ -168,6 +168,7 @@ export class Lobby {
     this.scene.add(spot.target);
 
     // true planar reflection under semi-transparent deck plating
+    // (sits just above y=0 so an authored stage floor slots underneath)
     const mirror = new Reflector(new THREE.PlaneGeometry(60, 60), {
       textureWidth: 1024,
       textureHeight: 1024,
@@ -175,7 +176,7 @@ export class Lobby {
       clipBias: 0.003,
     });
     mirror.rotation.x = -Math.PI / 2;
-    mirror.position.y = -0.002;
+    mirror.position.y = 0.006;
     this.scene.add(mirror);
 
     const deck = new THREE.Mesh(
@@ -190,7 +191,7 @@ export class Lobby {
       })
     );
     deck.rotation.x = -Math.PI / 2;
-    deck.position.y = 0.004;
+    deck.position.y = 0.012;
     this.scene.add(deck);
 
     // light pool under the character
@@ -199,8 +200,9 @@ export class Lobby {
       new THREE.MeshBasicMaterial({ map: makePoolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false })
     );
     pool.rotation.x = -Math.PI / 2;
-    pool.position.set(0.75, 0.012, 0);
+    pool.position.set(0.75, 0.02, 0);
     this.scene.add(pool);
+    this.pool = pool;
 
     // faint volumetric cone above the character
     // Soft-edged volumetric cone: alpha peaks where the view passes through
@@ -214,7 +216,7 @@ export class Lobby {
       side: THREE.DoubleSide,
       uniforms: {
         color: { value: new THREE.Color(0xbfe2ff) },
-        strength: { value: 0.16 },
+        strength: { value: 0.05 },
       },
       vertexShader: /* glsl */`
         varying vec3 vNormal;
@@ -245,9 +247,11 @@ export class Lobby {
     cone.position.set(0.7, 2.5, 0.2);
     cone.renderOrder = 10;
     this.scene.add(cone);
+    this.cone = cone;
 
     // curved wall of hangar "screens" showing a distant battle
     const screenTex = makeScreenTexture();
+    this.screens = [];
     for (let i = -2; i <= 2; i++) {
       const panel = new THREE.Mesh(
         new THREE.PlaneGeometry(8.4, 4.6),
@@ -257,6 +261,7 @@ export class Lobby {
       panel.position.set(Math.sin(a) * 16, 2.75, -Math.cos(a) * 16 + 4);
       panel.rotation.y = a;
       this.scene.add(panel);
+      this.screens.push(panel);
     }
 
     // drifting dust motes
@@ -289,10 +294,13 @@ export class Lobby {
       wrap.rotation.y = 2.3;
       wrap.position.set(-1.15, 0, -2.1);
       this.scene.add(wrap);
+      this.vehicleWrap = wrap;
       // dim service light over the parked vehicle
       const lamp = new THREE.PointLight(0xa8c4ff, 4, 6, 1.6);
       lamp.position.set(-1.1, 2.2, -2.0);
       this.scene.add(lamp);
+      this.vehicleLamp = lamp;
+      this._applyStageLayout();
     }, undefined, () => {});
 
     this.camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 60);
@@ -306,6 +314,50 @@ export class Lobby {
     this.charGroup = null;
     this.mixer = null;
     this.sway = 0;
+    this.charPos = new THREE.Vector3(0.75, 0.02, 0);
+    this.stage = null;
+    this._loadStage();
+  }
+
+  // Blender-authored hangar stage (source/other/lobby_stage.glb). Markers:
+  // FC_CHAR (character spot), FC_PROP_VEHICLE, FC_CAM. Replaces the
+  // procedural backdrop screens when present.
+  _loadStage() {
+    new GLTFLoader().load('/other/lobby_stage.glb', (gltf) => {
+      const root = gltf.scene;
+      root.updateMatrixWorld(true);
+      const markers = {};
+      root.traverse((o) => {
+        if (o.name && o.name.toUpperCase().startsWith('FC_')) {
+          markers[o.name.toUpperCase()] = o.getWorldPosition(new THREE.Vector3());
+        }
+      });
+      this.scene.add(root);
+      this.stage = { root, markers };
+      for (const s of this.screens) s.visible = false;
+      if (this.scene.fog) this.scene.fog.far = 36; // room is deep; let the back wall breathe
+      this._applyStageLayout();
+      this.refreshPreview();
+    }, undefined, () => { /* no stage authored yet — procedural set stays */ });
+  }
+
+
+  _applyStageLayout() {
+    if (!this.stage) return;
+    const mk = this.stage.markers;
+    if (mk.FC_CHAR) {
+      this.charPos.copy(mk.FC_CHAR).add(new THREE.Vector3(0, 0.02, 0));
+      this.pool.position.set(this.charPos.x, 0.02, this.charPos.z);
+      this.cone.position.set(this.charPos.x - 0.05, 2.5, this.charPos.z + 0.2);
+    }
+    if (mk.FC_CAM) {
+      this.camera.position.copy(mk.FC_CAM);
+      this.camera.lookAt(this.charPos.x, this.charPos.y + 1.0, this.charPos.z);
+    }
+    if (mk.FC_PROP_VEHICLE && this.vehicleWrap) {
+      this.vehicleWrap.position.set(mk.FC_PROP_VEHICLE.x, 0, mk.FC_PROP_VEHICLE.z);
+      if (this.vehicleLamp) this.vehicleLamp.position.set(mk.FC_PROP_VEHICLE.x, 2.2, mk.FC_PROP_VEHICLE.z);
+    }
   }
 
   refreshPreview() {
@@ -320,7 +372,7 @@ export class Lobby {
     this.charGroup = new THREE.Group();
     const mesh = cloneSkeleton(character.template);
     this.charGroup.add(mesh);
-    this.charGroup.position.set(0.75, 0.02, 0);
+    this.charGroup.position.copy(this.charPos);
     this.charGroup.rotation.y = -1.25; // three-quarter profile, rifle silhouette readable
     this.scene.add(this.charGroup);
 
