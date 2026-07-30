@@ -274,7 +274,7 @@ export class DeployScreen {
     const scene = this.game.scene;
     if (on) {
       this._bgBackup = scene.background;
-      this._mapBg = new THREE.Color(0x14243a);
+      this._mapBg = new THREE.Color(0x060b16);
       scene.background = this._mapBg;
       this._dimmed = [];
       this._ghosts = [];
