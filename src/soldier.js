@@ -5,7 +5,6 @@ import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
 import { restoreBakedDisplays } from './ammodisplay.js';
-import { terrainHeight } from './world.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;
@@ -206,7 +205,7 @@ export class Soldier {
   }
 
   spawnAt(x, z) {
-    this.pos.set(x, terrainHeight(x, z), z);
+    this.pos.set(x, this.game.world.heightAt(x, z), z);
     this.vel.set(0, 0, 0);
     this.alive = true;
     this.shield = this.maxShield;
@@ -372,7 +371,7 @@ export class Soldier {
     if (col) col.pushOut(this.pos, 0.5);
     this.game.world.clampToMap(this.pos);
     const g = col ? col.groundAt(this.pos.x, this.pos.y, this.pos.z) : null;
-    this.pos.y = g !== null ? g : terrainHeight(this.pos.x, this.pos.z);
+    this.pos.y = g !== null ? g : this.game.world.heightAt(this.pos.x, this.pos.z);
   }
 
   _fire(dt) {

@@ -303,6 +303,14 @@ export class World {
     }
   }
 
+  // Ground height under (x, z). Entities go through their host's world rather
+  // than importing terrainHeight() directly: that module global is stomped by
+  // whichever World was constructed last, so a second host (the lobby) sharing
+  // the same process would silently retarget everyone's grounding.
+  heightAt(x, z) {
+    return terrainHeight(x, z);
+  }
+
   clampToMap(v) {
     v.x = Math.max(-this.mapW / 2 + 3, Math.min(this.mapW / 2 - 3, v.x));
     v.z = Math.max(-this.mapD / 2 + 3, Math.min(this.mapD / 2 - 3, v.z));

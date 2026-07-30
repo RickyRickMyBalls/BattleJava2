@@ -4,7 +4,6 @@
 import * as THREE from 'three';
 import { CFG, WEAPONS, CLASSES, FP_DEFAULT } from './config.js';
 import { createAmmoDisplay } from './ammodisplay.js';
-import { terrainHeight } from './world.js';
 
 const P = CFG.player;
 const _dir = new THREE.Vector3();
@@ -67,6 +66,13 @@ export class Player {
     this.keys = {};
     this.locked = false;
 
+    // Input ownership. Listeners live on `document`, so every Player that
+    // exists is handling every event — fine while there was only ever one, but
+    // a second host (lobby roam) needs to hand the keyboard back and forth.
+    // Nothing tore these down before either; dispose() closes that leak.
+    this.enabled = true;
+    this._listeners = [];
+
     // Freecam state
     this.freecam = false;
     this.fcPos = new THREE.Vector3();
@@ -81,8 +87,34 @@ export class Player {
   get soldier() { return this.game.playerSoldier; }
   get weapon() { return this.weapons[this.active]; }
 
+  // Register a listener that is inert while disabled and removable on dispose.
+  _on(target, type, fn) {
+    const wrapped = (e) => { if (this.enabled) fn(e); };
+    target.addEventListener(type, wrapped);
+    this._listeners.push([target, type, wrapped]);
+  }
+
+  // Hand input to (or away from) this Player. Disabling drops any held state so
+  // a key still down at the handoff doesn't stick on once control returns.
+  setEnabled(on) {
+    if (this.enabled === on) return;
+    this.enabled = on;
+    if (!on) {
+      this.keys = {};
+      this.firing = false;
+      this.ads = false;
+      this.locked = false;
+    }
+  }
+
+  dispose() {
+    this.setEnabled(false);
+    for (const [target, type, fn] of this._listeners) target.removeEventListener(type, fn);
+    this._listeners.length = 0;
+  }
+
   _bindInput() {
-    document.addEventListener('keydown', (e) => {
+    this._on(document, 'keydown', (e) => {
       this.keys[e.code] = true;
       if (this.game.menuOpen) return; // armory owns the keyboard
       if (e.code === 'KeyR' && !this.freecam) this.startReload();
@@ -96,8 +128,8 @@ export class Player {
         if (e.code === 'KeyQ') this.switchWeapon(1 - this.active);
       }
     });
-    document.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
-    document.addEventListener('wheel', (e) => {
+    this._on(document, 'keyup', (e) => { this.keys[e.code] = false; });
+    this._on(document, 'wheel', (e) => {
       if (this.game.menuOpen) return;
       if (this.freecam) {
         this.fcSpeed = Math.max(5, Math.min(200, this.fcSpeed * (e.deltaY > 0 ? 0.8 : 1.25)));
@@ -106,24 +138,24 @@ export class Player {
       }
     });
 
-    this.dom.addEventListener('mousedown', (e) => {
+    this._on(this.dom, 'mousedown', (e) => {
       if (this.game.menuOpen) return;
       if (!this.locked) { this.requestLock(); return; }
       if (this.freecam) return;
       if (e.button === 0) this.firing = true;
       if (e.button === 2) this.ads = true;
     });
-    document.addEventListener('mouseup', (e) => {
+    this._on(document, 'mouseup', (e) => {
       if (e.button === 0) this.firing = false;
       if (e.button === 2) this.ads = false;
     });
-    document.addEventListener('contextmenu', (e) => e.preventDefault());
+    this._on(document, 'contextmenu', (e) => e.preventDefault());
 
-    document.addEventListener('pointerlockchange', () => {
+    this._on(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.dom;
       if (!this.locked) this.firing = false;
     });
-    document.addEventListener('mousemove', (e) => {
+    this._on(document, 'mousemove', (e) => {
       if (!this.locked) return;
       if (this.freecam) {
         this.fcYaw -= e.movementX * 0.0021;
@@ -246,7 +278,7 @@ export class Player {
   }
 
   spawnAt(x, z) {
-    this.pos.set(x, terrainHeight(x, z), z);
+    this.pos.set(x, this.game.world.heightAt(x, z), z);
     this.velY = 0;
     this.applyLoadout(this.game.playerLoadout);
     this.pitch = 0;
@@ -303,7 +335,7 @@ export class Player {
     // heightfield only ever sees the top surface, so it's the fallback.
     const col = this.game.world.collision;
     let ground = col ? col.groundAt(this.pos.x, this.pos.y, this.pos.z) : null;
-    if (ground === null) ground = terrainHeight(this.pos.x, this.pos.z);
+    if (ground === null) ground = this.game.world.heightAt(this.pos.x, this.pos.z);
     if (this.onGround && this.keys['Space']) {
       this.velY = P.jumpVel;
       this.onGround = false;
@@ -487,7 +519,7 @@ export class Player {
     this.fcPos.x += (fx * mz + rx * mx) * speed * dt;
     this.fcPos.y += (fy * mz + my) * speed * dt;
     this.fcPos.z += (fz * mz + rz * mx) * speed * dt;
-    this.fcPos.y = Math.max(this.fcPos.y, terrainHeight(this.fcPos.x, this.fcPos.z) + 0.5);
+    this.fcPos.y = Math.max(this.fcPos.y, this.game.world.heightAt(this.fcPos.x, this.fcPos.z) + 0.5);
 
     this.camera.position.copy(this.fcPos);
     this.camera.rotation.set(this.fcPitch, this.fcYaw, 0, 'YXZ');
