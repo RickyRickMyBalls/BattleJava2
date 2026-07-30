@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { WEAPONS, CLASSES, PRIMARIES } from './config.js';
+import { prewarm, weaponClones } from './assets.js';
 
 const MODE_TAGS = {
   auto: 'FULL-AUTO', burst: '3-ROUND BURST', semi: 'SEMI-AUTO',
@@ -268,6 +269,16 @@ export class LoadoutMenu {
     // keep the deploy screen's loadout strip and lobby preview in sync
     if (this.game.deployScreen) this.game.deployScreen.refreshLoadout();
     if (this.game.lobby && this.game.lobby.active) this.game.lobby.refreshPreview();
+  }
+
+  // The armory owns a SEPARATE WebGLRenderer, so it shares nothing with the
+  // main context — every weapon texture uploads again the first time the
+  // armory draws it. Do that behind the loading bar instead.
+  async prewarm() {
+    const assets = this.game.assets; // `game` is the session before a match exists
+    if (!assets) return;
+    this._frameCamera();
+    await prewarm(this.renderer, this.scene, this.camera, weaponClones(assets));
   }
 
   render() {

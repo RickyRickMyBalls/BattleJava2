@@ -8,6 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
 import { makeWeaponMount, setHeldWeapon } from './soldier.js';
 import { LobbyRoam } from './lobbyroam.js';
+import { prewarm, weaponClones, characterClones } from './assets.js';
 
 // Emissive "hangar screen" texture: dark panel with battle-glow band + scanlines
 function makeScreenTexture() {
@@ -216,6 +217,7 @@ export class Lobby {
       this.scene.add(lamp);
       this.vehicleLamp = lamp;
       this._applyStageLayout();
+      this._warmLateArrivals();
     }, undefined, () => {});
 
     this.camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 60);
@@ -258,6 +260,7 @@ export class Lobby {
       if (this.scene.fog) this.scene.fog.far = 36; // room is deep; let the back wall breathe
       this._applyStageLayout();
       this.refreshPreview();
+      this._warmLateArrivals();
     }, undefined, () => { /* no stage authored yet — procedural set stays */ });
   }
 
@@ -289,6 +292,54 @@ export class Lobby {
       this.vehicleWrap.quaternion.copy(mk.FC_PROP_VEHICLE.quat);
       if (this.vehicleLamp) this.vehicleLamp.position.set(mk.FC_PROP_VEHICLE.pos.x, 2.2, mk.FC_PROP_VEHICLE.pos.z);
     }
+  }
+
+  // Compile this scene's materials behind the loading bar instead of on the
+  // first frame the player sees. The lobby's light rig differs from the match's,
+  // so the match-time prewarm does not cover it — every gun and character has
+  // to compile again here.
+  // Everything funnels through one queue. Boot awaits this; the stage and the
+  // Mongoose call it again when they land. Two runs at once would interleave
+  // their scene.add/remove around each other's render and warm a partial scene.
+  prewarm() {
+    this._warmQueue = (this._warmQueue || Promise.resolve())
+      .then(() => this._prewarmNow())
+      .catch(() => {});
+    return this._warmQueue;
+  }
+
+  async _prewarmNow() {
+    const assets = this.session.assets;
+    if (!assets) return;
+    const objects = [...weaponClones(assets), ...characterClones(assets)];
+    // Match the real character's shadow flags exactly. The hero spotlight casts,
+    // so a caster needs a depth-material program on top of its lit one — but
+    // `receiveShadow` is also part of three's program key, so prewarming with it
+    // set compiles a variant nothing then uses and the real mesh compiles again
+    // on the frame the player sees. refreshPreview sets castShadow only.
+    for (const o of objects) o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = false; } });
+    await prewarm(this.renderer, this.scene, this.camera, objects);
+  }
+
+  // The stage and the parked Mongoose load lazily, after boot's prewarm has
+  // run, and neither comes from `assets` — so nothing else would warm them.
+  //
+  // This re-runs the FULL prewarm, not just a bare render of the scene, because
+  // the Mongoose brings a service PointLight with it and the scene's light
+  // counts are part of three's program key: the moment that lamp is added,
+  // every material compiled at boot is invalidated and has to compile again.
+  // Cheap to redo here — it happens under the title screen, not in front of
+  // the player.
+  // The stage and the Mongoose load lazily and neither comes from `assets`, so
+  // nothing else would warm them. Unconditional: they routinely land WHILE
+  // boot's prewarm is still running (it takes most of a second), so gating on
+  // "has boot finished" silently skipped the run that mattered. The Mongoose
+  // also brings a service PointLight, and scene light counts are part of
+  // three's program key — every material compiled before it arrives is
+  // invalidated, which is why this re-runs the full prewarm and not a bare
+  // render of the scene.
+  _warmLateArrivals() {
+    this.prewarm();
   }
 
   refreshPreview() {

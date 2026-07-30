@@ -79,6 +79,14 @@ async function boot() {
       if (deploy) deploy.refreshLoadout();
     };
 
+    // Compile/upload for the two surfaces the player reaches before a match
+    // exists. Their scenes (and, for the armory, its whole second GL context)
+    // are not covered by the match-time prewarm, so without this the lobby's
+    // first frame and the armory's first frame each stall visibly.
+    loadmsg.textContent = 'Warming up…';
+    await lobby.prewarm();
+    await menu.prewarm();
+
     loading.style.display = 'none';
     startScreen.style.display = 'block';
   } catch (err) {

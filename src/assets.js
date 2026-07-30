@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { ASSET_PATHS, WEAPONS } from './config.js';
 
 const gltfLoader = new GLTFLoader();
@@ -98,27 +99,53 @@ function retargetClip(clip, boneMap) {
 }
 
 // GPU prewarm: shader programs compile and textures upload the first time an
-// object is rendered — without this, the first swap to each weapon hitches
-// for a beat and the gun "pops in". Compile everything up front instead.
-export async function prewarmWeapons(renderer, scene, camera, assets) {
+// object is drawn — without this, the first swap to each weapon hitches for a
+// beat and the gun "pops in".
+//
+// This is PER SCENE, not per session. Three keys its program cache on the
+// scene's lights, fog and shadow config, so the same rifle shown in the lobby,
+// the armory and the match compiles three times. The armory goes further and
+// owns a separate WebGLRenderer — a whole second GL context, which re-uploads
+// every texture from scratch. Each surface therefore has to prewarm itself,
+// with its own renderer, scene and camera.
+//
+// `objects` may be empty: the offscreen render still forces everything already
+// in the scene, which is how a late-arriving map or stage gets warmed.
+export async function prewarm(renderer, scene, camera, objects = []) {
   const group = new THREE.Group();
-  for (const m of Object.values(assets.weaponModels)) group.add(m.clone(true)); // clones share materials/geometry
+  for (const o of objects) group.add(o);
   scene.add(group);
   try {
     if (renderer.compileAsync) await renderer.compileAsync(group, camera, scene);
     else renderer.compile(scene, camera);
     // compileAsync covers shaders only — geometry buffers and textures still
     // upload lazily on first draw. One offscreen render forces all of it
-    // (weapon meshes have frustumCulled=false, so every gun gets drawn).
+    // (weapon and character meshes have frustumCulled=false, so all get drawn).
     const rt = new THREE.WebGLRenderTarget(8, 8);
-    const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
+    const prev = renderer.getRenderTarget();
     renderer.setRenderTarget(rt);
-    renderer.render(scene, cam);
-    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(prev);
     rt.dispose();
   } finally {
     scene.remove(group);
   }
+}
+
+// Throwaway copies for prewarming. Clones share geometry and materials, which
+// is exactly what we want — it is the material that needs compiling. Never
+// prewarm with the cached originals: the player mounts those, and re-parenting
+// one into a prewarm group would steal it out of the viewmodel.
+export function weaponClones(assets) {
+  return Object.values(assets.weaponModels).map((m) => m.clone(true));
+}
+
+export function characterClones(assets) {
+  return Object.values(assets.characters).map((c) => cloneSkeleton(c.template));
+}
+
+export async function prewarmWeapons(renderer, scene, camera, assets) {
+  return prewarm(renderer, scene, camera, weaponClones(assets));
 }
 
 export async function loadAssets(onProgress) {
