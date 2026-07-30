@@ -251,7 +251,11 @@ export class Player {
       this.pos.z += wz * speed * dt;
     }
 
-    const ground = terrainHeight(this.pos.x, this.pos.z);
+    // Mesh collision (authored floor shells) makes tunnels/bridges work; the
+    // heightfield only ever sees the top surface, so it's the fallback.
+    const col = this.game.world.collision;
+    let ground = col ? col.groundAt(this.pos.x, this.pos.y, this.pos.z) : null;
+    if (ground === null) ground = terrainHeight(this.pos.x, this.pos.z);
     if (this.onGround && this.keys['Space']) {
       this.velY = P.jumpVel;
       this.onGround = false;
@@ -266,6 +270,7 @@ export class Player {
     }
 
     this.game.world.collideCircle(this.pos, 0.55);
+    if (col) col.pushOut(this.pos, 0.55);
     this.game.world.clampToMap(this.pos);
 
     s.pos.copy(this.pos);

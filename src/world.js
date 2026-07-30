@@ -58,6 +58,10 @@ export class World {
         this.sectorDefs = CFG.sectors.map((s) => ({ id: s.id, x: s.x * sx, z: s.z * sz, r: s.r }));
       }
       this.ambient = mapData.ambient || null;
+      this.collision = mapData.collision || null;
+      if (this.collision && this.collision.coverBoxes) {
+        this.coverBoxes.push(...this.collision.coverBoxes);
+      }
       this._buildLights();
       this._buildSectors();
       this._buildHQs();

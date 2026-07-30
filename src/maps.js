@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { buildMapCollision } from './collision.js';
 
 const TARGET_MAX_DIM = 900;   // largest XZ extent after normalization (meters)
 const BAKE_COLS = 384;
@@ -109,16 +110,26 @@ function prepareMap(mapDef, gltf, renderer) {
     });
   }
 
-  // Sky items must not shadow the terrain in the height bake
+  // Authored collision shells (floor/wall/cover parents) → BVHs; also hides them
+  const collision = buildMapCollision(group);
+
+  // Sky items must not shadow the terrain in the height bake; wall/cover
+  // shells would turn into phantom terrain columns (floor shells are fine —
+  // they ARE the floor). All restored right after the bake.
   const hidden = [];
-  for (const o of ambient.skyNodes) {
+  const bakeExcluded = [...ambient.skyNodes];
+  if (collision && collision.parents) {
+    if (collision.parents.wallParent) bakeExcluded.push(collision.parents.wallParent);
+    if (collision.parents.coverParent) bakeExcluded.push(collision.parents.coverParent);
+  }
+  for (const o of bakeExcluded) {
     if (o.visible) { o.visible = false; hidden.push(o); }
   }
   const heightfield = bakeHeightfield(group, w, d, maxY, renderer);
   for (const o of hidden) o.visible = true;
 
   ambient.scale = s;
-  return { def: mapDef, group, w, d, maxY, sample: heightfield.sample, hqDefs, sectorDefs, vehicleSpawns, ambient };
+  return { def: mapDef, group, w, d, maxY, sample: heightfield.sample, hqDefs, sectorDefs, vehicleSpawns, ambient, collision };
 }
 
 function bakeHeightfield(group, w, d, maxY, renderer) {

@@ -301,8 +301,11 @@ export class Soldier {
     this.pos.x += desired.x * dt;
     this.pos.z += desired.z * dt;
     this.game.world.collideCircle(this.pos, 0.6);
+    const col = this.game.world.collision;
+    if (col) col.pushOut(this.pos, 0.5);
     this.game.world.clampToMap(this.pos);
-    this.pos.y = terrainHeight(this.pos.x, this.pos.z);
+    const g = col ? col.groundAt(this.pos.x, this.pos.y, this.pos.z) : null;
+    this.pos.y = g !== null ? g : terrainHeight(this.pos.x, this.pos.z);
   }
 
   _fire(dt) {
