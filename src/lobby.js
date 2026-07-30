@@ -48,19 +48,6 @@ function makeScreenTexture() {
   return tex;
 }
 
-// Soft radial light pool for the floor under the character
-function makePoolTexture() {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 256;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(128, 128, 10, 128, 128, 128);
-  g.addColorStop(0, 'rgba(190,220,255,0.55)');
-  g.addColorStop(0.5, 'rgba(120,170,220,0.18)');
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 256, 256);
-  return new THREE.CanvasTexture(c);
-}
 
 export class Lobby {
   constructor(session, renderer, envTexture, onStart) {
@@ -128,15 +115,6 @@ export class Lobby {
     this.scene.add(fallbackFloor);
     this.fallbackFloor = fallbackFloor;
 
-    // light pool under the character
-    const pool = new THREE.Mesh(
-      new THREE.PlaneGeometry(4.6, 4.6),
-      new THREE.MeshBasicMaterial({ map: makePoolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false })
-    );
-    pool.rotation.x = -Math.PI / 2;
-    pool.position.set(0.75, 0.02, 0);
-    this.scene.add(pool);
-    this.pool = pool;
 
     // faint volumetric cone above the character
     // Soft-edged volumetric cone: alpha peaks where the view passes through
@@ -291,7 +269,6 @@ export class Lobby {
     if (mk.FC_CHAR) {
       this.charPos.copy(mk.FC_CHAR.pos).add(new THREE.Vector3(0, 0.02, 0));
       this.charQuat = mk.FC_CHAR.quat;
-      this.pool.position.set(this.charPos.x, 0.02, this.charPos.z);
       this.cone.position.set(this.charPos.x - 0.05, 2.5, this.charPos.z + 0.2);
       if (this.spot) {
         // near-vertical, a touch behind: contact shadow pools at the feet
