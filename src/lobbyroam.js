@@ -174,6 +174,14 @@ export class LobbyRoam {
     // Pointer lock must be requested inside the user gesture that started this
     // (the Tab keydown) — asking a second later, at handoff, gets rejected.
     this.lobby.renderer.domElement.requestPointerLock();
+    // Audio has the same constraint. The arena carries a real GameAudio left
+    // uninitialised so that merely building an arena never creates an
+    // AudioContext; this is the gesture that is allowed to. Creating one at
+    // handoff instead — a second later, outside the gesture — yields a
+    // suspended context and silence. resume() covers a context the browser
+    // suspended later.
+    this.arena.initAudio();
+    this.arena.audio.resume();
   }
 
   // -------------------------------------------------------------- exit --
@@ -241,6 +249,9 @@ export class LobbyRoam {
       this.player.update(dt);
       this.soldier.update(dt);
       this.arena.combat.update(dt);
+      // Refills the per-frame budget that caps positional shot sounds. The
+      // player's own gun does not use it, but target dummies will.
+      this.arena.audio.update();
       cam.getWorldDirection(this._look);
       this.rack.update(dt, this.player.pos, this._look);
       this._updatePrompt();
