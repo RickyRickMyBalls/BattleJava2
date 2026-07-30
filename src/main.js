@@ -16,7 +16,7 @@ const lobby = document.getElementById('lobby');
 const lbCards = document.getElementById('lbCards');
 const lbStatus = document.getElementById('lbStatus');
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.domElement.classList.add('webgl');

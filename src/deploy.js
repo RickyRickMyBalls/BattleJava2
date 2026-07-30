@@ -263,6 +263,8 @@ export class DeployScreen {
         // dense imported meshes turn the normal-edge pass into noise — depth only
         thinAmp: { value: this.game.world.def.type === 'glb' ? 0.0 : 1.0 },
         depthRange: { value: this.game.world.def.type === 'glb' ? new THREE.Vector2(3.5, 7.0) : new THREE.Vector2(1.0, 2.2) },
+        // renderer may store logarithmic depth — decode must match
+        logDepth: { value: renderer.capabilities.logarithmicDepthBuffer ? 1.0 : 0.0 },
       },
       vertexShader: /* glsl */`
         varying vec2 vUv;
@@ -275,11 +277,16 @@ export class DeployScreen {
         varying vec2 vUv;
         uniform sampler2D tColor, tDepth, tNormal;
         uniform vec2 res;
-        uniform float near, far, thinAmp;
+        uniform float near, far, thinAmp, logDepth;
         uniform vec2 depthRange;
 
         float readDepth(vec2 uv) {
-          return -perspectiveDepthToViewZ(texture2D(tDepth, uv).x, near, far);
+          float z = texture2D(tDepth, uv).x;
+          if (logDepth > 0.5) {
+            // three.js log depth: z = log2(1+w)/log2(far+1), w = eye distance
+            return exp2(z * log2(far + 1.0)) - 1.0;
+          }
+          return -perspectiveDepthToViewZ(z, near, far);
         }
 
         void main() {
