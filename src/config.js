@@ -63,6 +63,19 @@ export const CFG = {
     fogFar: 120,           // stage fog is tuned tight for the portrait framing
   },
 
+  // One of each weapon, laid out in the hangar for the firing range. Placement
+  // prefers authored FC_WEAPON_<KEY> empties; these only drive the fallback
+  // layout and the pickup feel.
+  armoryRack: {
+    autoDistance: 4.5,   // metres behind the character when no markers exist
+    spacing: 0.85,       // gap between guns in the fallback row
+    height: 1.05,        // rack height off the floor
+    radius: 2.6,         // how close you must be to take one
+    minDot: 0.55,        // ...and how directly you must be looking at it
+    highlightLift: 0.08, // the targeted gun rises and turns; no material or
+    highlightSpin: 1.2,  // light changes, both of which would cost a recompile
+  },
+
   ai: {
     spreadPerMeter: 0.00012,
     damageScale: 0.85,      // AI bullets hit a bit softer, keeps TTK fair at 32v32

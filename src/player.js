@@ -273,6 +273,21 @@ export class Player {
     }
   }
 
+  // Replace one loadout slot at runtime — firing-range pickups. Deliberately
+  // does NOT touch the session loadout: re-entering roam re-applies it, which
+  // is what returns the player to their chosen kit.
+  //
+  // The third-person body keeps its spawn loadout. It is hidden in first person,
+  // and re-syncing means re-cloning the soldier's guns; a future third-person
+  // pass wants soldier.setLoadout + _initWeaponMount here.
+  setWeaponAt(i, key) {
+    if (!WEAPONS[key] || !this.weapons[i]) return;
+    this.weapons[i] = mkWeaponState(key);
+    this.fireTimer = Math.max(this.fireTimer, 0.3);
+    this.recoil = Math.min(1, this.recoil + 0.5);
+    if (i === this.active) this._mountGun();
+  }
+
   switchWeapon(i) {
     if (i === this.active || !this.weapons[i]) return;
     const w = this.weapon;

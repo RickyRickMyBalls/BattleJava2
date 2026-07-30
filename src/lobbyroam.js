@@ -9,11 +9,12 @@
 // States: idle → in → roam → out → idle.
 
 import * as THREE from 'three';
-import { CFG } from './config.js';
+import { CFG, WEAPONS } from './config.js';
 import { makeLobbyArena } from './arena.js';
 import { LobbyWorld } from './lobbyworld.js';
 import { Player } from './player.js';
 import { Soldier } from './soldier.js';
+import { WeaponRack } from './weaponrack.js';
 
 const R = CFG.lobbyRoam;
 const P = CFG.player;
@@ -42,6 +43,8 @@ export class LobbyRoam {
     this.end = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), yaw: 0 };
 
     this.hint = document.getElementById('lbHint');
+    this.prompt = document.getElementById('lbPrompt');
+    this._look = new THREE.Vector3();
     this._bindInput();
   }
 
@@ -55,6 +58,13 @@ export class LobbyRoam {
       if (!this._canToggle()) return;
       if (this.state === 'idle') this.enter();
       else if (this.state === 'roam') this.exit();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'KeyE' || this.state !== 'roam') return;
+      if (this.session.menuOpen || !this.rack || !this.rack.target) return;
+      this.rack.take(this.player);
+      this._updatePrompt();
     });
 
     // Esc is swallowed by the browser to release pointer lock, so losing the
@@ -102,6 +112,11 @@ export class LobbyRoam {
     // the camera joins the scene — a gun floating through the fly-in. It comes
     // back on at handoff, via spawnAt().
     this.player.viewmodel.visible = false;
+
+    // Fallback layout needs "away from the lobby camera" so an unauthored rack
+    // lands behind the character instead of through the portrait framing.
+    const away = lb.charPos.clone().sub(lb.camera.position);
+    this.rack = new WeaponRack(lb.scene, this.session.assets, lb.stage, lb.charPos, away);
     this.built = true;
   }
 
@@ -149,6 +164,7 @@ export class LobbyRoam {
     this.state = 'in';
     this.t = 0;
 
+    this.rack.setVisible(true);
     lb.hidePanels();
     this._setHint('roam');
     if (lb.scene.fog) {
@@ -171,6 +187,7 @@ export class LobbyRoam {
     this.state = 'out';
     this.t = 0;
     this._setHint('enter');
+    this._updatePrompt();
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
@@ -183,8 +200,19 @@ export class LobbyRoam {
     lb.camera.updateProjectionMatrix();
     if (lb.charGroup) lb.charGroup.visible = true;
     if (lb.scene.fog && this._fogFar !== undefined) lb.scene.fog.far = this._fogFar;
+    this.rack.setVisible(false);
+    this._updatePrompt();
     lb.showPanels();
     this._setHint('enter');
+  }
+
+  // "E — SRS99 SNIPER" while a rack gun is targeted.
+  _updatePrompt() {
+    if (!this.prompt) return;
+    const t = this.state === 'roam' && this.rack ? this.rack.target : null;
+    if (!t) { this.prompt.style.display = 'none'; return; }
+    this.prompt.style.display = 'block';
+    this.prompt.innerHTML = `<b>E</b> ${WEAPONS[t.key].name}`;
   }
 
   _setHint(kind) {
@@ -213,6 +241,9 @@ export class LobbyRoam {
       this.player.update(dt);
       this.soldier.update(dt);
       this.arena.combat.update(dt);
+      cam.getWorldDirection(this._look);
+      this.rack.update(dt, this.player.pos, this._look);
+      this._updatePrompt();
       // Same off-screen pass Game.renderScopes does, so scope screens are live
       // here too — the lobby is meant to be the test range for exactly this.
       // Must precede the lobby's own render, which happens right after us.
@@ -264,6 +295,8 @@ export class LobbyRoam {
     // disabled, so its handler swallowed it. Sync by hand or the mouse is dead.
     this.player.locked = document.pointerLockElement === this.player.dom;
     if (lb.charGroup) lb.charGroup.visible = false;
+    // Whatever the loadout put in your hands is off the rack.
+    this.rack.syncCarried(this.player.weapons.map((w) => w.key));
     this.state = 'roam';
   }
 }

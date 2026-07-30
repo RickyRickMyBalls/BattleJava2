@@ -445,6 +445,13 @@
       font-size: 11px; letter-spacing: 3px; color: #6e93a8;
     }
     .lb-hint b { color: var(--hud-cyan); font-weight: 400; }
+    .lb-prompt {
+      position: absolute; left: 50%; top: 56%; transform: translateX(-50%);
+      display: none; padding: 7px 16px; pointer-events: none;
+      border: 1px solid var(--hud-cyan); background: rgba(4, 8, 13, 0.6);
+      font-size: 12px; letter-spacing: 3px; color: #e8f4fc;
+    }
+    .lb-prompt b { color: var(--hud-cyan); font-weight: 400; margin-right: 8px; }
 
     /* ---- Team select ---- */
     #teamSelect { position: fixed; inset: 0; z-index: 91; display: none; }
@@ -654,6 +661,7 @@
     </div>
     <div class="lb-charinfo" id="lbCharInfo"></div>
     <div class="lb-hint" id="lbHint"></div>
+    <div class="lb-prompt" id="lbPrompt"></div>
   </div>
 
   <script type="module" src="/src/main.js"></script>
