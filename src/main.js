@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MAPS } from './config.js';
-import { loadAssets } from './assets.js';
+import { loadAssets, prewarmWeapons } from './assets.js';
 import { loadMap } from './maps.js';
 import { Game } from './game.js';
 import { LoadoutMenu } from './menu.js';
@@ -116,6 +116,8 @@ async function startGame() {
     await new Promise((r) => setTimeout(r, 30)); // let the status paint
 
     game = new Game(scene, camera, session.assets, renderer.domElement, def, mapData, session);
+    // compile weapon shaders + upload textures now — no hitch on first swap
+    await prewarmWeapons(renderer, scene, camera, session.assets);
     deploy = new DeployScreen(game);
     game.armory = menu;
     game.deployScreen = deploy;

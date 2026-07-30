@@ -97,6 +97,30 @@ function retargetClip(clip, boneMap) {
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
+// GPU prewarm: shader programs compile and textures upload the first time an
+// object is rendered — without this, the first swap to each weapon hitches
+// for a beat and the gun "pops in". Compile everything up front instead.
+export async function prewarmWeapons(renderer, scene, camera, assets) {
+  const group = new THREE.Group();
+  for (const m of Object.values(assets.weaponModels)) group.add(m.clone(true)); // clones share materials/geometry
+  scene.add(group);
+  try {
+    if (renderer.compileAsync) await renderer.compileAsync(group, camera, scene);
+    else renderer.compile(scene, camera);
+    // compileAsync covers shaders only — geometry buffers and textures still
+    // upload lazily on first draw. One offscreen render forces all of it
+    // (weapon meshes have frustumCulled=false, so every gun gets drawn).
+    const rt = new THREE.WebGLRenderTarget(8, 8);
+    const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
+    renderer.setRenderTarget(rt);
+    renderer.render(scene, cam);
+    renderer.setRenderTarget(null);
+    rt.dispose();
+  } finally {
+    scene.remove(group);
+  }
+}
+
 export async function loadAssets(onProgress) {
   const out = { characters: {}, clips: {}, audio: {}, weaponModels: {} };
   const jobs = [];
