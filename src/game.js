@@ -14,14 +14,14 @@ const BLUE_NAMES = ['Reyes', 'Okafor', 'Tanaka', 'Silva', 'Novak', 'Baptiste', '
 const RED_NAMES = ['Zar\'Kul', 'Vestam', 'Ontar', 'Krellus', 'Sar\'Vek', 'Molvane', 'Teth', 'Uzek', 'Rathkar', 'Volsun', 'Ekar', 'Themos', 'Drax', 'Onvelu', 'Kaidon', 'Serevu', 'Tulkar', 'Wren', 'Ossek', 'Varn', 'Ilmar', 'Zetes', 'Korag', 'Mendu', 'Sulvan', 'Orrek', 'Talvu', 'Nezar', 'Ukam', 'Rhoss', 'Ventar', 'Ghelan'];
 
 export class Game {
-  constructor(scene, camera, assets, dom) {
+  constructor(scene, camera, assets, dom, mapDef, mapData) {
     this.scene = scene;
     this.camera = camera;
     this.assets = assets;
     this.playerTeam = TEAM.BLUE;
     this.playerLoadout = { cls: 'assault', primary: 'ar', secondary: 'smg' };
 
-    this.world = new World(scene);
+    this.world = new World(scene, mapDef, mapData);
     this.audio = new GameAudio(this);
     this.audio.init(assets.audio);
     this.combat = new Combat(this);
@@ -93,7 +93,7 @@ export class Game {
 
   _initialDeploy() {
     for (const t of this.teams) {
-      const hq = CFG.hq[t.id];
+      const hq = this.world.hqDefs[t.id];
       t.soldiers.forEach((s, i) => {
         const a = (i / t.soldiers.length) * Math.PI * 2;
         const r = 8 + (i % 5) * 3.5;
@@ -168,6 +168,7 @@ export class Game {
     if (this.gameOver) return;
     const dt = Math.min(dtReal, 0.05);
     this.audio.update();
+    this.world.updateAmbient(dt);
 
     // Player / camera
     if (this.spectating) {
@@ -235,7 +236,7 @@ export class Game {
 
   _respawnAI(s) {
     // Spawn at HQ or a safely-held sector nearest the squad objective
-    const options = [{ x: CFG.hq[s.team].x, z: CFG.hq[s.team].z }];
+    const options = [{ x: this.world.hqDefs[s.team].x, z: this.world.hqDefs[s.team].z }];
     for (const sec of this.world.sectors) {
       if (sec.owner === s.team && !sec.contested) options.push(sec);
     }
@@ -309,7 +310,7 @@ export class Game {
         if (s.owner === TEAM.BLUE) blueHeld++;
         else if (s.owner === TEAM.RED) redHeld++;
       }
-      const majority = Math.ceil(CFG.sectors.length / 2);
+      const majority = Math.ceil(this.world.sectors.length / 2);
       if (blueHeld >= majority) this.teams[TEAM.RED].tickets -= (blueHeld - majority + 1);
       if (redHeld >= majority) this.teams[TEAM.BLUE].tickets -= (redHeld - majority + 1);
     }

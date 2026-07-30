@@ -246,6 +246,59 @@
 
     #hint { position: absolute; bottom: 8px; left: 16px; font-size: 11px; color: #46606f; letter-spacing: 1px; }
 
+    /* ---- Start screen + lobby ---- */
+    #startScreen, #lobby {
+      position: fixed; inset: 0; z-index: 90; display: none;
+      background:
+        radial-gradient(ellipse 50% 40% at 50% 42%, rgba(86, 160, 210, 0.12), transparent 70%),
+        linear-gradient(180deg, #04070c 0%, #0a1522 55%, #04070c 100%);
+    }
+    #startScreen .ss-inner {
+      height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+    }
+    #startScreen h1 {
+      font-size: 64px; font-weight: 200; letter-spacing: 18px; color: #e8f4fc; text-align: center; line-height: 1.15;
+      text-shadow: 0 0 40px rgba(127, 212, 255, 0.25);
+    }
+    .ss-sub { font-size: 12px; letter-spacing: 6px; color: #6e93a8; }
+    #ssStart {
+      cursor: pointer; margin-top: 26px; background: rgba(127,212,255,0.12); color: var(--hud-cyan);
+      border: 1px solid var(--hud-cyan); padding: 16px 70px; font-size: 16px; letter-spacing: 6px;
+    }
+    #ssStart:hover { background: rgba(127,212,255,0.3); box-shadow: 0 0 24px rgba(127,212,255,0.25); }
+    .ss-version { position: absolute; bottom: 16px; font-size: 10px; letter-spacing: 3px; color: #34495a; }
+
+    #lobby { padding: 40px 6vw; }
+    .lb-head { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--hud-cyan-dim); padding-bottom: 12px; }
+    .lb-title { font-size: 24px; letter-spacing: 7px; font-weight: 300; color: #e8f4fc; }
+    #lbBack { cursor: pointer; background: none; border: none; color: #6e93a8; font-size: 12px; letter-spacing: 2px; }
+    #lbBack:hover { color: var(--hud-cyan); }
+    .lb-cards { display: flex; gap: 22px; margin-top: 30px; flex-wrap: wrap; }
+    .lb-card {
+      width: 330px; cursor: pointer; background: rgba(12,24,36,0.85); border: 1px solid #24404f;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .lb-card:hover { border-color: var(--hud-cyan); transform: translateY(-3px); }
+    .lb-card.loading { pointer-events: none; opacity: 0.85; }
+    .lb-thumb {
+      height: 150px; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #101f30 0%, #16293e 50%, #0c1826 100%); position: relative; overflow: hidden;
+    }
+    .lb-thumb::after {
+      content: ''; position: absolute; inset: 0;
+      background-image: linear-gradient(rgba(127,212,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(127,212,255,0.06) 1px, transparent 1px);
+      background-size: 26px 26px;
+    }
+    .lb-thumb span { font-size: 34px; letter-spacing: 8px; color: rgba(127,212,255,0.4); font-weight: 200; z-index: 1; }
+    .lb-body { padding: 14px 16px; }
+    .lb-name { font-size: 17px; letter-spacing: 3px; color: #e8f4fc; display: flex; justify-content: space-between; align-items: baseline; }
+    .lb-tag { font-size: 9px; letter-spacing: 2px; color: var(--hud-cyan); border: 1px solid var(--hud-cyan-dim); padding: 2px 6px; }
+    .lb-desc { font-size: 12px; color: #8fa9ba; line-height: 1.5; margin-top: 8px; min-height: 36px; }
+    .lb-progress { height: 4px; background: #13232f; margin-top: 10px; display: none; }
+    .lb-progress > div { height: 100%; width: 0%; background: var(--hud-cyan); transition: width 0.2s; }
+    .lb-card.loading .lb-progress { display: block; }
+    .lb-status { margin-top: 26px; font-size: 12px; letter-spacing: 2px; color: #6e93a8; min-height: 16px; }
+
     /* ---- Armory / loadout menu ---- */
     #armory {
       position: fixed; inset: 0; z-index: 80; display: none; flex-direction: column;
@@ -407,6 +460,24 @@
     <div class="sub">32 v 32 &mdash; SECTOR CONTROL PROTOTYPE</div>
     <div id="loadbar"><div></div></div>
     <div id="loadmsg">Initializing…</div>
+  </div>
+
+  <div id="startScreen">
+    <div class="ss-inner">
+      <h1>FRONTLINE<br>COMMAND</h1>
+      <div class="ss-sub">32 v 32 &mdash; COMBINED ARMS PROTOTYPE</div>
+      <button id="ssStart">ENTER LOBBY</button>
+      <div class="ss-version">PROTOTYPE BUILD</div>
+    </div>
+  </div>
+
+  <div id="lobby">
+    <div class="lb-head">
+      <div class="lb-title">SELECT BATTLEFIELD</div>
+      <button id="lbBack">← BACK</button>
+    </div>
+    <div class="lb-cards" id="lbCards"></div>
+    <div class="lb-status" id="lbStatus"></div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

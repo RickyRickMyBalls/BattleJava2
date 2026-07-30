@@ -24,11 +24,15 @@ export class DeployScreen {
     this.dragging = false;
     this.squadRefresh = 0;
 
+    this.post = null;      // edge-outline render pipeline, built lazily
+    this._styled = false;  // map-mode material dimming active
+
     this._buildDom();
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this._resizeCanvas();
+      if (this.post) { this.post.rtColor.dispose(); this.post.rtNormal.dispose(); this.post = null; }
     });
   }
 
@@ -100,13 +104,15 @@ export class DeployScreen {
     });
     ml.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.h = Math.max(150, Math.min(850, this.h * (e.deltaY > 0 ? 1.12 : 0.89)));
+      const maxH = Math.max(850, this.game.world.mapD * 1.6);
+      this.h = Math.max(150, Math.min(maxH, this.h * (e.deltaY > 0 ? 1.12 : 0.89)));
     }, { passive: false });
   }
 
   _clampPan() {
-    this.cx = Math.max(-CFG.map.w / 2, Math.min(CFG.map.w / 2, this.cx));
-    this.cz = Math.max(-CFG.map.d / 2, Math.min(CFG.map.d / 2, this.cz));
+    const w = this.game.world.mapW, d = this.game.world.mapD;
+    this.cx = Math.max(-w / 2, Math.min(w / 2, this.cx));
+    this.cz = Math.max(-d / 2, Math.min(d / 2, this.cz));
   }
 
   _resizeCanvas() {
@@ -119,7 +125,7 @@ export class DeployScreen {
     this.el.mapLayer.innerHTML = '';
     this.markers = [];
     const team = this.game.playerTeam;
-    for (const hq of CFG.hq) {
+    for (const hq of this.game.world.hqDefs) {
       const m = document.createElement('div');
       m.className = 'dp-hq' + (hq.team === team ? ' own' : ' enemy');
       m.textContent = 'HQ';
@@ -145,7 +151,8 @@ export class DeployScreen {
 
   _spawnPoints() {
     const team = this.game.playerTeam;
-    const pts = [{ id: 'hq', x: CFG.hq[team].x, z: CFG.hq[team].z }];
+    const hq = this.game.world.hqDefs[team];
+    const pts = [{ id: 'hq', x: hq.x, z: hq.z }];
     for (const sec of this.game.world.sectors) {
       if (sec.owner === team && !sec.contested) pts.push({ id: sec.id, x: sec.x, z: sec.z });
     }
@@ -169,9 +176,10 @@ export class DeployScreen {
     this.el.root.style.display = 'block';
     this.el.root.classList.remove('transitioning');
     this.el.killed.textContent = killerName ? `KILLED BY ${killerName}` : '';
+    this.el.root.querySelector('.dp-map').textContent = (this.game.world.def.name || 'DEMO MAP').toUpperCase();
     this.cx = 0;
     this.cz = 0;
-    this.h = 720;
+    this.h = Math.max(600, this.game.world.mapD * 1.28);
     if (!this._spawnOk(this.selected)) this.selected = 'hq';
     this._buildMarkers();
     this._resizeCanvas();
@@ -181,6 +189,7 @@ export class DeployScreen {
     const fog = this.game.scene.fog;
     if (fog && !this._fogFar) { this._fogFar = fog.far; this._fogNear = fog.near; }
     if (fog) { fog.near = 4000; fog.far = 8000; }
+    this._applyMapStyle(true);
   }
 
   hide() {
@@ -189,6 +198,150 @@ export class DeployScreen {
     this.game.menuOpen = this.game.armory ? this.game.armory.visible : false;
     const fog = this.game.scene.fog;
     if (fog && this._fogFar) { fog.near = this._fogNear; fog.far = this._fogFar; }
+    this._applyMapStyle(false);
+  }
+
+  // Tactical map style: opaque world materials drop to 50% opacity over a dark
+  // navy background, so everything picks up the blue tint through transparency.
+  _applyMapStyle(on) {
+    if (on === this._styled) return;
+    this._styled = on;
+    const scene = this.game.scene;
+    if (on) {
+      this._bgBackup = scene.background;
+      scene.background = new THREE.Color(0x14243a);
+      this._dimmed = [];
+      this._ghosts = [];
+      const seen = new Set();
+      scene.traverse((o) => {
+        if (o.isSprite || !o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (seen.has(m)) continue;
+          seen.add(m);
+          if (m.transparent) continue; // beams/domes/tracers keep their look
+          this._dimmed.push({ m });
+          m.transparent = true;
+          m.opacity = 0.5;
+          m.needsUpdate = true;
+        }
+        // very see-through helpers (beams, boundary walls) pollute the normal pass
+        if (!Array.isArray(o.material) && o.material.transparent && o.material.opacity < 0.5) {
+          this._ghosts.push(o);
+        }
+      });
+      this.game.player.viewmodel.visible = false;
+    } else {
+      scene.background = this._bgBackup;
+      for (const d of this._dimmed || []) {
+        d.m.opacity = 1;
+        d.m.transparent = false;
+        d.m.needsUpdate = true;
+      }
+      this._dimmed = [];
+      this._ghosts = [];
+      this.game.player.viewmodel.visible = !this.game.playerDead;
+    }
+  }
+
+  // ------------------------------------------------- outline post-process --
+  _initPost(renderer) {
+    const size = new THREE.Vector2();
+    renderer.getDrawingBufferSize(size);
+    const rtColor = new THREE.WebGLRenderTarget(size.x, size.y);
+    rtColor.depthTexture = new THREE.DepthTexture(size.x, size.y);
+    const rtNormal = new THREE.WebGLRenderTarget(size.x, size.y);
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        tColor: { value: rtColor.texture },
+        tDepth: { value: rtColor.depthTexture },
+        tNormal: { value: rtNormal.texture },
+        res: { value: size.clone() },
+        near: { value: this.camera.near },
+        far: { value: this.camera.far },
+        // dense imported meshes turn the normal-edge pass into noise — depth only
+        thinAmp: { value: this.game.world.def.type === 'glb' ? 0.0 : 1.0 },
+        depthRange: { value: this.game.world.def.type === 'glb' ? new THREE.Vector2(3.5, 7.0) : new THREE.Vector2(1.0, 2.2) },
+      },
+      vertexShader: /* glsl */`
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }`,
+      fragmentShader: /* glsl */`
+        #include <packing>
+        varying vec2 vUv;
+        uniform sampler2D tColor, tDepth, tNormal;
+        uniform vec2 res;
+        uniform float near, far, thinAmp;
+        uniform vec2 depthRange;
+
+        float readDepth(vec2 uv) {
+          return -perspectiveDepthToViewZ(texture2D(tDepth, uv).x, near, far);
+        }
+
+        void main() {
+          vec4 base = texture2D(tColor, vUv);
+          vec2 px = 1.0 / res;
+
+          // thick bright silhouette: depth discontinuity (object vs ground)
+          float c = readDepth(vUv);
+          float dd = 0.0;
+          dd = max(dd, abs(readDepth(vUv + vec2(px.x * 2.0, 0.0)) - c));
+          dd = max(dd, abs(readDepth(vUv - vec2(px.x * 2.0, 0.0)) - c));
+          dd = max(dd, abs(readDepth(vUv + vec2(0.0, px.y * 2.0)) - c));
+          dd = max(dd, abs(readDepth(vUv - vec2(0.0, px.y * 2.0)) - c));
+          float thick = smoothstep(depthRange.x, depthRange.y, dd);
+
+          // thin interior edges: normal discontinuity (facets, creases)
+          vec3 n = texture2D(tNormal, vUv).rgb;
+          float nd = 0.0;
+          nd = max(nd, distance(texture2D(tNormal, vUv + vec2(px.x, 0.0)).rgb, n));
+          nd = max(nd, distance(texture2D(tNormal, vUv - vec2(px.x, 0.0)).rgb, n));
+          nd = max(nd, distance(texture2D(tNormal, vUv + vec2(0.0, px.y)).rgb, n));
+          nd = max(nd, distance(texture2D(tNormal, vUv - vec2(0.0, px.y)).rgb, n));
+          float thin = smoothstep(0.35, 0.8, nd) * (1.0 - thick) * thinAmp;
+
+          vec3 col = base.rgb
+            + thin * vec3(0.06, 0.22, 0.45)
+            + thick * vec3(0.25, 0.55, 0.95);
+          // render targets hold linear color; convert for the screen
+          col = pow(col, vec3(0.4545));
+          gl_FragColor = vec4(col, base.a);
+        }`,
+    });
+
+    const quadScene = new THREE.Scene();
+    quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+    const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.post = { rtColor, rtNormal, material, quadScene, quadCam, normalMat: new THREE.MeshNormalMaterial() };
+  }
+
+  // Render the map view. Styled (dimmed + outlines) normally; plain during the
+  // deploy dive so the world "comes back to life" as you drop in.
+  renderFrame(renderer) {
+    const scene = this.game.scene;
+    if (!this._styled || this.transition) {
+      renderer.render(scene, this.camera);
+      return;
+    }
+    if (!this.post) this._initPost(renderer);
+    const p = this.post;
+
+    renderer.setRenderTarget(p.rtColor);
+    renderer.render(scene, this.camera);
+
+    for (const o of this._ghosts) o.visible = false;
+    scene.overrideMaterial = p.normalMat;
+    renderer.setRenderTarget(p.rtNormal);
+    renderer.render(scene, this.camera);
+    scene.overrideMaterial = null;
+    for (const o of this._ghosts) o.visible = true;
+
+    renderer.setRenderTarget(null);
+    renderer.render(p.quadScene, p.quadCam);
   }
 
   setTimer(t) {
@@ -234,6 +387,7 @@ export class DeployScreen {
       toQuat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ')),
     };
     this.el.root.classList.add('transitioning');
+    this._applyMapStyle(false); // the dive shows the world in full color
   }
 
   _finishTransition() {

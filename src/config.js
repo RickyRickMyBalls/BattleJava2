@@ -164,6 +164,19 @@ export const CLASSES = {
   spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70 },
 };
 
+export const MAPS = {
+  demo: {
+    id: 'demo', name: 'Demo Map', type: 'procedural',
+    desc: 'Procedurally generated training valley. Five sectors, open sightlines, scattered cover.',
+    tag: 'GENERATED',
+  },
+  map3: {
+    id: 'map3', name: 'Map 3', type: 'glb', url: '/Maps/map-3.glb',
+    desc: 'Imported battlefield terrain — first mesh-based map test.',
+    tag: 'IMPORTED',
+  },
+};
+
 export const ASSET_PATHS = {
   characters: {
     spartan: '/UNSC/Characters/Spartan/Spartan_Mark-IV.glb',

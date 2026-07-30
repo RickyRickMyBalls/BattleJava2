@@ -15,7 +15,7 @@ function baseHeight(x, z) {
   return rolling + detail + valley * valley * 0.4;
 }
 
-export function terrainHeight(x, z) {
+function proceduralHeight(x, z) {
   let h = baseHeight(x, z);
   for (const f of FLAT_SPOTS) {
     const d = Math.hypot(x - f.x, z - f.z);
@@ -28,23 +28,57 @@ export function terrainHeight(x, z) {
   return h;
 }
 
+// Active terrain provider — procedural function or a baked GLB heightfield.
+let _provider = proceduralHeight;
+export function terrainHeight(x, z) {
+  return _provider(x, z);
+}
+
 export class World {
-  constructor(scene) {
+  constructor(scene, mapDef, mapData) {
     this.scene = scene;
+    this.def = mapDef || { id: 'demo', name: 'Demo Map', type: 'procedural' };
     this.coverBoxes = []; // {minX,minY,minZ,maxX,maxY,maxZ}
     this.sectors = [];
     this.hqs = [];
 
-    // Register flat pads before terrain mesh is built
-    for (const hq of CFG.hq) FLAT_SPOTS.push({ x: hq.x, z: hq.z, r0: 30, r1: 60, h: baseHeight(hq.x, hq.z) });
-    for (const s of CFG.sectors) FLAT_SPOTS.push({ x: s.x, z: s.z, r0: s.r * 0.9, r1: s.r * 1.8, h: baseHeight(s.x, s.z) });
-
-    this._buildLights();
-    this._buildTerrain();
-    this._buildSectors();
-    this._buildHQs();
-    this._buildCover();
-    this._buildBounds();
+    if (this.def.type === 'glb' && mapData) {
+      this.mapW = mapData.w;
+      this.mapD = mapData.d;
+      _provider = mapData.sample;
+      scene.add(mapData.group);
+      // Marker-authored layout when the map provides it, else scale the demo pattern
+      if (mapData.hqDefs && mapData.sectorDefs) {
+        this.hqDefs = mapData.hqDefs;
+        this.sectorDefs = mapData.sectorDefs;
+        this.vehicleSpawns = mapData.vehicleSpawns || [];
+      } else {
+        const sx = this.mapW / CFG.map.w, sz = this.mapD / CFG.map.d;
+        this.hqDefs = CFG.hq.map((h) => ({ team: h.team, x: h.x * sx, z: h.z * sz }));
+        this.sectorDefs = CFG.sectors.map((s) => ({ id: s.id, x: s.x * sx, z: s.z * sz, r: s.r }));
+      }
+      this.ambient = mapData.ambient || null;
+      this._buildLights();
+      this._buildSectors();
+      this._buildHQs();
+      this._buildBounds();
+    } else {
+      this.mapW = CFG.map.w;
+      this.mapD = CFG.map.d;
+      this.hqDefs = CFG.hq;
+      this.sectorDefs = CFG.sectors;
+      _provider = proceduralHeight;
+      FLAT_SPOTS.length = 0;
+      // Register flat pads before terrain mesh is built
+      for (const hq of this.hqDefs) FLAT_SPOTS.push({ x: hq.x, z: hq.z, r0: 30, r1: 60, h: baseHeight(hq.x, hq.z) });
+      for (const s of this.sectorDefs) FLAT_SPOTS.push({ x: s.x, z: s.z, r0: s.r * 0.9, r1: s.r * 1.8, h: baseHeight(s.x, s.z) });
+      this._buildLights();
+      this._buildTerrain();
+      this._buildSectors();
+      this._buildHQs();
+      this._buildCover();
+      this._buildBounds();
+    }
   }
 
   _buildLights() {
@@ -53,12 +87,15 @@ export class World {
     const sun = new THREE.DirectionalLight(0xfff2dd, 1.6);
     sun.position.set(-180, 260, 120);
     this.scene.add(sun);
-    this.scene.fog = new THREE.Fog(0xbcd2e2, 260, 950);
+    // Imported maps are vista-driven — fog reaches further so cliffs stay readable
+    this.scene.fog = this.def.type === 'glb'
+      ? new THREE.Fog(0xbcd2e2, 500, 2400)
+      : new THREE.Fog(0xbcd2e2, 260, 950);
     this.scene.background = new THREE.Color(0xa8c6dd);
   }
 
   _buildTerrain() {
-    const { w, d } = CFG.map;
+    const w = this.mapW, d = this.mapD;
     const segX = 150, segZ = 96;
     const geo = new THREE.PlaneGeometry(w, d, segX, segZ);
     geo.rotateX(-Math.PI / 2);
@@ -86,7 +123,7 @@ export class World {
   }
 
   _buildSectors() {
-    for (const def of CFG.sectors) {
+    for (const def of this.sectorDefs) {
       const y = terrainHeight(def.x, def.z);
       const group = new THREE.Group();
       group.position.set(def.x, y, def.z);
@@ -119,7 +156,7 @@ export class World {
   }
 
   _buildHQs() {
-    for (const def of CFG.hq) {
+    for (const def of this.hqDefs) {
       const y = terrainHeight(def.x, def.z);
       const color = def.team === TEAM.BLUE ? CFG.colors.blue : CFG.colors.red;
       const g = new THREE.Group();
@@ -187,7 +224,7 @@ export class World {
     const rand = mulberry(12345);
 
     // Cover clusters around each sector
-    for (const s of CFG.sectors) {
+    for (const s of this.sectorDefs) {
       const clusters = 10;
       for (let i = 0; i < clusters; i++) {
         const a = rand() * Math.PI * 2;
@@ -200,10 +237,10 @@ export class World {
     }
     // Scattered rocks across the whole field
     for (let i = 0; i < 130; i++) {
-      const x = (rand() - 0.5) * (CFG.map.w - 80);
-      const z = (rand() - 0.5) * (CFG.map.d - 40);
+      const x = (rand() - 0.5) * (this.mapW - 80);
+      const z = (rand() - 0.5) * (this.mapD - 40);
       let near = false;
-      for (const hq of CFG.hq) if (Math.hypot(x - hq.x, z - hq.z) < 45) near = true;
+      for (const hq of this.hqDefs) if (Math.hypot(x - hq.x, z - hq.z) < 45) near = true;
       if (near) continue;
       const s = 1.2 + rand() * 2.8;
       rockPlacements.push({ x, z, s });
@@ -240,7 +277,7 @@ export class World {
   _buildBounds() {
     // Visual edge markers so players notice the map limit
     const mat = new THREE.MeshBasicMaterial({ color: 0x7fd4ff, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false });
-    const { w, d } = CFG.map;
+    const w = this.mapW, d = this.mapD;
     const wallN = new THREE.Mesh(new THREE.PlaneGeometry(w, 40), mat);
     wallN.position.set(0, 20, -d / 2);
     this.scene.add(wallN);
@@ -250,10 +287,21 @@ export class World {
     const wallW = wallE.clone(); wallW.position.x = -w / 2; this.scene.add(wallW);
   }
 
+  // Skybox flavor: clouds rotate, capital ships drift +X. Runs on real time.
+  updateAmbient(dt) {
+    if (!this.ambient) return;
+    for (const r of this.ambient.rotators) r.rotation.y += dt * 0.005;
+    const localSpeed = 20 / this.ambient.scale;
+    const wrap = (this.mapW * 4) / this.ambient.scale;
+    for (const m of this.ambient.movers) {
+      m.position.x += dt * localSpeed;
+      if (m.position.x - m.userData.startX > wrap) m.position.x = m.userData.startX - wrap * 0.5;
+    }
+  }
+
   clampToMap(v) {
-    const { w, d } = CFG.map;
-    v.x = Math.max(-w / 2 + 3, Math.min(w / 2 - 3, v.x));
-    v.z = Math.max(-d / 2 + 3, Math.min(d / 2 - 3, v.z));
+    v.x = Math.max(-this.mapW / 2 + 3, Math.min(this.mapW / 2 - 3, v.x));
+    v.z = Math.max(-this.mapD / 2 + 3, Math.min(this.mapD / 2 - 3, v.z));
   }
 
   // Segment vs cover AABBs (slab method). Returns t in [0,1] of nearest hit or Infinity.

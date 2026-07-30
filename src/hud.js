@@ -50,7 +50,7 @@ export class Hud {
     this.spottedShooters = new Map(); // soldier -> ttl, for minimap enemy blips
     this.mmTimer = 0;
 
-    for (const s of CFG.sectors) {
+    for (const s of this.game.world.sectors) {
       const pip = document.createElement('div');
       pip.className = 'sector-pip';
       const fill = document.createElement('div');
@@ -203,7 +203,7 @@ export class Hud {
   _drawMinimap() {
     const ctx = this.ctx;
     const wpx = this.el.minimap.width, hpx = this.el.minimap.height;
-    const { w, d } = CFG.map;
+    const w = this.game.world.mapW, d = this.game.world.mapD;
     const sx = wpx / w, sz = hpx / d;
     const X = (x) => (x + w / 2) * sx;
     const Z = (z) => (z + d / 2) * sz;
@@ -212,7 +212,7 @@ export class Hud {
     ctx.fillRect(0, 0, wpx, hpx);
 
     // HQs
-    for (const hq of CFG.hq) {
+    for (const hq of this.game.world.hqDefs) {
       ctx.fillStyle = hq.team === TEAM.BLUE ? BLUE : RED;
       ctx.fillRect(X(hq.x) - 4, Z(hq.z) - 4, 8, 8);
     }
