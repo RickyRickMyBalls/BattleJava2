@@ -47,6 +47,22 @@ export const CFG = {
     respawnDelay: 5,
   },
 
+  // Walking around the lobby stage (TAB). Movement itself is deliberately NOT
+  // tuned here — roam reuses the real Player, so it reads CFG.player.speed,
+  // eyeHeight and the rest. These are only the transition and presentation.
+  lobbyRoam: {
+    enterTime: 1.0,        // seconds: camera flight from the lobby pose into first person
+    exitTime: 0.7,         // and back out
+    fov: 75,               // matches the in-game FPS fov (lobby portrait fov is 35)
+    fovHold: 0.55,         // fraction of the flight before the fov starts widening
+    // Bezier control point, relative to the character: the camera swings behind
+    // one shoulder instead of pushing straight through the chest.
+    arc: { back: 2.4, side: 1.8, up: 0.8 },
+    hideCharAt: 0.8,       // t at which the preview body is hidden (camera is inside it)
+    showCharAt: 0.3,       // t on the way out at which it comes back
+    fogFar: 120,           // stage fog is tuned tight for the portrait framing
+  },
+
   ai: {
     spreadPerMeter: 0.00012,
     damageScale: 0.85,      // AI bullets hit a bit softer, keeps TTK fair at 32v32

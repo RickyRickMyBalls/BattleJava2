@@ -7,6 +7,7 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
 import { makeWeaponMount, setHeldWeapon } from './soldier.js';
+import { LobbyRoam } from './lobbyroam.js';
 
 // Emissive "hangar screen" texture: dark panel with battle-glow band + scanlines
 function makeScreenTexture() {
@@ -55,6 +56,7 @@ export class Lobby {
     this.renderer = renderer;
     this.onStart = onStart;
     this.active = false;
+    this.launching = false; // true from START GAME onward, incl. team select
 
     this.el = {
       lobby: document.getElementById('lobby'),
@@ -73,6 +75,7 @@ export class Lobby {
     this.el.start.onclick = () => this.onStart && this.onStart();
 
     this._buildScene(envTexture);
+    this.roam = new LobbyRoam(this);
   }
 
   // ------------------------------------------------------------- preview --
@@ -378,15 +381,21 @@ export class Lobby {
     this._renderLists();
     this.refreshPreview();
     this.setStatus('');
+    if (this.roam) this.roam.refreshHint();
   }
 
   hidePanels() {
     this.el.panels.style.display = 'none';
   }
 
+  showPanels() {
+    this.el.panels.style.display = 'flex';
+  }
+
   hide() {
     this.active = false;
     this.el.lobby.style.display = 'none';
+    if (this.roam) this.roam.refreshHint();
   }
 
   setStatus(text, progress = null) {
@@ -398,8 +407,10 @@ export class Lobby {
   }
 
   setLaunching(on) {
+    this.launching = on;
     this.el.start.disabled = on;
     this.el.start.textContent = on ? 'LOADING…' : 'START GAME';
+    if (this.roam) this.roam.refreshHint();
   }
 
   _renderLists() {
@@ -436,6 +447,8 @@ export class Lobby {
       }
       pos.needsUpdate = true;
     }
+    // Owns the camera while entering/roaming/exiting — must run before the render.
+    if (this.roam) this.roam.update(dt);
     this.renderer.render(this.scene, this.camera);
   }
 }

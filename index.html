@@ -437,6 +437,14 @@
     .lb-charinfo { position: absolute; right: 40px; bottom: 34px; text-align: right; pointer-events: none; }
     .lb-ci-class { font-size: 26px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
     .lb-ci-guns { font-size: 11px; letter-spacing: 2px; color: #6e93a8; margin-top: 4px; }
+    .lb-hint {
+      position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%);
+      display: none; padding: 8px 18px; pointer-events: none;
+      border: 1px solid var(--hud-cyan-dim);
+      background: rgba(4, 8, 13, 0.55);
+      font-size: 11px; letter-spacing: 3px; color: #6e93a8;
+    }
+    .lb-hint b { color: var(--hud-cyan); font-weight: 400; }
 
     /* ---- Team select ---- */
     #teamSelect { position: fixed; inset: 0; z-index: 91; display: none; }
@@ -645,6 +653,7 @@
       <button id="lbStart">START GAME</button>
     </div>
     <div class="lb-charinfo" id="lbCharInfo"></div>
+    <div class="lb-hint" id="lbHint"></div>
   </div>
 
   <script type="module" src="/src/main.js"></script>
