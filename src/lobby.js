@@ -4,8 +4,63 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
 import { makeWeaponMount, setHeldWeapon } from './soldier.js';
+
+// Emissive "hangar screen" texture: dark panel with battle-glow band + scanlines
+function makeScreenTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#05090f';
+  ctx.fillRect(0, 0, 512, 256);
+  // warm battle glow along the lower band
+  const glow = ctx.createLinearGradient(0, 130, 0, 240);
+  glow.addColorStop(0, 'rgba(0,0,0,0)');
+  glow.addColorStop(0.65, 'rgba(255,110,45,0.10)');
+  glow.addColorStop(1, 'rgba(255,140,60,0.20)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 100, 512, 156);
+  // distant silhouettes / smoke columns
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * 512;
+    const w = 6 + Math.random() * 30;
+    const h = 12 + Math.random() * 60;
+    ctx.fillStyle = `rgba(2,4,8,${0.35 + Math.random() * 0.45})`;
+    ctx.fillRect(x, 210 - h, w, h);
+  }
+  // cyan scanlines up top
+  ctx.fillStyle = 'rgba(127,212,255,0.05)';
+  for (let y = 0; y < 130; y += 5) ctx.fillRect(0, y, 512, 1);
+  // a few bright tracers
+  for (let i = 0; i < 8; i++) {
+    const x = Math.random() * 512, y = 150 + Math.random() * 60;
+    ctx.strokeStyle = `rgba(255,${180 + Math.random() * 60 | 0},120,0.5)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 20 + Math.random() * 40, y - 4 - Math.random() * 10);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Soft radial light pool for the floor under the character
+function makePoolTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(128, 128, 10, 128, 128, 128);
+  g.addColorStop(0, 'rgba(190,220,255,0.55)');
+  g.addColorStop(0.5, 'rgba(120,170,220,0.18)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+}
 
 export class Lobby {
   constructor(session, renderer, envTexture, onStart) {
@@ -36,26 +91,104 @@ export class Lobby {
   // ------------------------------------------------------------- preview --
   _buildScene(envTexture) {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a1522);
+    this.scene.background = new THREE.Color(0x04070c);
     this.scene.environment = envTexture;
-    this.scene.add(new THREE.HemisphereLight(0xdfeeff, 0x2c3540, 0.7));
-    const key = new THREE.DirectionalLight(0xfff2dd, 2.0);
-    key.position.set(2.5, 3.5, 3);
-    this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x7fd4ff, 1.4);
-    rim.position.set(-3, 2, -2.5);
-    this.scene.add(rim);
-    // subtle ground disc under the character
-    const disc = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.3, 1.3, 0.04, 40),
-      new THREE.MeshStandardMaterial({ color: 0x18242f, roughness: 0.85 })
-    );
-    disc.position.set(0.75, 0, 0);
-    this.scene.add(disc);
+    this.scene.environmentIntensity = 0.35;
+    this.scene.fog = new THREE.Fog(0x04070c, 9, 26);
 
-    this.camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 50);
-    this.camera.position.set(-0.35, 1.55, 3.3);
-    this.camera.lookAt(0.75, 1.05, 0);
+    // moody base light + warm key + cyan rim
+    this.scene.add(new THREE.HemisphereLight(0x9fc4e0, 0x131a22, 0.22));
+    const key = new THREE.DirectionalLight(0xffe9c4, 1.15);
+    key.position.set(2.5, 4, 3);
+    this.scene.add(key);
+    const rim = new THREE.DirectionalLight(0x7fd4ff, 1.8);
+    rim.position.set(-3.5, 2, -2.5);
+    this.scene.add(rim);
+    // hero spotlight from above
+    const spot = new THREE.SpotLight(0xf4f8ff, 40, 14, 0.5, 0.5, 1.4);
+    spot.position.set(0.6, 5.2, 0.6);
+    spot.target.position.set(0.75, 0.9, 0);
+    this.scene.add(spot);
+    this.scene.add(spot.target);
+
+    // glossy hangar floor (env reflections do the work)
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.MeshStandardMaterial({ color: 0x04060a, roughness: 0.5, metalness: 0.3 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    this.scene.add(floor);
+
+    // light pool under the character
+    const pool = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.6, 4.6),
+      new THREE.MeshBasicMaterial({ map: makePoolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(0.75, 0.012, 0);
+    this.scene.add(pool);
+
+    // faint volumetric cone above the character
+    const cone = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 2.1, 4.6, 28, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.032, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+    );
+    cone.position.set(0.7, 2.5, 0.2);
+    this.scene.add(cone);
+    this.spotCone = cone;
+
+    // curved wall of hangar "screens" showing a distant battle
+    const screenTex = makeScreenTexture();
+    for (let i = -2; i <= 2; i++) {
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(8.4, 4.6),
+        new THREE.MeshBasicMaterial({ map: screenTex, transparent: true, opacity: 0.75, fog: false })
+      );
+      const a = i * 0.4;
+      panel.position.set(Math.sin(a) * 16, 2.75, -Math.cos(a) * 16 + 4);
+      panel.rotation.y = a;
+      this.scene.add(panel);
+    }
+
+    // drifting dust motes
+    const dustGeo = new THREE.BufferGeometry();
+    const dustCount = 160;
+    const pos = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      pos[i * 3] = -2.5 + Math.random() * 6;
+      pos[i * 3 + 1] = Math.random() * 3.6;
+      pos[i * 3 + 2] = -3 + Math.random() * 6;
+    }
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+      color: 0xa8d4ff, size: 0.016, transparent: true, opacity: 0.4, depthWrite: false,
+    }));
+    this.scene.add(this.dust);
+
+    // parked Mongoose as set dressing (lazy, non-blocking)
+    new GLTFLoader().load('/UNSC/Land Vehicles/mongoose.glb', (gltf) => {
+      const m = gltf.scene;
+      m.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(m);
+      const size = box.getSize(new THREE.Vector3());
+      const s = 2.4 / Math.max(size.x, size.y, size.z);
+      m.scale.setScalar(s);
+      const center = box.getCenter(new THREE.Vector3()).multiplyScalar(s);
+      m.position.set(-center.x, -box.min.y * s, -center.z); // center in the wrapper
+      const wrap = new THREE.Group();
+      wrap.add(m);
+      wrap.rotation.y = 2.3;
+      wrap.position.set(-1.15, 0, -2.1);
+      this.scene.add(wrap);
+      // dim service light over the parked vehicle
+      const lamp = new THREE.PointLight(0xa8c4ff, 4, 6, 1.6);
+      lamp.position.set(-1.1, 2.2, -2.0);
+      this.scene.add(lamp);
+    }, undefined, () => {});
+
+    this.camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 60);
+    this.camera.position.set(-0.5, 1.45, 3.7);
+    this.camera.lookAt(0.75, 1.0, 0);
     window.addEventListener('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
@@ -167,9 +300,21 @@ export class Lobby {
   update(dt) {
     if (!this.active) return;
     if (this.mixer) this.mixer.update(dt);
+    this.sway += dt;
     if (this.charGroup) {
-      this.sway += dt;
       this.charGroup.rotation.y = -1.25 + Math.sin(this.sway * 0.3) * 0.1;
+    }
+    if (this.spotCone) {
+      this.spotCone.material.opacity = 0.03 + Math.sin(this.sway * 1.7) * 0.008;
+    }
+    if (this.dust) {
+      const pos = this.dust.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - dt * 0.05;
+        if (y < 0) y = 3.6;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
     }
     this.renderer.render(this.scene, this.camera);
   }
