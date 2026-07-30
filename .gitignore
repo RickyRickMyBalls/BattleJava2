@@ -1,0 +1,6 @@
+node_modules/
+dist/
+debug/
+
+# Raw asset kit (large binaries, managed outside git)
+source/
