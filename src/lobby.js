@@ -113,7 +113,7 @@ export class Lobby {
     spot.shadow.camera.near = 1;
     spot.shadow.camera.far = 12;
     spot.shadow.bias = -0.0003;
-    spot.shadow.radius = 4;
+    spot.shadow.radius = 2.5;
     this.scene.add(spot);
     this.scene.add(spot.target);
     this.spot = spot;
@@ -294,8 +294,9 @@ export class Lobby {
       this.pool.position.set(this.charPos.x, 0.02, this.charPos.z);
       this.cone.position.set(this.charPos.x - 0.05, 2.5, this.charPos.z + 0.2);
       if (this.spot) {
-        this.spot.position.set(this.charPos.x - 0.15, 5.2, this.charPos.z + 0.6);
-        this.spot.target.position.set(this.charPos.x, 0.9, this.charPos.z);
+        // near-vertical, a touch behind: contact shadow pools at the feet
+        this.spot.position.set(this.charPos.x + 0.05, 5.2, this.charPos.z - 0.3);
+        this.spot.target.position.set(this.charPos.x, 0.6, this.charPos.z);
       }
     }
     if (mk.FC_CAM) {
@@ -303,7 +304,8 @@ export class Lobby {
       this.camera.quaternion.copy(mk.FC_CAM.quat);
     }
     if (mk.FC_PROP_VEHICLE && this.vehicleWrap) {
-      this.vehicleWrap.position.set(mk.FC_PROP_VEHICLE.pos.x, 0, mk.FC_PROP_VEHICLE.pos.z);
+      // slight sink: the model's lowest point is undercarriage, not wheel rims
+      this.vehicleWrap.position.set(mk.FC_PROP_VEHICLE.pos.x, -0.07, mk.FC_PROP_VEHICLE.pos.z);
       this.vehicleWrap.quaternion.copy(mk.FC_PROP_VEHICLE.quat);
       if (this.vehicleLamp) this.vehicleLamp.position.set(mk.FC_PROP_VEHICLE.pos.x, 2.2, mk.FC_PROP_VEHICLE.pos.z);
     }
@@ -337,20 +339,54 @@ export class Lobby {
     // character + held gun cast onto the stage floor
     this.charGroup.traverse((o) => { if (o.isMesh) o.castShadow = true; });
 
-    // ground the pose: crouch clips shift the root, so measure skinned bounds
-    // after one animation tick and drop the group so the feet touch the disc
-    this.mixer.update(0.2);
-    this.charGroup.updateMatrixWorld(true);
-    let minY = Infinity;
-    const box = new THREE.Box3();
+    // Ground the pose via the toe/foot BONES (Mixamo toe joints sit at sole
+    // level) — skinned bounding boxes report phantom lows on these rigs.
+    // The clip breathes, so sample the whole loop and take the lowest point.
+    const feetBones = [];
     mesh.traverse((o) => {
-      if (o.isSkinnedMesh) {
-        o.computeBoundingBox();
-        box.copy(o.boundingBox).applyMatrix4(o.matrixWorld);
-        minY = Math.min(minY, box.min.y);
+      if (o.isBone) {
+        const n = o.name.replace(/^.*?mixamorig[:_]?/i, '').toLowerCase();
+        if (n.includes('toe') || n.includes('foot')) feetBones.push(o);
       }
     });
-    if (isFinite(minY)) this.charGroup.position.y += 0.02 - minY;
+    const _bp = new THREE.Vector3();
+    const box = new THREE.Box3();
+    const measure = () => {
+      this.charGroup.updateMatrixWorld(true);
+      let m = Infinity;
+      if (feetBones.length) {
+        for (const b of feetBones) m = Math.min(m, b.getWorldPosition(_bp).y);
+        return m;
+      }
+      mesh.traverse((o) => {
+        if (o.isSkinnedMesh) {
+          o.computeBoundingBox();
+          box.copy(o.boundingBox).applyMatrix4(o.matrixWorld);
+          m = Math.min(m, box.min.y);
+        }
+      });
+      return m;
+    };
+    let minY = Infinity;
+    if (clip) {
+      for (let i = 0; i < 12; i++) {
+        this.mixer.setTime((i / 12) * clip.duration);
+        minY = Math.min(minY, measure());
+      }
+      this.mixer.setTime(0);
+    } else {
+      minY = measure();
+    }
+    let groundY = 0;
+    if (this.stage) {
+      const ray = new THREE.Raycaster(
+        new THREE.Vector3(this.charPos.x, this.charPos.y + 2.5, this.charPos.z),
+        new THREE.Vector3(0, -1, 0), 0, 15
+      );
+      const hits = ray.intersectObject(this.stage.root, true);
+      if (hits.length) groundY = hits[0].point.y;
+    }
+    if (isFinite(minY)) this.charGroup.position.y += groundY - minY;
 
     this.el.charInfo.innerHTML =
       `<div class="lb-ci-class">${CLASSES[lo.cls].name.toUpperCase()}</div>` +
