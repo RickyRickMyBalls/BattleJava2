@@ -15,6 +15,8 @@ const loading = document.getElementById('loading');
 const startScreen = document.getElementById('startScreen');
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.shadowMap.enabled = true; // only lights with castShadow pay for it (lobby spotlight)
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.domElement.classList.add('webgl');

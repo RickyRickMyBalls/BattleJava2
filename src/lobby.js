@@ -104,12 +104,19 @@ export class Lobby {
     const rim = new THREE.DirectionalLight(0x7fd4ff, 1.8);
     rim.position.set(-3.5, 2, -2.5);
     this.scene.add(rim);
-    // hero spotlight from above
+    // hero spotlight from above — the shadow caster
     const spot = new THREE.SpotLight(0xf4f8ff, 40, 14, 0.5, 0.5, 1.4);
     spot.position.set(0.6, 5.2, 0.6);
     spot.target.position.set(0.75, 0.9, 0);
+    spot.castShadow = true;
+    spot.shadow.mapSize.set(1024, 1024);
+    spot.shadow.camera.near = 1;
+    spot.shadow.camera.far = 12;
+    spot.shadow.bias = -0.0003;
+    spot.shadow.radius = 4;
     this.scene.add(spot);
     this.scene.add(spot.target);
+    this.spot = spot;
 
     // Fallback floor only — the Blender stage provides the real one
     const fallbackFloor = new THREE.Mesh(
@@ -117,6 +124,7 @@ export class Lobby {
       new THREE.MeshStandardMaterial({ color: 0x07090d, roughness: 0.6, metalness: 0.3 })
     );
     fallbackFloor.rotation.x = -Math.PI / 2;
+    fallbackFloor.receiveShadow = true;
     this.scene.add(fallbackFloor);
     this.fallbackFloor = fallbackFloor;
 
@@ -255,9 +263,13 @@ export class Lobby {
       const markers = {};
       root.traverse((o) => {
         if (o.name && o.name.toUpperCase().startsWith('FC_')) {
-          markers[o.name.toUpperCase()] = o.getWorldPosition(new THREE.Vector3());
+          markers[o.name.toUpperCase()] = {
+            pos: o.getWorldPosition(new THREE.Vector3()),
+            quat: o.getWorldQuaternion(new THREE.Quaternion()),
+          };
         }
       });
+      root.traverse((o) => { if (o.isMesh) o.receiveShadow = true; });
       this.scene.add(root);
       this.stage = { root, markers };
       for (const s of this.screens) s.visible = false;
@@ -269,21 +281,31 @@ export class Lobby {
   }
 
 
+  // Marker empties drive full placement AND orientation:
+  //   FC_CHAR — character position + facing (rotate the empty's Z in Blender)
+  //   FC_CAM  — camera transform verbatim (aim it like a Blender camera)
+  //   FC_PROP_VEHICLE — vehicle position + rotation
   _applyStageLayout() {
     if (!this.stage) return;
     const mk = this.stage.markers;
     if (mk.FC_CHAR) {
-      this.charPos.copy(mk.FC_CHAR).add(new THREE.Vector3(0, 0.02, 0));
+      this.charPos.copy(mk.FC_CHAR.pos).add(new THREE.Vector3(0, 0.02, 0));
+      this.charQuat = mk.FC_CHAR.quat;
       this.pool.position.set(this.charPos.x, 0.02, this.charPos.z);
       this.cone.position.set(this.charPos.x - 0.05, 2.5, this.charPos.z + 0.2);
+      if (this.spot) {
+        this.spot.position.set(this.charPos.x - 0.15, 5.2, this.charPos.z + 0.6);
+        this.spot.target.position.set(this.charPos.x, 0.9, this.charPos.z);
+      }
     }
     if (mk.FC_CAM) {
-      this.camera.position.copy(mk.FC_CAM);
-      this.camera.lookAt(this.charPos.x, this.charPos.y + 1.0, this.charPos.z);
+      this.camera.position.copy(mk.FC_CAM.pos);
+      this.camera.quaternion.copy(mk.FC_CAM.quat);
     }
     if (mk.FC_PROP_VEHICLE && this.vehicleWrap) {
-      this.vehicleWrap.position.set(mk.FC_PROP_VEHICLE.x, 0, mk.FC_PROP_VEHICLE.z);
-      if (this.vehicleLamp) this.vehicleLamp.position.set(mk.FC_PROP_VEHICLE.x, 2.2, mk.FC_PROP_VEHICLE.z);
+      this.vehicleWrap.position.set(mk.FC_PROP_VEHICLE.pos.x, 0, mk.FC_PROP_VEHICLE.pos.z);
+      this.vehicleWrap.quaternion.copy(mk.FC_PROP_VEHICLE.quat);
+      if (this.vehicleLamp) this.vehicleLamp.position.set(mk.FC_PROP_VEHICLE.pos.x, 2.2, mk.FC_PROP_VEHICLE.pos.z);
     }
   }
 
@@ -300,7 +322,8 @@ export class Lobby {
     const mesh = cloneSkeleton(character.template);
     this.charGroup.add(mesh);
     this.charGroup.position.copy(this.charPos);
-    this.charGroup.rotation.y = -1.25; // three-quarter profile, rifle silhouette readable
+    if (this.charQuat) this.charGroup.quaternion.copy(this.charQuat);
+    else this.charGroup.rotation.y = -1.25; // fallback profile without a stage
     this.scene.add(this.charGroup);
 
     this.mixer = new THREE.AnimationMixer(mesh);
@@ -310,6 +333,9 @@ export class Lobby {
 
     const holder = makeWeaponMount(mesh);
     if (holder) setHeldWeapon(holder, lo.primary, assets.weaponModels);
+
+    // character + held gun cast onto the stage floor
+    this.charGroup.traverse((o) => { if (o.isMesh) o.castShadow = true; });
 
     // ground the pose: crouch clips shift the root, so measure skinned bounds
     // after one animation tick and drop the group so the feet touch the disc
@@ -388,10 +414,6 @@ export class Lobby {
   update(dt) {
     if (!this.active) return;
     if (this.mixer) this.mixer.update(dt);
-    this.sway += dt;
-    if (this.charGroup) {
-      this.charGroup.rotation.y = -1.25 + Math.sin(this.sway * 0.3) * 0.1;
-    }
     if (this.dust) {
       const pos = this.dust.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
