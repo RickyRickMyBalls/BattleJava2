@@ -59,11 +59,60 @@ export function createScopeDisplay(gunModel, def) {
     colorSpace: THREE.SRGBColorSpace,
   });
 
-  // Render targets are filled bottom-up, so a texture sampled with ordinary
-  // UVs comes out vertically mirrored. Flip in the texture transform rather
-  // than asking the owner to re-author the quad's UVs.
-  rt.texture.repeat.set(1, -1);
-  rt.texture.offset.set(0, 1);
+  // Fit the render onto whatever UV rect the quad carries, in whatever
+  // direction it was unwrapped.
+  //
+  // Screens are not authored to a clean 0..1 box (the laser's sits at
+  // u -0.184..0.816, v 0.184..0.816), and the two weapons' unwraps run in
+  // OPPOSITE vertical directions — a fixed flip puts sky at the bottom on one
+  // of them. Neither fact is recoverable from the UV bounds alone, so the axes
+  // are measured: transform the quad's vertices into the view space the scope
+  // renders in (+X right, +Y up on screen) and correlate each UV axis against
+  // it. Positive means the UV runs the same way as the image; negative means
+  // that axis needs mirroring. Costs one pass over ~24 verts, once.
+  //
+  // Sampling is uv * repeat + offset, and the target's 0..1 must land on
+  // [min, max]: repeat = ±1/span, offset = -min/span (or 1 + min/span mirrored).
+  // Note t=0 is the BOTTOM of a render target, so "no mirror" already accounts
+  // for targets filling bottom-up.
+  let fitted = false;
+  const _m = new THREE.Matrix4();
+  const _inv = new THREE.Matrix4();
+  const _v3 = new THREE.Vector3();
+  const fitUv = (mainCamera) => {
+    const pos = screen.geometry.attributes.position;
+    const uv = screen.geometry.attributes.uv;
+    if (!pos || !uv) return;
+    screen.updateWorldMatrix(true, false);
+    mainCamera.updateWorldMatrix(true, false);
+    _m.multiplyMatrices(_inv.copy(mainCamera.matrixWorld).invert(), screen.matrixWorld);
+
+    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+    let su = 0, sv = 0, sx = 0, sy = 0;
+    const pts = [];
+    for (let i = 0; i < uv.count; i++) {
+      const u = uv.getX(i), v = uv.getY(i);
+      if (u < uMin) uMin = u; if (u > uMax) uMax = u;
+      if (v < vMin) vMin = v; if (v > vMax) vMax = v;
+      _v3.fromBufferAttribute(pos, i).applyMatrix4(_m);
+      pts.push(u, v, _v3.x, _v3.y);
+      su += u; sv += v; sx += _v3.x; sy += _v3.y;
+    }
+    const n = uv.count;
+    const mu = su / n, mv = sv / n, mx = sx / n, my = sy / n;
+    let covU = 0, covV = 0;
+    for (let i = 0; i < pts.length; i += 4) {
+      covU += (pts[i] - mu) * (pts[i + 2] - mx);
+      covV += (pts[i + 1] - mv) * (pts[i + 3] - my);
+    }
+    const uSpan = uMax - uMin || 1, vSpan = vMax - vMin || 1;
+    const mirrorU = covU < 0, mirrorV = covV < 0;
+    rt.texture.repeat.set((mirrorU ? -1 : 1) / uSpan, (mirrorV ? -1 : 1) / vSpan);
+    rt.texture.offset.set(
+      mirrorU ? 1 + uMin / uSpan : -uMin / uSpan,
+      mirrorV ? 1 + vMin / vSpan : -vMin / vSpan
+    );
+  };
 
   const camera = new THREE.PerspectiveCamera(cfg.fov || 12, aspect, 0.1, 4000);
   camera.layers.set(0); // never the viewmodel layer
@@ -93,6 +142,9 @@ export function createScopeDisplay(gunModel, def) {
     // Called once per frame, before the main pass.
     render(renderer, scene, mainCamera) {
       if (!screen.visible) return;
+      // Deferred to the first render: the gun has to be mounted and its
+      // matrices current before the quad's screen axes mean anything.
+      if (!fitted) { fitUv(mainCamera); fitted = true; }
       screen.updateMatrixWorld();
       screen.getWorldPosition(_pos);
 
@@ -116,9 +168,15 @@ export function createScopeDisplay(gunModel, def) {
 }
 
 // Put the whole viewmodel on the viewmodel layer so scope cameras skip it.
-// Lights are left on both layers: the muzzle light is parented to the viewmodel
-// but is meant to throw light onto the WORLD, and a light restricted to layer 1
-// would stop lighting anything.
+//
+// This does NOT dim the gun: three gathers lights per render by testing them
+// against the CAMERA's layers, not per object, so the main camera (which
+// enables both) still lights the viewmodel exactly as before. Measured
+// identical either way.
+//
+// Lights inside the viewmodel are put on both layers for that same reason —
+// the muzzle light exists to throw light onto the world, and on layer 1 alone
+// the scope camera would drop it from its pass and miss the muzzle flash.
 export function tagViewmodelLayer(viewmodel) {
   viewmodel.traverse((o) => {
     if (o.isLight) {

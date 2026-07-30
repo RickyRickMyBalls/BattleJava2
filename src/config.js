@@ -178,6 +178,9 @@ export const WEAPONS = {
     icon: '/UNSC/weapons/Spartan-Laser/Spartan-Laser_icon.svg',
     grip: { pos: [0.3, 0.11, 0.04], rot: [-1.5, -0.3, -1.5] },
     fp: { pos: [0.12, 0.18, -0.43], rot: [0, 0, 0] },
+    // Screen material is authored with emissive black and no base map, unlike
+    // the sniper's — scopedisplay.js forces emissive white so the render shows.
+    scope: { material: 'Spartan-Laser_screen', fov: 18, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'charge', chargeTime: 1.1, rpm: 40, dmg: 150, mag: 5, reserve: 5, reload: 3.0,
     spreadHip: 0.004, spreadAds: 0.0015, adsFov: 40,
     falloff: [400, 800, 1], range: 800,
