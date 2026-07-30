@@ -41,6 +41,7 @@ export class World {
     this.coverBoxes = []; // {minX,minY,minZ,maxX,maxY,maxZ}
     this.sectors = [];
     this.hqs = [];
+    this.collision = null; // authored mesh collision; GLB maps only
 
     if (this.def.type === 'glb' && mapData) {
       this.mapW = mapData.w;
