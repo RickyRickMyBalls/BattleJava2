@@ -78,6 +78,7 @@ export const WEAPONS = {
     mode: 'auto', rpm: 620, dmg: 8.5, mag: 60, reserve: 240, reload: 2.3,
     spreadHip: 0.028, spreadAds: 0.007, adsFov: 55,
     falloff: [35, 150, 0.47], range: 320,
+    tracer: { style: 'bolt', color: [1, 0.85, 0.5], len: 2, speed: 420, every: 2, opacity: 0.25 },
     snd: { key: 'shot', rate: 1.05, vol: 0.5 },
     ai: { aiMin: 0, range: 160, burst: [3, 6], interval: 0.11, pause: [0.35, 0.95], spread: 0.008 },
   },
@@ -87,6 +88,7 @@ export const WEAPONS = {
     mode: 'burst', burst: 3, burstInterval: 0.06, rpm: 270, dmg: 11, mag: 36, reserve: 288, reload: 2.4,
     spreadHip: 0.014, spreadAds: 0.004, adsFov: 50,
     falloff: [60, 230, 0.55], range: 420,
+    tracer: { style: 'bolt', color: [0.7, 0.9, 1], len: 5, speed: 500, opacity: 0.5 },
     snd: { key: 'shot', rate: 1.0, vol: 0.5 },
     ai: { aiMin: 0, range: 210, burst: [3, 3], interval: 0.06, pause: [0.55, 1.1], spread: 0.006 },
   },
@@ -96,6 +98,7 @@ export const WEAPONS = {
     mode: 'auto', rpm: 900, dmg: 6, mag: 60, reserve: 360, reload: 2.1,
     spreadHip: 0.042, spreadAds: 0.018, adsFov: 60,
     falloff: [20, 80, 0.35], range: 200,
+    tracer: { style: 'bolt', color: [1, 0.8, 0.45], len: 2.8, speed: 380, every: 2, opacity: 0.5 },
     snd: { key: 'shot', rate: 1.35, vol: 0.35 },
     ai: { aiMin: 0, range: 75, burst: [5, 9], interval: 0.067, pause: [0.3, 0.7], spread: 0.014 },
   },
@@ -106,6 +109,7 @@ export const WEAPONS = {
     grip: { rot: [-Math.PI / 2, -Math.PI / 2, 0] }, // model's long axis differs from the other guns
     spreadHip: 0.01, spreadAds: 0.006, adsFov: 60,
     falloff: [12, 42, 0.2], range: 90,
+    tracer: { style: 'bolt', color: [1, 0.7, 0.4], len: 1.6, speed: 300, every: 3, opacity: 0.5 }, // per pellet -> keep sparse
     snd: { key: 'shot', rate: 0.62, vol: 0.75 },
     ai: { aiMin: 0, range: 32, burst: [1, 1], interval: 1.0, pause: [0.9, 1.5], spread: 0.012 },
   },
@@ -115,6 +119,7 @@ export const WEAPONS = {
     mode: 'semi', rpm: 260, dmg: 20, mag: 15, reserve: 135, reload: 2.4,
     spreadHip: 0.012, spreadAds: 0.0025, adsFov: 38,
     falloff: [80, 300, 0.6], range: 500,
+    tracer: { style: 'bolt', color: [0.75, 0.92, 1], len: 5.5, speed: 520, opacity: 0.5 },
     snd: { key: 'dmrShot', rate: 1.0, vol: 0.55 },
     ai: { aiMin: 40, range: 260, burst: [1, 2], interval: 0.4, pause: [0.9, 1.6], spread: 0.006 },
   },
@@ -124,7 +129,7 @@ export const WEAPONS = {
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,
     falloff: [200, 500, 0.8], range: 700,
-    tracer: { color: [1, 0.9, 0.6], life: 0.25 },
+    tracer: { style: 'vapor', color: [1, 0.9, 0.6], life: 0.85, drift: 0.35, opacity: 0.55 }, // lingering smoke trail
     snd: { key: 'sniperShot', rate: 1.0, vol: 0.65 },
     ai: { aiMin: 60, range: 320, burst: [1, 1], interval: 1.5, pause: [2.8, 4.8], spread: 0.005 },
   },
@@ -143,7 +148,7 @@ export const WEAPONS = {
     mode: 'charge', chargeTime: 1.1, rpm: 40, dmg: 150, mag: 5, reserve: 5, reload: 3.0,
     spreadHip: 0.004, spreadAds: 0.0015, adsFov: 40,
     falloff: [400, 800, 1], range: 800,
-    tracer: { color: [1, 0.15, 0.1], life: 0.3, thick: true },
+    tracer: { style: 'beam', color: [1, 0.15, 0.1], life: 0.3, opacity: 0.85 }, // it IS a laser
     snd: { key: 'sniperShot', rate: 0.55, vol: 0.7 },
     ai: { aiMin: 60, range: 240, burst: [1, 1], interval: 1.5, pause: [6, 10], spread: 0.005 },
   },

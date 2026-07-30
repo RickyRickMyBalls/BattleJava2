@@ -9,7 +9,7 @@ const _to = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _pellet = new THREE.Vector3();
 
-const MAX_TRACERS = 90;
+const MAX_TRACERS = 140;
 const MAX_ROCKETS = 12;
 const MAX_BOOMS = 8;
 
@@ -18,14 +18,28 @@ export class Combat {
     this.game = game;
     this.scene = game.scene;
 
-    // Pooled tracer lines (a single LineSegments with per-vertex color)
+    // Pooled tracer lines (a single LineSegments with per-vertex color).
+    // Two kinds share the pool: moving "bolts" (a short bright segment that
+    // flies from muzzle to impact) and static fading lines (sniper vapor,
+    // laser beams, rocket smoke).
     this.tracerGeo = new THREE.BufferGeometry();
     this.tracerPos = new Float32Array(MAX_TRACERS * 6);
     this.tracerCol = new Float32Array(MAX_TRACERS * 6);
     this.tracerGeo.setAttribute('position', new THREE.BufferAttribute(this.tracerPos, 3));
     this.tracerGeo.setAttribute('color', new THREE.BufferAttribute(this.tracerCol, 3));
-    this.tracerLife = new Float32Array(MAX_TRACERS);
+    this.tracers = [];
+    for (let i = 0; i < MAX_TRACERS; i++) {
+      this.tracers.push({
+        active: false, mode: 0,               // 0 = static fade, 1 = bolt
+        ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0,   // static endpoints
+        dx: 0, dy: 0, dz: 0, dist: 0,               // bolt path (a* = origin)
+        head: 0, len: 0, speed: 0,                  // bolt segment state
+        life: 0, maxLife: 0, drift: 0,
+        r: 1, g: 1, b: 1,
+      });
+    }
     this.tracerHead = 0;
+    this._shotCount = new Map(); // per-weapon counter for tracer-every-Nth
     const mat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
     this.tracerMesh = new THREE.LineSegments(this.tracerGeo, mat);
     this.tracerMesh.frustumCulled = false;
@@ -153,7 +167,7 @@ export class Combat {
         }
       }
       // smoke-ish trail
-      this.spawnTracer(ox, oy, oz, r.pos.x, r.pos.y, r.pos.z, null, [1, 0.75, 0.4], 0.25);
+      this.spawnTracer(ox, oy, oz, r.pos.x, r.pos.y, r.pos.z, null, [1, 0.75, 0.4], 0.25, 0, 0.6);
       if (hit) {
         r.active = false;
         r.mesh.visible = false;
@@ -197,14 +211,26 @@ export class Combat {
     const endY = from.y + dir.y * range * endT;
     const endZ = from.z + dir.z * range * endT;
 
-    const trc = def.tracer;
-    if (trc && trc.thick) {
-      // beam: three slightly offset lines
+    const trc = def.tracer || {};
+    const style = trc.style || (trc.thick ? 'beam' : 'bolt');
+    const alpha = trc.opacity ?? 1;
+    if (style === 'beam') {
+      // laser: three slightly offset full-length lines, fading out
       for (let i = -1; i <= 1; i++) {
-        this.spawnTracer(from.x + i * 0.03, from.y + i * 0.03, from.z, endX, endY, endZ, shooter.team, trc.color, trc.life);
+        this.spawnTracer(from.x + i * 0.03, from.y + i * 0.03, from.z, endX, endY, endZ, shooter.team, trc.color, trc.life, 0, alpha);
       }
+    } else if (style === 'vapor') {
+      // sniper: instant full-length trail that lingers, rises and fades
+      this.spawnTracer(from.x, from.y, from.z, endX, endY, endZ, shooter.team, trc.color, trc.life || 0.85, trc.drift ?? 0.35, alpha);
     } else {
-      this.spawnTracer(from.x, from.y, from.z, endX, endY, endZ, shooter.team, trc && trc.color, trc && trc.life);
+      // ballistic bolt; `every` spawns a tracer only on every Nth shot
+      const every = trc.every || 1;
+      const n = (this._shotCount.get(def.key) || 0) + 1;
+      this._shotCount.set(def.key, n);
+      if (n % every === 0) {
+        this.spawnBolt(from.x, from.y, from.z, dir.x, dir.y, dir.z, range * endT,
+          shooter.team, trc.color, trc.len || 4, trc.speed || 420, alpha);
+      }
     }
 
     if (hit) {
@@ -219,18 +245,41 @@ export class Combat {
     }
   }
 
-  spawnTracer(ax, ay, az, bx, by, bz, team, color, life) {
-    const i = this.tracerHead;
+  _tracerSlot() {
+    const t = this.tracers[this.tracerHead];
     this.tracerHead = (this.tracerHead + 1) % MAX_TRACERS;
-    const p = this.tracerPos, c = this.tracerCol;
-    p[i * 6] = ax; p[i * 6 + 1] = ay; p[i * 6 + 2] = az;
-    p[i * 6 + 3] = bx; p[i * 6 + 4] = by; p[i * 6 + 5] = bz;
+    return t;
+  }
+
+  // Static line that fades out over its life (rocket smoke, sniper vapor,
+  // laser beams). drift > 0 makes the whole line rise like smoke.
+  spawnTracer(ax, ay, az, bx, by, bz, team, color, life, drift = 0, opacity = 1) {
+    const t = this._tracerSlot();
+    t.active = true; t.mode = 0;
+    t.ax = ax; t.ay = ay; t.az = az;
+    t.bx = bx; t.by = by; t.bz = bz;
+    t.life = t.maxLife = life || 0.09;
+    t.drift = drift;
+    // additive blending: opacity bakes into the color intensity
     const col = color || (team === 0 ? [0.55, 0.8, 1] : [1, 0.6, 0.4]);
-    c[i * 6] = col[0]; c[i * 6 + 1] = col[1]; c[i * 6 + 2] = col[2];
-    c[i * 6 + 3] = col[0]; c[i * 6 + 4] = col[1]; c[i * 6 + 5] = col[2];
-    this.tracerLife[i] = life || 0.09;
-    this.tracerGeo.attributes.position.needsUpdate = true;
-    this.tracerGeo.attributes.color.needsUpdate = true;
+    t.r = col[0] * opacity; t.g = col[1] * opacity; t.b = col[2] * opacity;
+  }
+
+  // Short bright segment that travels from the muzzle to the impact point.
+  spawnBolt(fx, fy, fz, dx, dy, dz, dist, team, color, len, speed, opacity = 1) {
+    const t = this._tracerSlot();
+    t.active = true; t.mode = 1;
+    t.ax = fx; t.ay = fy; t.az = fz;
+    t.dx = dx; t.dy = dy; t.dz = dz;
+    t.dist = dist; t.head = 0;
+    t.len = len; t.speed = speed;
+    const col = color || (team === 0 ? [0.55, 0.8, 1] : [1, 0.6, 0.4]);
+    t.r = col[0] * opacity; t.g = col[1] * opacity; t.b = col[2] * opacity;
+  }
+
+  _clearTracer(o) {
+    const p = this.tracerPos;
+    p[o + 3] = p[o]; p[o + 4] = p[o + 1]; p[o + 5] = p[o + 2]; // degenerate
   }
 
   spawnSpark(x, y, z) {
@@ -245,18 +294,38 @@ export class Combat {
     this._updateRockets(dt);
 
     let dirty = false;
+    const p = this.tracerPos, c = this.tracerCol;
     for (let i = 0; i < MAX_TRACERS; i++) {
-      if (this.tracerLife[i] > 0) {
-        this.tracerLife[i] -= dt;
-        if (this.tracerLife[i] <= 0) {
-          this.tracerPos[i * 6 + 3] = this.tracerPos[i * 6];
-          this.tracerPos[i * 6 + 4] = this.tracerPos[i * 6 + 1];
-          this.tracerPos[i * 6 + 5] = this.tracerPos[i * 6 + 2];
-          dirty = true;
-        }
+      const t = this.tracers[i];
+      if (!t.active) continue;
+      dirty = true;
+      const o = i * 6;
+      if (t.mode === 1) {
+        // bolt: head flies forward, tail trails by len, dies at impact
+        t.head += t.speed * dt;
+        const tail = Math.max(0, t.head - t.len);
+        if (tail >= t.dist) { t.active = false; this._clearTracer(o); continue; }
+        const head = Math.min(t.head, t.dist);
+        p[o] = t.ax + t.dx * tail; p[o + 1] = t.ay + t.dy * tail; p[o + 2] = t.az + t.dz * tail;
+        p[o + 3] = t.ax + t.dx * head; p[o + 4] = t.ay + t.dy * head; p[o + 5] = t.az + t.dz * head;
+        // dim tail -> bright head reads as motion
+        c[o] = t.r * 0.25; c[o + 1] = t.g * 0.25; c[o + 2] = t.b * 0.25;
+        c[o + 3] = t.r; c[o + 4] = t.g; c[o + 5] = t.b;
+      } else {
+        t.life -= dt;
+        if (t.life <= 0) { t.active = false; this._clearTracer(o); continue; }
+        if (t.drift) { t.ay += t.drift * dt; t.by += t.drift * dt; }
+        const f = t.life / t.maxLife;
+        p[o] = t.ax; p[o + 1] = t.ay; p[o + 2] = t.az;
+        p[o + 3] = t.bx; p[o + 4] = t.by; p[o + 5] = t.bz;
+        c[o] = t.r * f; c[o + 1] = t.g * f; c[o + 2] = t.b * f;
+        c[o + 3] = t.r * f; c[o + 4] = t.g * f; c[o + 5] = t.b * f;
       }
     }
-    if (dirty) this.tracerGeo.attributes.position.needsUpdate = true;
+    if (dirty) {
+      this.tracerGeo.attributes.position.needsUpdate = true;
+      this.tracerGeo.attributes.color.needsUpdate = true;
+    }
 
     for (const s of this.sparks) {
       if (s.life > 0) {

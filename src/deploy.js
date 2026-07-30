@@ -33,6 +33,9 @@ export class DeployScreen {
 
     this.post = null;      // edge-outline render pipeline, built lazily
     this._styled = false;  // map-mode material dimming active
+    // legacy triangle-wireframe overlay on Collision_floor meshes; replaced
+    // by the world-space shader grid — flip to true to bring it back
+    this.meshWireframe = false;
 
     this._buildDom();
     window.addEventListener('resize', () => {
@@ -253,7 +256,39 @@ export class DeployScreen {
     const fog = this.game.scene.fog;
     if (fog && !this._fogFar) { this._fogFar = fog.far; this._fogNear = fog.near; }
     if (fog) { fog.near = 4000; fog.far = 8000; }
+    this._buildFloorEdges();
     this._applyMapStyle(true);
+  }
+
+  // White line-work on the floor-collision structures (bridges, roads,
+  // tunnels) so they read as blueprints on the tactical map.
+  _buildFloorEdges() {
+    if (!this.meshWireframe) return;
+    if (this._floorEdgesFor === this.game.world.def) return;
+    this._floorEdgesFor = this.game.world.def;
+    if (this._floorEdges) { this.game.scene.remove(this._floorEdges); this._floorEdges = null; }
+    let parent = null;
+    this.game.scene.traverse((o) => { if (!parent && /^collision_floor/i.test(o.name)) parent = o; });
+    if (!parent) return;
+    this.game.scene.updateMatrixWorld(true);
+    const group = new THREE.Group();
+    const mat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.1, depthWrite: false });
+    this._floorEdgeMat = mat;
+    parent.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return;
+      // full wireframe: every triangle edge, blueprint-grid look
+      const ls = new THREE.LineSegments(new THREE.WireframeGeometry(o.geometry), mat);
+      ls.matrixAutoUpdate = false;
+      ls.matrix.copy(o.matrixWorld);
+      group.add(ls);
+    });
+    // lift the lines off the surfaces they trace — coplanar lines z-fight
+    // (flicker) against their own mesh; from the overhead camera ~1m of
+    // offset is invisible but settles the depth test for good
+    group.position.y = 1.0;
+    group.visible = false;
+    this.game.scene.add(group);
+    this._floorEdges = group;
   }
 
   hide() {
@@ -272,6 +307,7 @@ export class DeployScreen {
     if (on === this._styled) return;
     this._styled = on;
     const scene = this.game.scene;
+    if (this._floorEdges) this._floorEdges.visible = on && this.meshWireframe;
     if (on) {
       this._bgBackup = scene.background;
       this._mapBg = new THREE.Color(0x060b16);
@@ -326,11 +362,17 @@ export class DeployScreen {
         res: { value: size.clone() },
         near: { value: this.camera.near },
         far: { value: this.camera.far },
-        // dense imported meshes turn the normal-edge pass into noise — depth only
+        // dense imported meshes turn the normal-edge pass into noise — depth
+        // only; floor structures get real EdgesGeometry lines instead
         thinAmp: { value: this.game.world.def.type === 'glb' ? 0.0 : 1.0 },
+        thinThresh: { value: new THREE.Vector2(0.35, 0.8) },
+        thinCol: { value: new THREE.Vector3(0.06, 0.22, 0.45) },
         depthRange: { value: this.game.world.def.type === 'glb' ? new THREE.Vector2(3.5, 7.0) : new THREE.Vector2(1.0, 2.2) },
         // renderer may store logarithmic depth — decode must match
         logDepth: { value: renderer.capabilities.logarithmicDepthBuffer ? 1.0 : 0.0 },
+        // world-position reconstruction for the tactical grid
+        projInv: { value: new THREE.Matrix4() },
+        camMat: { value: new THREE.Matrix4() },
       },
       vertexShader: /* glsl */`
         varying vec2 vUv;
@@ -344,7 +386,20 @@ export class DeployScreen {
         uniform sampler2D tColor, tDepth, tNormal;
         uniform vec2 res;
         uniform float near, far, thinAmp, logDepth;
-        uniform vec2 depthRange;
+        uniform vec2 depthRange, thinThresh;
+        uniform vec3 thinCol;
+        uniform mat4 projInv, camMat;
+
+        // ---- tactical grid config (world meters) ----
+        #define GRID_STEP  3.0     // minor line spacing
+        #define GRID_MID   5.0     // every 5th minor line -> mid line (15m)
+        #define GRID_MAJOR 35.0    // every 35th minor line -> major line (105m)
+
+        // 1.0 on a grid line (~1px wide, antialiased), 0.0 between lines
+        float gridLine(float coord, float spacing) {
+          float d = abs(fract(coord / spacing - 0.5) - 0.5) * spacing / max(fwidth(coord), 1e-4);
+          return 1.0 - min(d, 1.0);
+        }
 
         float readDepth(vec2 uv) {
           float z = texture2D(tDepth, uv).x;
@@ -375,15 +430,33 @@ export class DeployScreen {
           nd = max(nd, distance(texture2D(tNormal, vUv - vec2(px.x, 0.0)).rgb, n));
           nd = max(nd, distance(texture2D(tNormal, vUv + vec2(0.0, px.y)).rgb, n));
           nd = max(nd, distance(texture2D(tNormal, vUv - vec2(0.0, px.y)).rgb, n));
-          float thin = smoothstep(0.35, 0.8, nd) * (1.0 - thick) * thinAmp;
+          float thin = smoothstep(thinThresh.x, thinThresh.y, nd) * (1.0 - thick) * thinAmp;
 
           vec3 col = base.rgb
-            + thin * vec3(0.06, 0.22, 0.45)
+            + thin * thinCol
             + thick * vec3(0.25, 0.55, 0.95);
+
+          float bg = step(0.99999, texture2D(tDepth, vUv).x);
+
+          // ---- tactical grid: world-space lines draped over the terrain ----
+          // reconstruct this pixel's world position from its depth
+          vec2 ndc = vUv * 2.0 - 1.0;
+          vec4 vr = projInv * vec4(ndc, -1.0, 1.0);
+          vec3 dir = vr.xyz / vr.w;
+          dir /= -dir.z;                       // view ray scaled to viewZ = -1
+          vec3 wpos = (camMat * vec4(dir * c, 1.0)).xyz;
+
+          float gMinor = max(gridLine(wpos.x, GRID_STEP), gridLine(wpos.z, GRID_STEP));
+          float gMid   = max(gridLine(wpos.x, GRID_STEP * GRID_MID), gridLine(wpos.z, GRID_STEP * GRID_MID));
+          float gMajor = max(gridLine(wpos.x, GRID_STEP * GRID_MAJOR), gridLine(wpos.z, GRID_STEP * GRID_MAJOR));
+          float onGeom = 1.0 - bg;
+          // minor: dark, faint  |  mid: white  |  major: bright blue
+          col = mix(col, vec3(0.004), gMinor * 0.25 * (1.0 - max(gMid, gMajor)) * onGeom);
+          col = mix(col, vec3(0.55, 0.60, 0.66), gMid * 0.40 * (1.0 - gMajor) * onGeom);
+          col = mix(col, vec3(0.08, 0.42, 1.00), gMajor * 0.85 * onGeom);
 
           // outside the battlefield (no geometry): dark tactical backdrop
           // with a faint blocky pattern + coarse grid, instead of flat sky
-          float bg = step(0.99999, texture2D(tDepth, vUv).x);
           vec2 cell = floor(vUv * res / 26.0);
           float h = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
           vec3 pat = vec3(0.016, 0.024, 0.038) + h * vec3(0.010, 0.014, 0.020);
@@ -414,6 +487,19 @@ export class DeployScreen {
     }
     if (!this.post) this._initPost(renderer);
     const p = this.post;
+
+    // wireframe density scales with zoom: from high up the terrain triangles
+    // are subpixel and the full grid would white out the map — fade it in as
+    // the camera drops and the lines actually resolve
+    if (this._floorEdgeMat) {
+      this._floorEdgeMat.opacity = THREE.MathUtils.clamp(
+        THREE.MathUtils.mapLinear(this.h, 700, 220, 0.10, 0.45), 0.10, 0.45);
+    }
+
+    // grid shader reconstructs world positions from this frame's camera
+    this.camera.updateMatrixWorld();
+    p.material.uniforms.projInv.value.copy(this.camera.projectionMatrixInverse);
+    p.material.uniforms.camMat.value.copy(this.camera.matrixWorld);
 
     renderer.setRenderTarget(p.rtColor);
     renderer.render(scene, this.camera);

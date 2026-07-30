@@ -209,6 +209,9 @@ export class Player {
     const s = this.soldier;
     s.spawnAt(x, z);
     if (s.mesh) s.mesh.visible = false;
+    // the deploy dive restores map styling while we're still "dead", which
+    // leaves the viewmodel hidden — spawning always brings the gun back
+    this.viewmodel.visible = !this.freecam;
   }
 
   startReload() {
