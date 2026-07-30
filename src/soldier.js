@@ -117,6 +117,14 @@ export class Soldier {
     this.mesh.visible = !this.isPlayer;
     this.game.scene.add(this.mesh);
     this._initWeaponMount();
+    // head bone for the spectate/helmet camera
+    this.headBone = null;
+    this.mesh.traverse((o) => {
+      if (!this.headBone && o.isBone &&
+          o.name.replace(/^.*?mixamorig[:_]?/i, '').replace(/[:_\s]/g, '').toLowerCase() === 'head') {
+        this.headBone = o;
+      }
+    });
   }
 
   // Mount point on the right hand for the held weapon.
@@ -395,6 +403,7 @@ export class Soldier {
     if (d > 220) interval = 0.2;
     else if (d > 120) interval = 0.1;
     else if (d > 60) interval = 1 / 30;
+    if (this.game.spectatedSoldier === this) interval = 0; // live feed needs full rate
     if (this.animAccum < interval) return;
     const step = this.animAccum;
     this.animAccum = 0;

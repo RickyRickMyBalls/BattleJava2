@@ -181,6 +181,34 @@
     .dp-sq-btn.leave { color: #ff9d94; border-color: rgba(255,90,77,0.4); background: rgba(255,90,77,0.08); }
     .dp-sq-btn.leave:hover { border-color: var(--hud-red); background: rgba(255,90,77,0.2); }
     .dp-sq-members { margin-top: 4px; padding-top: 3px; border-top: 1px solid rgba(127,212,255,0.12); }
+    .watchable { cursor: pointer; }
+    .dp-mate.watchable:hover, .dp-slot.watchable:hover { color: var(--hud-cyan); border-color: var(--hud-cyan); }
+
+    /* ---- Helmet-cam feed ---- */
+    .dp-pip {
+      position: absolute; right: 24px; bottom: 100px; width: 322px;
+      background: var(--hud-bg); border: 1px solid var(--hud-cyan-dim); pointer-events: auto;
+    }
+    .dp-pip-head {
+      display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+      font-size: 10px; letter-spacing: 2px; color: #cfe6f5;
+      border-bottom: 1px solid rgba(127,212,255,0.15);
+    }
+    #dpPipHp { margin-left: auto; color: #3ddc7a; }
+    #dpPipClose { cursor: pointer; background: none; border: none; color: #6e93a8; font-size: 12px; }
+    #dpPipClose:hover { color: var(--hud-red); }
+    .dp-pip-view { height: 180px; position: relative; }
+    .dp-pip-view::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background:
+        repeating-linear-gradient(0deg, rgba(127,212,255,0.03) 0px, rgba(127,212,255,0.03) 1px, transparent 1px, transparent 3px),
+        radial-gradient(ellipse at center, transparent 55%, rgba(2,6,10,0.5) 100%);
+    }
+    .dp-pip-kia {
+      position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+      font-size: 26px; letter-spacing: 8px; color: var(--hud-red);
+      text-shadow: 0 0 14px rgba(0,0,0,0.9); background: rgba(20,4,4,0.25); z-index: 1;
+    }
     .dp-squad-head { font-size: 10px; letter-spacing: 3px; color: #6e93a8; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
     #dpTeamBtn {
       cursor: pointer; background: rgba(127,212,255,0.08); color: var(--hud-cyan);

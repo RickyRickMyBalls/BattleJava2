@@ -42,6 +42,7 @@ export class Game {
     this.paused = false;
     this.timeScale = 1;
     this.spectating = false;
+    this.spectatedSoldier = null; // deploy-screen helmet-cam target
 
     this._buildTeams();
 

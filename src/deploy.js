@@ -9,6 +9,13 @@ import { terrainHeight } from './world.js';
 const _v = new THREE.Vector3();
 const EASE = (t) => t * t * (3 - 2 * t);
 
+// Helmet-cam mount relative to the head bone (meters, scale-compensated
+// holder like the weapon grip). Orientation is stabilized per-frame from the
+// soldier's yaw — position inherits the head bob, horizon stays level.
+const HEAD_CAM = { pos: [0, 0.12, 0.10] };
+const _pq = new THREE.Quaternion();
+const _pe = new THREE.Euler();
+
 export class DeployScreen {
   constructor(game) {
     this.game = game;
@@ -53,6 +60,14 @@ export class DeployScreen {
           <div class="dp-squad-head">SQUADS <button id="dpTeamBtn"></button></div>
           <div id="dpSquad"></div>
         </div>
+        <div class="dp-pip" id="dpPip" style="display:none">
+          <div class="dp-pip-head">
+            <span id="dpPipName"></span>
+            <span id="dpPipHp"></span>
+            <button id="dpPipClose">✕</button>
+          </div>
+          <div class="dp-pip-view" id="dpPipView"><div class="dp-pip-kia" id="dpPipKia">K.I.A.</div></div>
+        </div>
         <div class="dp-bottom">
           <div class="dp-loadout">
             <div class="dp-lo-head">
@@ -78,7 +93,17 @@ export class DeployScreen {
       customize: el.querySelector('#dpCustomize'),
       deploy: el.querySelector('#dpDeploy'),
       teamBtn: el.querySelector('#dpTeamBtn'),
+      pip: el.querySelector('#dpPip'),
+      pipName: el.querySelector('#dpPipName'),
+      pipHp: el.querySelector('#dpPipHp'),
+      pipView: el.querySelector('#dpPipView'),
+      pipKia: el.querySelector('#dpPipKia'),
     };
+    el.querySelector('#dpPipClose').onclick = () => this.unwatch();
+    this.watched = null;
+    this.pipCamera = null;
+    this.pipHolder = null;
+    this.kiaTimer = 0;
     this.el.teamBtn.onclick = () => {
       const g = this.game;
       if (g.setPlayerTeam(1 - g.playerTeam)) {
@@ -205,6 +230,7 @@ export class DeployScreen {
 
   hide() {
     this.visible = false;
+    this.unwatch();
     this.el.root.style.display = 'none';
     this.game.menuOpen = this.game.armory ? this.game.armory.visible : false;
     const fog = this.game.scene.fog;
@@ -220,7 +246,8 @@ export class DeployScreen {
     const scene = this.game.scene;
     if (on) {
       this._bgBackup = scene.background;
-      scene.background = new THREE.Color(0x14243a);
+      this._mapBg = new THREE.Color(0x14243a);
+      scene.background = this._mapBg;
       this._dimmed = [];
       this._ghosts = [];
       const seen = new Set();
@@ -343,6 +370,7 @@ export class DeployScreen {
     const scene = this.game.scene;
     if (!this._styled || this.transition) {
       renderer.render(scene, this.camera);
+      this._renderPip(renderer);
       return;
     }
     if (!this.post) this._initPost(renderer);
@@ -360,6 +388,7 @@ export class DeployScreen {
 
     renderer.setRenderTarget(null);
     renderer.render(p.quadScene, p.quadCam);
+    this._renderPip(renderer);
   }
 
   setTimer(t) {
@@ -405,6 +434,7 @@ export class DeployScreen {
       toQuat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ')),
     };
     this.el.root.classList.add('transitioning');
+    this.unwatch();
     this._applyMapStyle(false); // the dive shows the world in full color
   }
 
@@ -438,6 +468,7 @@ export class DeployScreen {
     this._updateMarkers();
     this._drawDots();
     this._updateDeployButton();
+    this._updatePip(dt);
 
     this.squadRefresh -= dt;
     if (this.squadRefresh <= 0) {
@@ -518,6 +549,102 @@ export class DeployScreen {
     this.el.deploy.textContent = waiting ? `DEPLOY IN ${Math.ceil(this.timer)}` : 'DEPLOY';
   }
 
+  // ------------------------------------------------------- helmet cam --
+  watch(soldier) {
+    if (!soldier || !soldier.alive || soldier.isPlayer || !soldier.headBone) return;
+    this.unwatch();
+    if (!this.pipCamera) {
+      this.pipCamera = new THREE.PerspectiveCamera(72, 16 / 9, 0.08, 2000);
+    }
+    soldier.mesh.updateMatrixWorld(true);
+    const ws = new THREE.Vector3();
+    soldier.headBone.getWorldScale(ws);
+    this.pipHolder = new THREE.Group();
+    this.pipHolder.scale.setScalar(1 / (ws.x || 1));
+    soldier.headBone.add(this.pipHolder);
+    this.pipCamera.position.set(...HEAD_CAM.pos);
+    this.pipHolder.add(this.pipCamera);
+
+    this.watched = soldier;
+    this.game.spectatedSoldier = soldier;
+    this.kiaTimer = 0;
+    this.el.pip.style.display = 'block';
+    this.el.pipKia.style.display = 'none';
+    this.el.pipName.textContent = `${soldier.name} · ${soldier.cls.toUpperCase()}`;
+  }
+
+  unwatch() {
+    if (this.pipHolder && this.pipHolder.parent) this.pipHolder.parent.remove(this.pipHolder);
+    this.pipHolder = null;
+    this.watched = null;
+    this.game.spectatedSoldier = null;
+    this.kiaTimer = 0;
+    this.el.pip.style.display = 'none';
+  }
+
+  _updatePip(dt) {
+    if (!this.watched) return;
+    const s = this.watched;
+    this.el.pipHp.textContent = s.alive ? `${Math.max(0, Math.round(s.shield + s.health))} HP` : '';
+    if (!s.alive && this.kiaTimer <= 0) {
+      this.kiaTimer = 1.4; // linger on the death cam, then hop to a squadmate
+      this.el.pipKia.style.display = 'flex';
+    }
+    if (this.kiaTimer > 0) {
+      this.kiaTimer -= dt;
+      if (this.kiaTimer <= 0) {
+        const squad = s.squad;
+        const next = squad && squad.members.find((m) => m.alive && !m.isPlayer && m !== s);
+        this.el.pipKia.style.display = 'none';
+        if (next) this.watch(next);
+        else this.unwatch();
+      }
+    }
+  }
+
+  _renderPip(renderer) {
+    if (!this.watched || this.transition) return;
+    const rect = this.el.pipView.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) return;
+
+    this.pipCamera.aspect = rect.width / rect.height;
+    this.pipCamera.updateProjectionMatrix();
+
+    // stabilized orientation: level horizon, facing the soldier's aim yaw
+    this.watched.mesh.updateMatrixWorld(true);
+    this.pipHolder.getWorldQuaternion(_pq);
+    const desired = new THREE.Quaternion().setFromEuler(_pe.set(0, this.watched.yaw + Math.PI, 0, 'YXZ'));
+    this.pipCamera.quaternion.copy(_pq.invert().multiply(desired));
+
+    // lift the tactical-map dimming for this render (uniform-only, no recompiles)
+    const scene = this.game.scene;
+    const dimmed = this._styled;
+    if (dimmed) {
+      for (const d of this._dimmed) d.m.opacity = 1;
+      scene.background = this._bgBackup;
+      if (scene.fog) { scene.fog.near = this._fogNear; scene.fog.far = this._fogFar; }
+    }
+    const meshWasVisible = this.watched.mesh.visible;
+    this.watched.mesh.visible = false; // don't render the inside of their own head
+
+    const x = rect.left;
+    const y = window.innerHeight - rect.bottom;
+    renderer.setScissorTest(true);
+    renderer.setViewport(x, y, rect.width, rect.height);
+    renderer.setScissor(x, y, rect.width, rect.height);
+    renderer.render(scene, this.pipCamera);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+
+    this.watched.mesh.visible = meshWasVisible;
+    if (dimmed) {
+      for (const d of this._dimmed) d.m.opacity = 0.5;
+      scene.background = this._mapBg;
+      if (scene.fog) { scene.fog.near = 4000; scene.fog.far = 8000; }
+    }
+  }
+
   _updateTeamBtn() {
     const red = this.game.playerTeam === 1;
     this.el.teamBtn.textContent = red ? 'DEFECT TO UNSC' : 'DEFECT TO COVENANT';
@@ -529,15 +656,15 @@ export class DeployScreen {
     const squads = g.teams[g.playerTeam].squads;
     const rows = squads.map((sq, i) => {
       const mine = sq === g.playerSquad;
-      const slots = sq.members.map((m) =>
-        `<span class="dp-slot${m.alive ? '' : ' dead'}${m.isPlayer ? ' you' : ''}" title="${m.isPlayer ? 'You' : m.name}">${m.isPlayer ? '★' : m.cls[0].toUpperCase()}</span>`
+      const slots = sq.members.map((m, mi) =>
+        `<span class="dp-slot${m.alive ? '' : ' dead'}${m.isPlayer ? ' you' : ''}${!m.isPlayer && m.alive ? ' watchable' : ''}" data-sq="${i}" data-m="${mi}" title="${m.isPlayer ? 'You' : m.name + ' — click for helmet cam'}">${m.isPlayer ? '★' : m.cls[0].toUpperCase()}</span>`
       ).join('');
       const btn = mine
         ? `<button class="dp-sq-btn leave" data-i="${i}">LEAVE</button>`
         : `<button class="dp-sq-btn" data-i="${i}"${sq.members.length >= 5 ? ' disabled' : ''}>JOIN</button>`;
       const members = mine
-        ? `<div class="dp-sq-members">${sq.members.filter((m) => !m.isPlayer).map((m) =>
-            `<div class="dp-mate${m.alive ? '' : ' dead'}">
+        ? `<div class="dp-sq-members">${sq.members.map((m, mi) => m.isPlayer ? '' :
+            `<div class="dp-mate${m.alive ? '' : ' dead'}${m.alive ? ' watchable' : ''}" data-sq="${i}" data-m="${mi}" title="Click for helmet cam">
               <span class="dp-mate-cls">${m.cls[0].toUpperCase()}</span>
               <span>${m.name}</span>
               <span class="dp-mate-k">${m.kills}</span>
@@ -556,6 +683,14 @@ export class DeployScreen {
         const sq = squads[Number(b.dataset.i)];
         g.joinSquad(sq === g.playerSquad ? null : sq);
         this._updateSquadPanel();
+      };
+    }
+    // click a member (slot or row) → helmet cam
+    for (const elm of this.el.squad.querySelectorAll('.watchable')) {
+      elm.onclick = () => {
+        const sq = squads[Number(elm.dataset.sq)];
+        const m = sq && sq.members[Number(elm.dataset.m)];
+        if (m && m.alive && !m.isPlayer) this.watch(m);
       };
     }
   }
