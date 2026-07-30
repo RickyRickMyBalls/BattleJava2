@@ -63,6 +63,18 @@ export const CFG = {
     fogFar: 120,           // stage fog is tuned tight for the portrait framing
   },
 
+  // Scope screens re-render the world from a second camera. Optics are per
+  // weapon (WEAPONS[k].scope); this is the cost policy.
+  //
+  // Narrowing the fov does NOT reduce cost on its own: three sets
+  // frustumCulled = false on every SkinnedMesh, and assets.js does the same for
+  // weapons and characters, so all 64 soldiers draw whichever way the scope
+  // points. The cull below is done by hand for exactly that reason.
+  scopeRender: {
+    everyNFrames: 2,   // ~30Hz on the glass; imperceptible, halves the cost
+    cullRadius: 2.2,   // soldier bounding sphere for the manual frustum test
+  },
+
   // One of each weapon, laid out in the hangar for the firing range. Placement
   // prefers authored FC_WEAPON_<KEY> empties; these only drive the fallback
   // layout and the pickup feel.

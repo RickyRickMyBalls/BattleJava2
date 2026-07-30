@@ -529,7 +529,9 @@ export class Player {
   // the gun is not actually on screen (dead, freecam, map view).
   renderScope(renderer, scene) {
     if (!this.scopeDisplay || this.freecam || !this.viewmodel.visible) return;
-    this.scopeDisplay.render(renderer, scene, this.camera);
+    // Soldiers are the cullable bulk — 64 of them, all with frustum culling
+    // disabled, so the scope has to reject them itself.
+    this.scopeDisplay.render(renderer, scene, this.camera, this.game.allSoldiers);
   }
 
   updateFreecam(dt) {

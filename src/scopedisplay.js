@@ -19,7 +19,10 @@
 // baked screens instead of all displaying the player's view.
 
 import * as THREE from 'three';
+import { CFG } from './config.js';
 import { deriveDrivenMaterial } from './drivenmaterial.js';
+
+const SR = CFG.scopeRender;
 
 // The viewmodel lives on this layer so the scope camera cannot see the gun it
 // is mounted on. The main camera enables it; the scope camera does not.
@@ -28,6 +31,10 @@ export const VIEWMODEL_LAYER = 1;
 const _pos = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+const _frustum = new THREE.Frustum();
+const _projScreen = new THREE.Matrix4();
+const _sphere = new THREE.Sphere(new THREE.Vector3(), SR.cullRadius);
+const _hidden = [];
 
 export function createScopeDisplay(gunModel, def) {
   const cfg = def && def.scope;
@@ -130,6 +137,7 @@ export function createScopeDisplay(gunModel, def) {
   mat.emissiveIntensity = 1;
   mat.needsUpdate = true;
 
+  let frame = 0;
   const offset = cfg.pos || [0, 0, 0];
   const rot = cfg.rot || [0, 0, 0];
   const rotQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(rot[0], rot[1], rot[2], 'YXZ'));
@@ -139,9 +147,14 @@ export function createScopeDisplay(gunModel, def) {
     camera,
     rt,
 
-    // Called once per frame, before the main pass.
-    render(renderer, scene, mainCamera) {
-      if (!screen.visible) return;
+    // Called once per frame, before the main pass. `cullables` is an optional
+    // list of {mesh, pos} the scope may hide for its own render — see below.
+    render(renderer, scene, mainCamera, cullables) {
+      if (!screen.visible) return false;
+      // Throttled: the target keeps its last contents between renders, so the
+      // glass simply updates at a lower rate. Nothing else in the frame depends
+      // on it being current.
+      if (frame++ % SR.everyNFrames !== 0) return false;
       // Deferred to the first render: the gun has to be mounted and its
       // matrices current before the quad's screen axes mean anything.
       if (!fitted) { fitUv(mainCamera); fitted = true; }
@@ -155,10 +168,30 @@ export function createScopeDisplay(gunModel, def) {
       camera.position.copy(_pos).add(_off.set(offset[0], offset[1], offset[2]).applyQuaternion(_q));
       camera.updateMatrixWorld();
 
+      // Cull by hand. Soldiers carry frustumCulled = false (skinned bounds are
+      // unreliable once scaled), so three submits all 64 of them however narrow
+      // this camera is — at 5x magnification one is typically in view and the
+      // rest are pure waste. Hiding them for this pass is the whole saving.
+      _hidden.length = 0;
+      if (cullables && cullables.length) {
+        camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+        _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        _frustum.setFromProjectionMatrix(_projScreen);
+        for (const c of cullables) {
+          const m = c.mesh;
+          if (!m || !m.visible) continue; // never un-hide someone else's hide
+          _sphere.center.set(c.pos.x, c.pos.y + 1, c.pos.z);
+          if (!_frustum.intersectsSphere(_sphere)) { m.visible = false; _hidden.push(m); }
+        }
+      }
+
       const prevTarget = renderer.getRenderTarget();
       renderer.setRenderTarget(rt);
       renderer.render(scene, camera);
       renderer.setRenderTarget(prevTarget);
+      for (const m of _hidden) m.visible = true;
+      _hidden.length = 0;
+      return true;
     },
 
     dispose() {
