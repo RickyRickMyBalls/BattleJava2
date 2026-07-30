@@ -50,7 +50,7 @@ export class DeployScreen {
         </div>
         <div class="dp-killed" id="dpKilled"></div>
         <div class="dp-squad" id="dpSquadPanel">
-          <div class="dp-squad-head">ALPHA SQUAD</div>
+          <div class="dp-squad-head">SQUADS</div>
           <div id="dpSquad"></div>
         </div>
         <div class="dp-bottom">
@@ -469,14 +469,14 @@ export class DeployScreen {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.el.dots.width, this.el.dots.height);
     const g = this.game;
-    const squad = g.teams[g.playerTeam].squads[0];
+    const squad = g.playerSquad;
 
     for (const s of g.teams[g.playerTeam].soldiers) {
       if (!s.alive || s.isPlayer) continue;
       const p = this._project(s.pos.x, s.pos.z);
       if (p.behind) continue;
-      const isSquad = s.squad === squad;
-      ctx.fillStyle = isSquad ? '#9fe8ff' : '#3aa0ff';
+      const isSquad = !!squad && s.squad === squad;
+      ctx.fillStyle = isSquad ? '#3ddc7a' : '#3aa0ff';
       if (isSquad) {
         ctx.save();
         ctx.translate(p.sx, p.sy);
@@ -509,16 +509,37 @@ export class DeployScreen {
 
   _updateSquadPanel() {
     const g = this.game;
-    const squad = g.teams[g.playerTeam].squads[0];
-    const rows = [];
-    for (const m of squad.members) {
-      if (m.isPlayer) continue;
-      rows.push(`<div class="dp-mate${m.alive ? '' : ' dead'}">
-        <span class="dp-mate-cls">${m.cls[0].toUpperCase()}</span>
-        <span>${m.name}</span>
-        <span class="dp-mate-k">${m.kills}</span>
-      </div>`);
-    }
+    const squads = g.teams[g.playerTeam].squads;
+    const rows = squads.map((sq, i) => {
+      const mine = sq === g.playerSquad;
+      const slots = sq.members.map((m) =>
+        `<span class="dp-slot${m.alive ? '' : ' dead'}${m.isPlayer ? ' you' : ''}" title="${m.isPlayer ? 'You' : m.name}">${m.isPlayer ? '★' : m.cls[0].toUpperCase()}</span>`
+      ).join('');
+      const btn = mine
+        ? `<button class="dp-sq-btn leave" data-i="${i}">LEAVE</button>`
+        : `<button class="dp-sq-btn" data-i="${i}"${sq.members.length >= 5 ? ' disabled' : ''}>JOIN</button>`;
+      const members = mine
+        ? `<div class="dp-sq-members">${sq.members.filter((m) => !m.isPlayer).map((m) =>
+            `<div class="dp-mate${m.alive ? '' : ' dead'}">
+              <span class="dp-mate-cls">${m.cls[0].toUpperCase()}</span>
+              <span>${m.name}</span>
+              <span class="dp-mate-k">${m.kills}</span>
+            </div>`).join('')}</div>`
+        : '';
+      return `<div class="dp-sq-row${mine ? ' mine' : ''}">
+        <div class="dp-sq-top">
+          <span class="dp-sq-name">${sq.name.toUpperCase()}</span>
+          <span class="dp-sq-slots">${slots}</span>
+          ${btn}
+        </div>${members}</div>`;
+    });
     this.el.squad.innerHTML = rows.join('');
+    for (const b of this.el.squad.querySelectorAll('.dp-sq-btn')) {
+      b.onclick = () => {
+        const sq = squads[Number(b.dataset.i)];
+        g.joinSquad(sq === g.playerSquad ? null : sq);
+        this._updateSquadPanel();
+      };
+    }
   }
 }

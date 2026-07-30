@@ -89,6 +89,26 @@ export class Game {
     }
     // Alpha squad escorts the player
     this.teams[this.playerTeam].squads[0].followPlayer = true;
+    this.playerSquad = this.teams[this.playerTeam].squads[0];
+  }
+
+  // Join a squad (or null to go lone wolf). The joined squad escorts the
+  // player; the departed squad returns to team-brain control.
+  joinSquad(squad) {
+    if (squad === this.playerSquad) return;
+    const p = this.playerSoldier;
+    if (this.playerSquad) {
+      const arr = this.playerSquad.members;
+      const i = arr.indexOf(p);
+      if (i >= 0) arr.splice(i, 1);
+      this.playerSquad.followPlayer = false;
+    }
+    this.playerSquad = squad || null;
+    p.squad = this.playerSquad;
+    if (squad) {
+      squad.members.push(p);
+      squad.followPlayer = true;
+    }
   }
 
   _initialDeploy() {
@@ -190,10 +210,12 @@ export class Game {
     this.hud.setVitals(this.playerSoldier.shield, this.playerSoldier.health, this.playerSoldier.maxShield);
     this.hud.updateSectors(this.world.sectors);
     this.hud.setTickets(this.teams[0].tickets, this.teams[1].tickets);
-    this.hud.updateSquadList(this.teams[this.playerTeam].squads[0]);
-    const sq = this.teams[this.playerTeam].squads[0];
+    this.hud.updateSquadList(this.playerSquad);
+    const sq = this.playerSquad;
     const nearest = this._nearestObjectiveText();
-    this.hud.setOrder(sq.followPlayer && this.playerActive() ? nearest : `${sq.orderType} ${sq.objective ? sq.objective.id : ''}`);
+    this.hud.setOrder(!sq || (sq.followPlayer && this.playerActive())
+      ? nearest
+      : `${sq.orderType} ${sq.objective ? sq.objective.id : ''}`);
     this.hud.update(dtReal);
 
     this._checkWin();

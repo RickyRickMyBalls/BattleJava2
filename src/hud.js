@@ -132,10 +132,16 @@ export class Hud {
   }
 
   updateSquadList(squad) {
+    const label = document.getElementById('squadLabel');
+    if (label) label.textContent = squad ? `${squad.name.toUpperCase()} SQUAD` : 'NO SQUAD';
+    if (!squad) {
+      this.el.squadList.innerHTML = '<div class="mate dead"><span>lone wolf</span></div>';
+      return;
+    }
     const rows = [];
     for (const m of squad.members) {
       if (m.isPlayer) continue;
-      const hpPct = m.alive ? ((m.shield + m.health) / (CFG.soldier.shield + CFG.soldier.health)) * 100 : 0;
+      const hpPct = m.alive ? ((m.shield + m.health) / (m.maxShield + CFG.soldier.health)) * 100 : 0;
       rows.push(`<div class="mate${m.alive ? '' : ' dead'}"><span>${m.name}</span><span class="hp"><div style="width:${hpPct}%"></div></span></div>`);
     }
     this.el.squadList.innerHTML = rows.join('');
@@ -233,10 +239,11 @@ export class Hud {
       ctx.textBaseline = 'middle';
       ctx.fillText(s.id, X(s.x), Z(s.z));
     }
-    // Friendlies
+    // Friendlies (squadmates in green)
+    const mySquad = this.game.playerSquad;
     for (const s of this.game.teams[this.game.playerTeam].soldiers) {
       if (!s.alive || s.isPlayer) continue;
-      ctx.fillStyle = BLUE;
+      ctx.fillStyle = mySquad && s.squad === mySquad ? '#3ddc7a' : BLUE;
       ctx.fillRect(X(s.pos.x) - 1.5, Z(s.pos.z) - 1.5, 3, 3);
     }
     // Spotted enemies
