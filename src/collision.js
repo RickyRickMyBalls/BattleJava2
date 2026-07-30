@@ -13,11 +13,15 @@ const _down = new THREE.Vector3(0, -1, 0);
 const _point = new THREE.Vector3();
 const _target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
 
-function extractWorldGeometry(parent) {
+// Merge every mesh under `parent` into one world-space position-only geometry.
+// `filter(mesh)` optionally rejects meshes (the lobby stage uses it to drop sky
+// and decor nodes, which have no business in a collision hull).
+export function extractWorldGeometry(parent, filter = null) {
   const parts = [];
   parent.updateMatrixWorld(true);
   parent.traverse((o) => {
     if (!o.isMesh || !o.geometry || !o.geometry.attributes.position) return;
+    if (filter && !filter(o)) return;
     let g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     for (const name of Object.keys(g.attributes)) {
       if (name !== 'position') g.deleteAttribute(name);
