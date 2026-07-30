@@ -3,7 +3,7 @@
 // canvas layer for soldier dots, loadout strip, and the deploy dive transition.
 
 import * as THREE from 'three';
-import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
+import { CFG, TEAM, WEAPONS, CLASSES, GADGETS } from './config.js';
 import { terrainHeight } from './world.js';
 
 const _v = new THREE.Vector3();
@@ -50,10 +50,29 @@ export class DeployScreen {
     el.innerHTML = `
       <canvas id="dpDots"></canvas>
       <div id="dpMapLayer"></div>
+      <div class="dp-vignette"></div>
       <div class="dp-chrome">
         <div class="dp-title">
           <div class="dp-mode">SECTOR CONTROL</div>
           <div class="dp-map">FRONTIER VALLEY</div>
+        </div>
+        <div class="dp-status" id="dpStatus"></div>
+        <div class="dp-header">
+          <div class="dp-tk-row">
+            <span class="dp-tk blue" id="dpTkBlue">400</span>
+            <div class="dp-tkbar blue"><div id="dpTkBarBlue"></div></div>
+            <span class="dp-timer" id="dpTimer">00:00</span>
+            <div class="dp-tkbar red"><div id="dpTkBarRed"></div></div>
+            <span class="dp-tk red" id="dpTkRed">400</span>
+          </div>
+          <div class="dp-chips" id="dpChips"></div>
+          <div class="dp-tc" id="dpTc">
+            <button data-tc="pause" title="Pause (P)">❚❚</button>
+            <button data-tc="1">1x</button>
+            <button data-tc="2">2x</button>
+            <button data-tc="4">4x</button>
+            <button data-tc="8">8x</button>
+          </div>
         </div>
         <div class="dp-killed" id="dpKilled"></div>
         <div class="dp-squad" id="dpSquadPanel">
@@ -68,14 +87,11 @@ export class DeployScreen {
           </div>
           <div class="dp-pip-view" id="dpPipView"><div class="dp-pip-kia" id="dpPipKia">K.I.A.</div></div>
         </div>
+        <div class="dp-load2">
+          <div class="dp-classtabs" id="dpClassTabs"></div>
+          <div class="dp-slotrow" id="dpSlots"></div>
+        </div>
         <div class="dp-bottom">
-          <div class="dp-loadout">
-            <div class="dp-lo-head">
-              <div class="dp-lo-class" id="dpLoClass"></div>
-              <button id="dpCustomize">CUSTOMIZE</button>
-            </div>
-            <div class="dp-lo-icons" id="dpLoIcons"></div>
-          </div>
           <button id="dpDeploy" disabled>DEPLOY</button>
         </div>
         <div class="dp-hint">SCROLL zoom · DRAG pan · CLICK a spawn point</div>
@@ -88,10 +104,17 @@ export class DeployScreen {
       chrome: el.querySelector('.dp-chrome'),
       killed: el.querySelector('#dpKilled'),
       squad: el.querySelector('#dpSquad'),
-      loClass: el.querySelector('#dpLoClass'),
-      loIcons: el.querySelector('#dpLoIcons'),
-      customize: el.querySelector('#dpCustomize'),
+      classTabs: el.querySelector('#dpClassTabs'),
+      slots: el.querySelector('#dpSlots'),
       deploy: el.querySelector('#dpDeploy'),
+      status: el.querySelector('#dpStatus'),
+      tkBlue: el.querySelector('#dpTkBlue'),
+      tkRed: el.querySelector('#dpTkRed'),
+      tkBarBlue: el.querySelector('#dpTkBarBlue'),
+      tkBarRed: el.querySelector('#dpTkBarRed'),
+      timer: el.querySelector('#dpTimer'),
+      chips: el.querySelector('#dpChips'),
+      tc: el.querySelector('#dpTc'),
       teamBtn: el.querySelector('#dpTeamBtn'),
       pip: el.querySelector('#dpPip'),
       pipName: el.querySelector('#dpPipName'),
@@ -115,10 +138,13 @@ export class DeployScreen {
     };
     this.ctx = this.el.dots.getContext('2d');
 
-    this.el.customize.onclick = () => {
-      if (this.game.armory) this.game.armory.show('apply');
-    };
     this.el.deploy.onclick = () => this._onDeployClick();
+    for (const b of this.el.tc.querySelectorAll('button')) {
+      b.onclick = () => {
+        if (b.dataset.tc === 'pause') this.game.togglePause();
+        else this.game.setTimeScale(Number(b.dataset.tc));
+      };
+    }
 
     // pan / zoom on the map layer
     const ml = this.el.mapLayer;
@@ -217,9 +243,11 @@ export class DeployScreen {
     this.h = Math.max(600, this.game.world.mapD * 1.28);
     if (!this._spawnOk(this.selected)) this.selected = 'hq';
     this._buildMarkers();
+    this._buildChips();
     this._resizeCanvas();
     this.refreshLoadout();
     this._updateTeamBtn();
+    this._updateStatus();
     this.game.hud.setMode('map');
     // fog is tuned for ground level; it turns the overhead view milky
     const fog = this.game.scene.fog;
@@ -352,6 +380,17 @@ export class DeployScreen {
           vec3 col = base.rgb
             + thin * vec3(0.06, 0.22, 0.45)
             + thick * vec3(0.25, 0.55, 0.95);
+
+          // outside the battlefield (no geometry): dark tactical backdrop
+          // with a faint blocky pattern + coarse grid, instead of flat sky
+          float bg = step(0.99999, texture2D(tDepth, vUv).x);
+          vec2 cell = floor(vUv * res / 26.0);
+          float h = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+          vec3 pat = vec3(0.016, 0.024, 0.038) + h * vec3(0.010, 0.014, 0.020);
+          float grid = step(0.985, fract(vUv.x * res.x / 108.0)) + step(0.985, fract(vUv.y * res.y / 108.0));
+          pat += grid * vec3(0.010, 0.016, 0.024);
+          col = mix(col, pat, bg);
+
           // render targets hold linear color; convert for the screen
           col = pow(col, vec3(0.4545));
           gl_FragColor = vec4(col, base.a);
@@ -397,16 +436,94 @@ export class DeployScreen {
 
   refreshLoadout() {
     const lo = this.game.playerLoadout;
-    this.el.loClass.textContent = CLASSES[lo.cls].name.toUpperCase();
     const icons = (this.game.armory && this.game.armory.icons) || {};
-    const slot = (key, label) => {
+
+    // class tabs
+    this.el.classTabs.innerHTML = '';
+    for (const [key, def] of Object.entries(CLASSES)) {
+      const b = document.createElement('button');
+      b.textContent = def.name.toUpperCase();
+      b.classList.toggle('sel', lo.cls === key);
+      b.onclick = () => {
+        lo.cls = key;
+        if (!def.secondaries.includes(lo.secondary)) lo.secondary = def.secondaries[0];
+        this.refreshLoadout();
+      };
+      this.el.classTabs.appendChild(b);
+    }
+
+    // slot row: weapons (click → armory) + class gadgets (visual for now)
+    const wslot = (key, label) => {
       const def = WEAPONS[key];
       const img = icons[key]
         ? `<img src="${icons[key]}" draggable="false">`
-        : `<span class="dp-lo-fallback">${def.name.split(' ')[0]}</span>`;
-      return `<div class="dp-lo-slot" title="${def.name}">${img}<span class="dp-lo-num">${label}</span></div>`;
+        : `<span class="dp-slot2-fb">${def.name.split(' ')[0]}</span>`;
+      return `<div class="dp-slot2 wpn" data-armory="1" title="${def.name} — click to customize">${img}<span class="dp-slot2-tag">${label}</span></div>`;
     };
-    this.el.loIcons.innerHTML = slot(lo.primary, '1') + slot(lo.secondary, '2');
+    const gslot = (gkey) => {
+      const g = GADGETS[gkey];
+      if (!g) return '';
+      return `<div class="dp-slot2 gadget" title="${g.name} — coming soon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${g.svg}</svg>
+        <span class="dp-slot2-tag">${g.name}</span>
+      </div>`;
+    };
+    const gadgets = (CLASSES[lo.cls].gadgets || []).map(gslot).join('');
+    this.el.slots.innerHTML =
+      wslot(lo.primary, WEAPONS[lo.primary].name) +
+      wslot(lo.secondary, WEAPONS[lo.secondary].name) +
+      `<div class="dp-slot2-sep"></div>` + gadgets +
+      `<button class="dp-slot2 customize" id="dpCustomize2" title="Open the armory">✛<span class="dp-slot2-tag">CUSTOMIZE</span></button>`;
+    for (const s of this.el.slots.querySelectorAll('[data-armory]')) {
+      s.onclick = () => { if (this.game.armory) this.game.armory.show('apply'); };
+    }
+    const cust = this.el.slots.querySelector('#dpCustomize2');
+    if (cust) cust.onclick = () => { if (this.game.armory) this.game.armory.show('apply'); };
+  }
+
+  _buildChips() {
+    this.el.chips.innerHTML = '';
+    this.chipEls = [];
+    for (const sec of this.game.world.sectors) {
+      const c = document.createElement('span');
+      c.className = 'dp-chip';
+      c.textContent = sec.id;
+      this.el.chips.appendChild(c);
+      this.chipEls.push({ el: c, sec });
+    }
+  }
+
+  _updateHeader() {
+    const g = this.game;
+    this.el.tkBlue.textContent = Math.max(0, Math.ceil(g.teams[0].tickets));
+    this.el.tkRed.textContent = Math.max(0, Math.ceil(g.teams[1].tickets));
+    this.el.tkBarBlue.style.width = `${Math.max(0, (g.teams[0].tickets / CFG.tickets) * 100)}%`;
+    this.el.tkBarRed.style.width = `${Math.max(0, (g.teams[1].tickets / CFG.tickets) * 100)}%`;
+    const t = Math.floor(g.elapsed);
+    this.el.timer.textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    for (const { el, sec } of this.chipEls || []) {
+      el.className = 'dp-chip' +
+        (sec.owner === TEAM.BLUE ? ' blue' : sec.owner === TEAM.RED ? ' red' : '') +
+        (sec.contested ? ' contested' : '');
+    }
+    // time-control states
+    for (const b of this.el.tc.querySelectorAll('button')) {
+      if (b.dataset.tc === 'pause') b.classList.toggle('sel', g.paused);
+      else b.classList.toggle('sel', !g.paused && g.timeScale === Number(b.dataset.tc));
+    }
+  }
+
+  _updateStatus() {
+    const g = this.game;
+    const mine = g.playerTeam;
+    const rows = g.world.sectors.map((sec) => {
+      let cls = 'neutral', txt = 'NEUTRAL';
+      if (sec.contested) { cls = 'contested'; txt = 'CONTESTED'; }
+      else if (sec.owner === mine) { cls = 'mine'; txt = 'SECURED'; }
+      else if (sec.owner !== null) { cls = 'enemy'; txt = 'ENEMY CONTROL'; }
+      return `<div class="dp-st-row ${cls}"><span class="dp-st-id">${sec.id}</span><span>${txt}</span></div>`;
+    });
+    this.el.status.innerHTML = `<div class="dp-st-head">STATUS</div>` + rows.join('');
   }
 
   _onDeployClick() {
@@ -469,11 +586,13 @@ export class DeployScreen {
     this._drawDots();
     this._updateDeployButton();
     this._updatePip(dt);
+    this._updateHeader();
 
     this.squadRefresh -= dt;
     if (this.squadRefresh <= 0) {
       this.squadRefresh = 0.5;
       this._updateSquadPanel();
+      this._updateStatus();
     }
   }
 
@@ -499,6 +618,14 @@ export class DeployScreen {
           (sec.contested ? ' contested' : '') +
           (ok ? ' spawnable' : '') +
           (this.selected === sec.id ? ' sel' : '');
+        // capture-progress arc
+        const prog = Math.abs(sec.progress);
+        if (prog > 2 && prog < 100) {
+          m.el.style.setProperty('--cap', `${prog}%`);
+          m.el.style.setProperty('--capcol', sec.progress > 0 ? '#3aa0ff' : '#ff5a4d');
+        } else {
+          m.el.style.setProperty('--cap', '0%');
+        }
       } else if (m.spawnable) {
         m.el.className = 'dp-hq own' + (this.selected === 'hq' ? ' sel' : '');
       }

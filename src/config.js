@@ -156,12 +156,24 @@ export const PRIMARIES = ['ar', 'br'];
 
 // `shield` overrides the default soldier shield; `model` picks the character
 // mesh for the class (blue team) — Spartans are the only class in MJOLNIR.
+// `gadgets` are visual loadout slots for now (implementations come later).
 export const CLASSES = {
-  assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine' },
-  engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine' },
-  recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine' },
-  support: { name: 'Support', secondaries: ['shotgun'], model: 'marine' },
-  spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70 },
+  assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine', gadgets: ['frag', 'medkit'] },
+  engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine', gadgets: ['repair', 'mines'] },
+  recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine', gadgets: ['sensor', 'frag'] },
+  support: { name: 'Support', secondaries: ['shotgun'], model: 'marine', gadgets: ['ammo', 'medkit'] },
+  spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70, gadgets: ['frag', 'shield'] },
+};
+
+// Gadget registry: line-art slot icons (stroke uses currentColor).
+export const GADGETS = {
+  frag: { name: 'M9 FRAG', svg: '<circle cx="12" cy="14" r="6"/><rect x="10" y="4" width="4" height="3.4"/><circle cx="16.4" cy="5" r="1.8"/>' },
+  medkit: { name: 'MED KIT', svg: '<rect x="4" y="6" width="16" height="13" rx="2"/><path d="M12 9.5v6M9 12.5h6"/>' },
+  repair: { name: 'REPAIR TOOL', svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>' },
+  mines: { name: 'AT MINES', svg: '<path d="M12 5l8 14H4z"/><path d="M12 11v4.5"/>' },
+  sensor: { name: 'MOTION SENSOR', svg: '<circle cx="12" cy="13" r="2"/><path d="M7.5 13a4.5 4.5 0 0 1 9 0M4.5 13a7.5 7.5 0 0 1 15 0"/>' },
+  ammo: { name: 'AMMO PACK', svg: '<rect x="6" y="9" width="3" height="9"/><rect x="10.5" y="6.5" width="3" height="11.5"/><rect x="15" y="9" width="3" height="9"/>' },
+  shield: { name: 'OVERSHIELD', svg: '<path d="M12 3.5l7.5 2.8V12c0 4.6-3.2 7.4-7.5 8.5C7.7 19.4 4.5 16.6 4.5 12V6.3z"/>' },
 };
 
 export const GAME_TYPES = {

@@ -31,6 +31,7 @@ export class Hud {
       order: document.getElementById('order'),
       minimapWrap: document.getElementById('minimapWrap'),
       hint: document.getElementById('hint'),
+      topbar: document.getElementById('topbar'),
       endScreen: document.getElementById('endScreen'),
       endTitle: document.getElementById('endTitle'),
       endStats: document.getElementById('endStats'),
@@ -172,6 +173,7 @@ export class Hud {
     set(this.el.order, fps);
     set(this.el.minimapWrap, fps);
     set(this.el.hint, fps);
+    set(this.el.topbar, fps); // deploy screen has its own header
   }
 
   showEnd(win, stats) {
