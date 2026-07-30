@@ -154,7 +154,7 @@ export const WEAPONS = {
     // authored material name. The camera sits at that mesh and is boresighted
     // to the crosshair (see scopedisplay.js), so pos/rot are nudges from that
     // — both zero is already correct. fov IS the magnification.
-    scope: { material: 'sniper_screen', fov: 12, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
+    scope: { material: 'sniper_screen', fov: 5, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,
     falloff: [200, 500, 0.8], range: 700,
@@ -180,7 +180,7 @@ export const WEAPONS = {
     fp: { pos: [0.12, 0.18, -0.43], rot: [0, 0, 0] },
     // Screen material is authored with emissive black and no base map, unlike
     // the sniper's — scopedisplay.js forces emissive white so the render shows.
-    scope: { material: 'Spartan-Laser_screen', fov: 18, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
+    scope: { material: 'Spartan-Laser_screen', fov: 8, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'charge', chargeTime: 1.1, rpm: 40, dmg: 150, mag: 5, reserve: 5, reload: 3.0,
     spreadHip: 0.004, spreadAds: 0.0015, adsFov: 40,
     falloff: [400, 800, 1], range: 800,
