@@ -107,9 +107,11 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     playerSoldier: null,
     player: null,
     playerTeam: TEAM.BLUE,
-    playerLoadout: session
-      ? session.playerLoadout
-      : { cls: 'assault', primary: 'ar', secondary: 'smg' },
+    // Read through to the session like menuOpen does, rather than capturing the
+    // reference at build time — the arena outlives any single armory visit.
+    get playerLoadout() {
+      return (session && session.playerLoadout) || { cls: 'assault', primary: 'ar', secondary: 'smg' };
+    },
 
     // The lobby is never over, never dead, never bleeding tickets.
     gameOver: false,

@@ -213,6 +213,10 @@ export class LobbyRoam {
       this.player.update(dt);
       this.soldier.update(dt);
       this.arena.combat.update(dt);
+      // Same off-screen pass Game.renderScopes does, so scope screens are live
+      // here too — the lobby is meant to be the test range for exactly this.
+      // Must precede the lobby's own render, which happens right after us.
+      this.player.renderScope(lb.renderer, lb.scene);
       return;
     }
 
