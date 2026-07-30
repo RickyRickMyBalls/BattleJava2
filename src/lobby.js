@@ -203,13 +203,48 @@ export class Lobby {
     this.scene.add(pool);
 
     // faint volumetric cone above the character
-    const cone = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.22, 2.1, 4.6, 28, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.032, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
-    );
+    // Soft-edged volumetric cone: alpha peaks where the view passes through
+    // the "thickest" light (facing fragments) and falls to zero at the
+    // silhouette, so there is no hard edge. Vertical fade melts the bottom.
+    const coneMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: false, // avoids log-depth mismatch; it's a faint additive glow
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      uniforms: {
+        color: { value: new THREE.Color(0xbfe2ff) },
+        strength: { value: 0.16 },
+      },
+      vertexShader: /* glsl */`
+        varying vec3 vNormal;
+        varying vec3 vView;
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          vNormal = normalMatrix * normal;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vView = -mv.xyz;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */`
+        varying vec3 vNormal;
+        varying vec3 vView;
+        varying vec2 vUv;
+        uniform vec3 color;
+        uniform float strength;
+        void main() {
+          float facing = abs(dot(normalize(vView), normalize(vNormal)));
+          float body = pow(facing, 2.2);                    // soft silhouette
+          float vert = smoothstep(0.0, 0.45, vUv.y)         // dissolve at floor
+                     * (1.0 - smoothstep(0.9, 1.0, vUv.y) * 0.4);
+          gl_FragColor = vec4(color, body * vert * strength);
+        }`,
+    });
+    const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 2.1, 4.6, 40, 1, true), coneMat);
     cone.position.set(0.7, 2.5, 0.2);
+    cone.renderOrder = 10;
     this.scene.add(cone);
-    this.spotCone = cone;
 
     // curved wall of hangar "screens" showing a distant battle
     const screenTex = makeScreenTexture();
@@ -377,9 +412,6 @@ export class Lobby {
     this.sway += dt;
     if (this.charGroup) {
       this.charGroup.rotation.y = -1.25 + Math.sin(this.sway * 0.3) * 0.1;
-    }
-    if (this.spotCone) {
-      this.spotCone.material.opacity = 0.03 + Math.sin(this.sway * 1.7) * 0.008;
     }
     if (this.dust) {
       const pos = this.dust.geometry.attributes.position;
