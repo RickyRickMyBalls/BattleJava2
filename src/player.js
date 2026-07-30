@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { CFG, WEAPONS, CLASSES, FP_DEFAULT } from './config.js';
+import { createAmmoDisplay } from './ammodisplay.js';
 import { terrainHeight } from './world.js';
 
 const P = CFG.player;
@@ -207,6 +208,11 @@ export class Player {
       if (fp.scale) mount.scale.setScalar(fp.scale);
       mount.add(model);
       this.gunHolder.add(mount);
+      // drive the gun's built-in ammo counter (weapons with a numbers_atlas)
+      this.ammoDisplay = createAmmoDisplay(model);
+      if (this.ammoDisplay) this.ammoDisplay.set(this.weapon.mag);
+    } else {
+      this.ammoDisplay = null;
     }
     this.game.hud.setWeaponName(this.weapon.def.name);
   }
@@ -345,6 +351,7 @@ export class Player {
 
     const w = this.weapon;
     this.game.hud.setAmmo(w.mag, w.reserve);
+    if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;
   }
 

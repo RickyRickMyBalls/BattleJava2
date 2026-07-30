@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
+import { restoreBakedDisplays } from './ammodisplay.js';
 import { terrainHeight } from './world.js';
 
 const S = CFG.soldier;
@@ -60,6 +61,7 @@ export function setHeldWeapon(holder, key, weaponModels) {
   if (!src) return;
   const def = WEAPONS[key];
   const gun = src.clone(true);
+  restoreBakedDisplays(gun); // ammo counters: clones keep the baked look
   const pos = (def.grip && def.grip.pos) || GRIP.pos;
   const rot = (def.grip && def.grip.rot) || GRIP.rot;
   gun.position.set(pos[0], pos[1], pos[2]);
@@ -157,7 +159,11 @@ export class Soldier {
     if (!this.weaponHolder) return;
     for (const def of [this.primary, this.secondary]) {
       const src = this.game.assets.weaponModels[def.key];
-      if (src && !this.guns[def.key]) this.guns[def.key] = src.clone(true);
+      if (src && !this.guns[def.key]) {
+        const gun = src.clone(true);
+        restoreBakedDisplays(gun); // ammo counters: clones keep the baked look
+        this.guns[def.key] = gun;
+      }
     }
     if (this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
   }

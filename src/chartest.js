@@ -60,6 +60,7 @@ const SETUP = [
 
 const chars = [];
 let mode = 'back'; // 'back' | 'grip' | 'fp' — fp renders through the first-person camera
+let fpUpdate = null; // set by buildPanel: per-frame move/shoot logic for fp mode
 const BOOT_ID = Date.now();
 window.__ctGet = () => ({ mode, BOOT_ID });
 window.__ctSet = (m) => { mode = m; };
@@ -300,6 +301,110 @@ function buildPanel(assets) {
     fpWpnBtns.appendChild(b);
   }
 
+  // ---- move & shoot in viewmodel mode ------------------------------------
+  const cross = document.createElement('div');
+  cross.style.cssText = 'position:fixed;left:50%;top:50%;width:4px;height:4px;margin:-2px;background:#7fd4ff;border-radius:50%;display:none;pointer-events:none;z-index:5;box-shadow:0 0 4px #7fd4ff';
+  document.body.appendChild(cross);
+
+  const glowC = document.createElement('canvas');
+  glowC.width = glowC.height = 64;
+  {
+    const gctx = glowC.getContext('2d');
+    const gr = gctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.25, 'rgba(255,220,150,0.9)');
+    gr.addColorStop(0.55, 'rgba(255,150,60,0.35)');
+    gr.addColorStop(1, 'rgba(255,120,40,0)');
+    gctx.fillStyle = gr;
+    gctx.fillRect(0, 0, 64, 64);
+  }
+  const flashTex = new THREE.CanvasTexture(glowC);
+  flashTex.colorSpace = THREE.SRGBColorSpace;
+  const flashMat = new THREE.SpriteMaterial({ map: flashTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthTest: false });
+  const flash = new THREE.Sprite(flashMat);
+  flash.scale.set(0.35, 0.35, 1);
+  flash.position.set(0, 0.03, -0.55);
+  fpViewmodel.add(flash);
+
+  // tiny tracer pool
+  const TR = 8;
+  const trGeo = new THREE.BufferGeometry();
+  const trPos = new Float32Array(TR * 6);
+  trGeo.setAttribute('position', new THREE.BufferAttribute(trPos, 3));
+  const trLines = new THREE.LineSegments(trGeo,
+    new THREE.LineBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+  trLines.frustumCulled = false;
+  scene.add(trLines);
+  const trLife = new Float32Array(TR);
+  let trHead = 0;
+
+  const ctl = { yaw: Math.PI, pitch: 0, keys: new Set(), firing: false, fireTimer: 0, recoil: 0 };
+  renderer.domElement.addEventListener('mousedown', (e) => {
+    if (mode !== 'fp') return;
+    if (document.pointerLockElement !== renderer.domElement) { renderer.domElement.requestPointerLock(); return; }
+    if (e.button === 0) ctl.firing = true;
+  });
+  window.addEventListener('mouseup', () => { ctl.firing = false; });
+  window.addEventListener('mousemove', (e) => {
+    if (mode !== 'fp' || document.pointerLockElement !== renderer.domElement) return;
+    ctl.yaw -= e.movementX * 0.0022;
+    ctl.pitch = Math.max(-1.4, Math.min(1.4, ctl.pitch - e.movementY * 0.0022));
+  });
+  window.addEventListener('keydown', (e) => ctl.keys.add(e.code));
+  window.addEventListener('keyup', (e) => ctl.keys.delete(e.code));
+
+  const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _from = new THREE.Vector3(), _dir = new THREE.Vector3();
+  fpUpdate = (dt) => {
+    fpCam.rotation.set(ctl.pitch, ctl.yaw, 0, 'YXZ');
+    // WASD relative to yaw, walking height locked
+    const sp = (ctl.keys.has('ShiftLeft') ? 7 : 4) * dt;
+    _f.set(-Math.sin(ctl.yaw), 0, -Math.cos(ctl.yaw));
+    _r.crossVectors(_f, new THREE.Vector3(0, 1, 0)).negate();
+    if (ctl.keys.has('KeyW')) fpCam.position.addScaledVector(_f, sp);
+    if (ctl.keys.has('KeyS')) fpCam.position.addScaledVector(_f, -sp);
+    if (ctl.keys.has('KeyA')) fpCam.position.addScaledVector(_r, -sp);
+    if (ctl.keys.has('KeyD')) fpCam.position.addScaledVector(_r, sp);
+    fpCam.position.y = 1.7;
+    fpCam.position.x = Math.max(-12, Math.min(12, fpCam.position.x));
+    fpCam.position.z = Math.max(-12, Math.min(12, fpCam.position.z));
+
+    // firing
+    ctl.fireTimer -= dt;
+    ctl.recoil = Math.max(0, ctl.recoil - dt * 3);
+    const def = WEAPONS[fpKey];
+    if (ctl.firing && ctl.fireTimer <= 0) {
+      ctl.fireTimer = 60 / (def.rpm || 300);
+      if (def.mode !== 'auto' && def.mode !== 'burst') ctl.firing = false; // click per shot
+      flashMat.opacity = 0.75 + Math.random() * 0.25;
+      flashMat.rotation = Math.random() * Math.PI * 2;
+      flash.scale.setScalar(0.25 + Math.random() * 0.2);
+      const kick = def.mode === 'pump' || def.dmg >= 50 ? 1.6 : 1;
+      ctl.recoil = Math.min(1.6, ctl.recoil + 0.35 * kick);
+      ctl.pitch += (0.0035 + Math.random() * 0.002) * kick;
+      // tracer along the crosshair ray, starting near the gun
+      fpCam.getWorldPosition(_from);
+      _dir.set(0, 0, -1).applyQuaternion(fpCam.quaternion);
+      const off = new THREE.Vector3(0.22, -0.12, -0.6).applyQuaternion(fpCam.quaternion);
+      const i = trHead; trHead = (trHead + 1) % TR;
+      trLife[i] = 0.07;
+      trPos[i * 6] = _from.x + off.x; trPos[i * 6 + 1] = _from.y + off.y; trPos[i * 6 + 2] = _from.z + off.z;
+      trPos[i * 6 + 3] = _from.x + _dir.x * 80; trPos[i * 6 + 4] = _from.y + _dir.y * 80; trPos[i * 6 + 5] = _from.z + _dir.z * 80;
+      trGeo.attributes.position.needsUpdate = true;
+    }
+    flashMat.opacity = Math.max(0, flashMat.opacity - dt * 22);
+    fpViewmodel.position.z = -0.55 + ctl.recoil * 0.06;
+    fpViewmodel.rotation.x = ctl.recoil * 0.12;
+    for (let i = 0; i < TR; i++) {
+      if (trLife[i] > 0) {
+        trLife[i] -= dt;
+        if (trLife[i] <= 0) {
+          trPos[i * 6 + 3] = trPos[i * 6]; trPos[i * 6 + 4] = trPos[i * 6 + 1]; trPos[i * 6 + 5] = trPos[i * 6 + 2];
+          trGeo.attributes.position.needsUpdate = true;
+        }
+      }
+    }
+  };
+
   for (const b of document.querySelectorAll('#modeBtns [data-mode]')) {
     b.onclick = () => {
       document.querySelectorAll('#modeBtns button').forEach((x) => x.classList.toggle('sel', x === b));
@@ -308,6 +413,8 @@ function buildPanel(assets) {
       document.getElementById('gripMode').style.display = mode === 'grip' ? 'block' : 'none';
       document.getElementById('fpMode').style.display = mode === 'fp' ? 'block' : 'none';
       controls.enabled = mode !== 'fp';
+      cross.style.display = mode === 'fp' ? 'block' : 'none';
+      if (mode !== 'fp' && document.pointerLockElement) document.exitPointerLock();
       document.getElementById('hint').textContent =
         mode === 'grip' ? 'values update live · paste grip lines into config.js WEAPONS'
         : mode === 'fp' ? 'first-person view · paste fp lines into config.js WEAPONS'
@@ -379,6 +486,7 @@ async function boot() {
   const frame = (dt) => {
     for (const c of chars) c.mixer.update(dt);
     if (controls.enabled) controls.update();
+    if (mode === 'fp' && fpUpdate) fpUpdate(dt);
     const cam = mode === 'fp' && window.__fpCam ? window.__fpCam : camera;
     window.__ctDebug = { mode, usingFp: cam !== camera };
     renderer.render(scene, cam);
