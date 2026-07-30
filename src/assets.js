@@ -142,7 +142,7 @@ export async function loadAssets(onProgress) {
     jobs.push(loadGLB(def.url).then((gltf) => {
       const template = normalizeCharacter(gltf.scene, def.height);
       const boneMap = collectBones(template);
-      out.characters[def.key] = { template, boneMap, height: def.height };
+      out.characters[def.key] = { key: def.key, template, boneMap, height: def.height };
       tick(def.key);
     }));
   }

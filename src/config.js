@@ -74,7 +74,7 @@ export const WEAPONS = {
   ar: {
     name: 'MA5 ASSAULT RIFLE', model: '/UNSC/weapons/assault rifle/assault-rifle.glb', len: 0.85,
     icon: '/UNSC/weapons/assault rifle/Assault-Rifle-line.svg',
-    grip: { rot: [-Math.PI / 2, 0, -Math.PI / 2] }, // roll -90 around the barrel for held pose
+    grip: { pos: [0.08, 0.25, 0.02], rot: [-1.75, -0.2, -1.57] },
     mode: 'auto', rpm: 620, dmg: 8.5, mag: 60, reserve: 240, reload: 2.3,
     spreadHip: 0.028, spreadAds: 0.007, adsFov: 55,
     falloff: [35, 150, 0.47], range: 320,
@@ -85,6 +85,7 @@ export const WEAPONS = {
   br: {
     name: 'BR55 BATTLE RIFLE', model: '/UNSC/weapons/battle-rifle/battle-rifle.glb', len: 0.95,
     icon: '/UNSC/weapons/battle-rifle/Battle-Rifle_Icon.svg',
+    grip: { pos: [0.04, 0.29, 0.02], rot: [-1.5, -0.2, -1.5] },
     mode: 'burst', burst: 3, burstInterval: 0.06, rpm: 270, dmg: 11, mag: 36, reserve: 288, reload: 2.4,
     spreadHip: 0.014, spreadAds: 0.004, adsFov: 50,
     falloff: [60, 230, 0.55], range: 420,
@@ -95,6 +96,7 @@ export const WEAPONS = {
   smg: {
     name: 'M7 SMG', model: '/UNSC/weapons/SMG/SMG.glb', len: 0.62,
     icon: '/UNSC/weapons/SMG/SMG_icon.svg',
+    grip: { pos: [-0.03, 0.28, 0.02], rot: [-1.57, -0.2, -1.5] },
     mode: 'auto', rpm: 900, dmg: 6, mag: 60, reserve: 360, reload: 2.1,
     spreadHip: 0.042, spreadAds: 0.018, adsFov: 60,
     falloff: [20, 80, 0.35], range: 200,
@@ -106,7 +108,7 @@ export const WEAPONS = {
     name: 'M90 SHOTGUN', model: '/UNSC/weapons/Shotgun/Shotgun_2.1.glb', len: 0.95,
     icon: '/UNSC/weapons/Shotgun/Shotgun_icon.svg',
     mode: 'pump', rpm: 62, dmg: 6.5, pellets: 8, pelletSpread: 0.045, mag: 8, reserve: 40, reload: 3.0,
-    grip: { rot: [-Math.PI / 2, -Math.PI / 2, 0] }, // model's long axis differs from the other guns
+    grip: { pos: [0.03, 0.38, 0], rot: [-1.57, -0.25, -1.5] },
     spreadHip: 0.01, spreadAds: 0.006, adsFov: 60,
     falloff: [12, 42, 0.2], range: 90,
     tracer: { style: 'bolt', color: [1, 0.7, 0.4], len: 1.6, speed: 300, every: 3, opacity: 0.5 }, // per pellet -> keep sparse
@@ -116,6 +118,7 @@ export const WEAPONS = {
   dmr: {
     name: 'M392 DMR', model: '/UNSC/weapons/DMR/DMR.glb', len: 1.0,
     icon: '/UNSC/weapons/DMR/DMR_icon.svg',
+    grip: { pos: [0.08, 0.33, 0.02], rot: [-1.57, -0.15, -1.5] },
     mode: 'semi', rpm: 260, dmg: 20, mag: 15, reserve: 135, reload: 2.4,
     spreadHip: 0.012, spreadAds: 0.0025, adsFov: 38,
     falloff: [80, 300, 0.6], range: 500,
@@ -126,6 +129,7 @@ export const WEAPONS = {
   sniper: {
     name: 'SRS99 SNIPER', model: '/UNSC/weapons/sniper/sniper.glb', len: 1.35,
     icon: '/UNSC/weapons/sniper/Sniper_icon.svg',
+    grip: { pos: [0.08, 0.45, 0.02], rot: [-1.5, -0.25, -1.5] },
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,
     falloff: [200, 500, 0.8], range: 700,
@@ -136,6 +140,7 @@ export const WEAPONS = {
   rocket: {
     name: 'M41 ROCKET LAUNCHER', model: '/UNSC/weapons/rocket-launcher/Rocket-Launcher.glb', len: 1.15,
     icon: '/UNSC/weapons/rocket-launcher/Rocket-Launcher_icon.svg',
+    grip: { pos: [0.3, 0.11, 0.04], rot: [-1.5, -0.3, -1.5] },
     mode: 'projectile', rpm: 50, dmg: 120, splash: 5.5, projSpeed: 55, mag: 2, reserve: 8, reload: 3.4,
     spreadHip: 0.008, spreadAds: 0.004, adsFov: 50,
     falloff: [50, 200, 1], range: 400,
@@ -145,6 +150,7 @@ export const WEAPONS = {
   laser: {
     name: 'SPARTAN LASER', model: '/UNSC/weapons/Spartan-Laser/Spartan-Laser.glb', len: 1.15,
     icon: '/UNSC/weapons/Spartan-Laser/Spartan-Laser_icon.svg',
+    grip: { pos: [0.3, 0.11, 0.04], rot: [-1.5, -0.3, -1.5] },
     mode: 'charge', chargeTime: 1.1, rpm: 40, dmg: 150, mag: 5, reserve: 5, reload: 3.0,
     spreadHip: 0.004, spreadAds: 0.0015, adsFov: 40,
     falloff: [400, 800, 1], range: 800,
@@ -156,6 +162,9 @@ export const WEAPONS = {
 
 // Let a weapon def know its own key (used for held-weapon attachment)
 for (const [k, def] of Object.entries(WEAPONS)) def.key = k;
+
+// Default first-person viewmodel offset; per-weapon `fp` in the def overrides.
+export const FP_DEFAULT = { pos: [0.15, 0.07, -0.31], rot: [0, 0, 0] };
 
 export const PRIMARIES = ['ar', 'br'];
 

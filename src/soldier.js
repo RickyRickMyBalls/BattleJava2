@@ -15,24 +15,43 @@ const _v = new THREE.Vector3();
 // After the -90° X rotation the barrel runs along holder +Y (forward).
 export const GRIP = { pos: [0.08, 0.12, 0.02], rot: [-Math.PI / 2, 0, 0] };
 
-// Create a scale-compensated mount on a character's right-hand bone.
-// Shared by AI soldiers and the lobby character preview.
-export function makeWeaponMount(mesh) {
-  let handBone = null;
+// Stowed-weapon transform relative to the upper-spine bone: diagonal across
+// the back, muzzle up over the left shoulder. Bone-local values, tunable per
+// character rig in the /chartest.html test environment.
+export const BACK = {
+  marine: { pos: [-0.12, 0.15, -0.28], rot: [-1.6, 0.4, -1.13] },
+  spartan: { pos: [-0.01, 0.05, -0.27], rot: [-1.7, 0.4, -1.4] },
+  elite: { pos: [-0.06, 0.07, -0.41], rot: [-1.95, 0.4, -1.1] },
+};
+
+// Create a scale-compensated mount on a named bone (canonical Mixamo name).
+function makeBoneMount(mesh, boneName) {
+  let bone = null;
   mesh.traverse((o) => {
-    if (!handBone && o.isBone &&
-        o.name.replace(/^.*?mixamorig[:_]?/i, '').replace(/[:_\s]/g, '').toLowerCase() === 'righthand') {
-      handBone = o;
+    if (!bone && o.isBone &&
+        o.name.replace(/^.*?mixamorig[:_]?/i, '').replace(/[:_\s]/g, '').toLowerCase() === boneName) {
+      bone = o;
     }
   });
-  if (!handBone) return null;
+  if (!bone) return null;
   mesh.updateMatrixWorld(true);
   const ws = new THREE.Vector3();
-  handBone.getWorldScale(ws);
+  bone.getWorldScale(ws);
   const holder = new THREE.Group();
   holder.scale.setScalar(1 / (ws.x || 1));
-  handBone.add(holder);
+  bone.add(holder);
   return holder;
+}
+
+// Right-hand mount for the held weapon.
+// Shared by AI soldiers and the lobby character preview.
+export function makeWeaponMount(mesh) {
+  return makeBoneMount(mesh, 'righthand');
+}
+
+// Upper-spine mount for the stowed weapon.
+export function makeBackMount(mesh) {
+  return makeBoneMount(mesh, 'spine2') || makeBoneMount(mesh, 'spine1') || makeBoneMount(mesh, 'spine');
 }
 
 export function setHeldWeapon(holder, key, weaponModels) {
@@ -127,17 +146,42 @@ export class Soldier {
     });
   }
 
-  // Mount point on the right hand for the held weapon.
+  // Both guns are cloned once up front — the active one in the right hand,
+  // the other stowed on the back. Switching just re-parents them, so there is
+  // no mid-fight clone hitch when the whole team swaps to secondaries.
   _initWeaponMount() {
     this.weaponHolder = makeWeaponMount(this.mesh);
+    this.backHolder = makeBackMount(this.mesh);
+    this.guns = {};
     this.heldKey = null;
-    if (this.weaponHolder && this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
+    if (!this.weaponHolder) return;
+    for (const def of [this.primary, this.secondary]) {
+      const src = this.game.assets.weaponModels[def.key];
+      if (src && !this.guns[def.key]) this.guns[def.key] = src.clone(true);
+    }
+    if (this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
   }
 
   _setHeldWeapon(key) {
     if (!this.weaponHolder || this.heldKey === key) return;
     this.heldKey = key;
-    setHeldWeapon(this.weaponHolder, key, this.game.assets.weaponModels);
+    for (const [k, gun] of Object.entries(this.guns)) {
+      if (k === key) {
+        const def = WEAPONS[k];
+        const pos = (def.grip && def.grip.pos) || GRIP.pos;
+        const rot = (def.grip && def.grip.rot) || GRIP.rot;
+        gun.position.set(pos[0], pos[1], pos[2]);
+        gun.rotation.set(rot[0], rot[1], rot[2]);
+        this.weaponHolder.add(gun);
+      } else if (this.backHolder) {
+        const bk = BACK[this.character && this.character.key] || BACK.marine;
+        gun.position.set(bk.pos[0], bk.pos[1], bk.pos[2]);
+        gun.rotation.set(bk.rot[0], bk.rot[1], bk.rot[2]);
+        this.backHolder.add(gun);
+      } else {
+        gun.removeFromParent();
+      }
+    }
   }
 
   playAnim(key, fade = 0.18) {

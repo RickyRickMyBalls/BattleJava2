@@ -2,7 +2,7 @@
 // weapons (auto/burst/semi/pump/projectile/charge fire modes), freecam.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS, CLASSES } from './config.js';
+import { CFG, WEAPONS, CLASSES, FP_DEFAULT } from './config.js';
 import { terrainHeight } from './world.js';
 
 const P = CFG.player;
@@ -20,6 +20,23 @@ function mkWeaponState(key) {
     burstLeft: 0,
     chargeT: 0,
   };
+}
+
+// Muzzle-flash glow: white-hot core fading through orange to transparent.
+function makeGlowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.25, 'rgba(255,220,150,0.9)');
+  g.addColorStop(0.55, 'rgba(255,150,60,0.35)');
+  g.addColorStop(1, 'rgba(255,120,40,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 export class Player {
@@ -154,11 +171,22 @@ export class Player {
     this.viewmodel.position.set(0.28, -0.24, -0.55);
     this.camera.add(this.viewmodel);
 
-    const flashMat = new THREE.SpriteMaterial({ color: 0xffe6a0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthTest: false });
+    // radial glow texture — an untextured sprite renders as a solid square
+    const flashMat = new THREE.SpriteMaterial({
+      map: makeGlowTexture(), color: 0xffffff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthTest: false,
+    });
     this.flash = new THREE.Sprite(flashMat);
     this.flash.scale.set(0.35, 0.35, 1);
     this.flash.position.set(0, 0.03, -0.55);
     this.viewmodel.add(this.flash);
+
+    // muzzle light: kicks warm light onto the gun body and nearby surfaces.
+    // Lives in the scene permanently (intensity 0) so lighting programs are
+    // compiled once up front, not on the first shot.
+    this.muzzleLight = new THREE.PointLight(0xffb36b, 0, 5, 2);
+    this.muzzleLight.position.copy(this.flash.position);
+    this.viewmodel.add(this.muzzleLight);
 
     this.recoil = 0;
     this.bobTime = 0;
@@ -168,7 +196,18 @@ export class Player {
   _mountGun() {
     while (this.gunHolder.children.length) this.gunHolder.remove(this.gunHolder.children[0]);
     const model = this.game.assets.weaponModels[this.weapon.key];
-    if (model) this.gunHolder.add(model);
+    if (model) {
+      // per-weapon first-person offset (config `fp`, tuned in /chartest.html).
+      // Applied on a wrapper group so the shared cached model stays untouched.
+      const fp = this.weapon.def.fp || {};
+      const mount = new THREE.Group();
+      const p = fp.pos || FP_DEFAULT.pos, r = fp.rot || FP_DEFAULT.rot;
+      mount.position.set(p[0], p[1], p[2]);
+      mount.rotation.set(r[0], r[1], r[2]);
+      if (fp.scale) mount.scale.setScalar(fp.scale);
+      mount.add(model);
+      this.gunHolder.add(mount);
+    }
     this.game.hud.setWeaponName(this.weapon.def.name);
   }
 
@@ -300,6 +339,7 @@ export class Player {
     this.viewmodel.position.z = -0.55 + this.recoil * 0.06;
     this.viewmodel.rotation.x = this.recoil * 0.12;
     this.flash.material.opacity = Math.max(0, this.flash.material.opacity - dt * 22);
+    this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 110);
 
     this._updateWeapon(dt, moving, speed);
 
@@ -414,8 +454,10 @@ export class Player {
     const kick = def.dmg >= 50 ? 1.9 : def.mode === 'pump' ? 1.6 : def.mode === 'projectile' ? 1.6 : 1;
     this.recoil = Math.min(1.6, this.recoil + 0.35 * kick);
     this.pitch += (0.0035 + Math.random() * 0.002) * kick;
-    this.flash.material.opacity = 1;
-    this.flash.scale.setScalar(0.3 + Math.random() * 0.15);
+    this.flash.material.opacity = 0.75 + Math.random() * 0.25; // flicker
+    this.flash.material.rotation = Math.random() * Math.PI * 2;
+    this.flash.scale.setScalar(0.25 + Math.random() * 0.2);
+    this.muzzleLight.intensity = 6 + Math.random() * 4;
 
     if (w.mag <= 0 && w.reserve > 0) this.startReload();
   }

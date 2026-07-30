@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Character Test — Back Weapon Tuning</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #10151c; }
+    body { font-family: "Segoe UI", Arial, sans-serif; color: #7fd4ff; user-select: none; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+    #loadmsg {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      font-size: 14px; letter-spacing: 2px; color: #6e93a8;
+    }
+    #panel {
+      position: fixed; top: 12px; right: 12px; width: 300px; max-height: calc(100vh - 24px);
+      overflow-y: auto; background: rgba(8, 20, 32, 0.92); border: 1px solid rgba(127,212,255,0.35);
+      padding: 12px; font-size: 11px;
+    }
+    #panel h1 { font-size: 12px; letter-spacing: 3px; margin-bottom: 8px; color: #e8f4fc; }
+    fieldset { border: 1px solid #24404f; margin-bottom: 10px; padding: 8px; }
+    legend { padding: 0 6px; letter-spacing: 2px; color: #ffd66e; }
+    .row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
+    .row label { width: 52px; color: #6e93a8; }
+    .row input {
+      flex: 1; width: 60px; background: #0c1826; color: #cfe6f5; border: 1px solid #24404f;
+      font-size: 11px; padding: 2px 4px;
+    }
+    .btns { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    button {
+      cursor: pointer; background: rgba(127,212,255,0.1); color: #7fd4ff;
+      border: 1px solid rgba(127,212,255,0.4); padding: 5px 10px; font-size: 11px; letter-spacing: 1px;
+    }
+    button:hover { background: rgba(127,212,255,0.25); }
+    button.sel { background: #7fd4ff; color: #0a1826; }
+    #out {
+      width: 100%; height: 130px; background: #0c1826; color: #9fd4ff; border: 1px solid #24404f;
+      font-family: Consolas, monospace; font-size: 10px; padding: 6px; white-space: pre; overflow: auto;
+    }
+    .hint { color: #46606f; margin-top: 6px; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="loadmsg">LOADING CHARACTERS…</div>
+  <div id="panel" style="display:none">
+    <div class="btns" id="modeBtns">
+      <button data-mode="back" class="sel">BACK</button>
+      <button data-mode="grip">GRIP</button>
+      <button data-mode="fp">VIEWMODEL</button>
+    </div>
+    <div class="btns" id="animBtns">
+      <button data-anim="idle" class="sel">IDLE</button>
+      <button data-anim="run">RUN</button>
+      <button data-anim="aim">AIM</button>
+      <button id="swapBtn">SWAP GUNS</button>
+    </div>
+    <div id="backMode">
+      <div id="sections"></div>
+    </div>
+    <div id="gripMode" style="display:none">
+      <div class="btns" id="wpnBtns"></div>
+      <div id="gripSection"></div>
+    </div>
+    <div id="fpMode" style="display:none">
+      <div class="btns" id="fpWpnBtns"></div>
+      <div id="fpSection"></div>
+    </div>
+    <textarea id="out" readonly></textarea>
+    <div class="hint" id="hint">values update live · paste block into soldier.js BACK</div>
+  </div>
+  <script type="module" src="/src/chartest.js"></script>
+</body>
+</html>
