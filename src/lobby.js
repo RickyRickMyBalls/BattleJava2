@@ -220,7 +220,10 @@ export class Lobby {
       this._warmLateArrivals();
     }, undefined, () => {});
 
-    this.camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 60);
+    // near matches the in-game camera (main.js): roam borrows this camera and
+    // hangs the real viewmodel off it, so a tighter near would clip the gun
+    // here but not in a match.
+    this.camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.08, 60);
     this.camera.position.set(-0.5, 1.45, 3.7);
     this.camera.lookAt(0.75, 1.0, 0);
     window.addEventListener('resize', () => {
