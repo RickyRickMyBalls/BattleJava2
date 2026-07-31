@@ -179,6 +179,48 @@ export const CFG = {
     scaleFidelity: 0,
     floorDrop: 0,      // metres of air under the gun's lowest point; 0 = resting
                        // on the deck, negative sinks it in
+
+    // ---- Painted-room backdrop (master switch over everything below) -------
+    //
+    // Set `url` and the procedural stage stands down: the deck shader, the deck
+    // GLB and the sky gradient all switch off, and this plate becomes the whole
+    // environment. `url: null` puts every one of them back — nothing under here
+    // was deleted, it is all still wired and tuned.
+    //
+    // The plate is SCREEN-SPACE, unlike the sky it replaces. The sky shades off
+    // the world view ray, so it parallaxes when you drag the pitch; this does
+    // not — it is a photograph pinned to the glass. That is the trade for a
+    // painted room with its own floor and its own perspective, and it means the
+    // gun's reflection slides against a floor that stays put when you orbit.
+    //
+    // What survives the switch: the lights, the shadow catcher (invisible except
+    // where the gun's shadow lands, and now the only thing gluing the weapon to
+    // the painted floor) and the mirrored gun.
+    plate: {
+      url: '/UI/blueroom2.png',
+      // The plate goes through ACES like every other material — see the note on
+      // `stageColor` in menu.js. So it lands DARKER and flatter than the PNG,
+      // and this is the compensation. Expect to want it above 1.
+      gain: 1.45,
+      // Cover-fit: the plate keeps its aspect and the long axis gets cropped.
+      // This is which row of the image survives that crop at screen centre, as a
+      // fraction of image height. Raise for more ceiling, lower for more floor.
+      // Only bites when the viewer's aspect is not the plate's 16:9.
+      anchorY: 0.5,
+      // Scene fog reaches the WEAPON, not just the deck, and it is aimed at
+      // `fogColor` — a colour picked to match the procedural horizon, not this
+      // plate. Off while trying the room; turn it back on once fogColor has been
+      // resampled off the painting.
+      fog: false,
+      // Contact shadow. Off against a plate: the catcher is a real horizontal
+      // plane and the painting has its own baked lighting and its own floor
+      // perspective, so the two only agree by coincidence. Turning this off also
+      // stops the caster, which drops the shadow pass entirely.
+      // The procedural stage keeps its shadow either way — this knob is local to
+      // plate mode.
+      shadow: false,
+    },
+
     // ---- The stage: sky, deck, and the haze that joins them ----------------
     //
     // Sky and deck are BOTH raw shaders authored in FINAL DISPLAY space (they

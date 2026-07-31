@@ -578,12 +578,12 @@
        Denser toward the bottom so the footer text keeps its contrast. */
     .ar-panel::before {
       content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none;
-      backdrop-filter: blur(28px) saturate(0.9);
+      backdrop-filter: blur(10px) saturate(0.9);
       -webkit-backdrop-filter: blur(28px) saturate(0.9);
       background: linear-gradient(180deg,
-        rgba(6,11,18,0.44) 50%,
-        rgba(6,11,18,0.64) 75%,
-        rgba(6,11,18,0.72) 100%);
+        rgba(6,11,18,0.1) 0%,
+        rgba(6,11,18,0.5) 50%,
+        rgba(6,11,18,1.0) 100%);
     }
     .ar-cards, .ar-foot { position: relative; z-index: 1; }
     /* Even, generous tabs like the reference — sized to a common width rather

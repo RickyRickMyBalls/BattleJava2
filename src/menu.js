@@ -234,7 +234,10 @@ export class LoadoutMenu {
     //
     // Fog is part of three's program cache key, so like the shadow and tone
     // mapping flags above it has to be set BEFORE prewarm() compiles anything.
-    if (S.fog) {
+    // `fogColor` is matched to the procedural horizon, which is not on screen in
+    // plate mode — so the plate gets its own say. Decided here, before prewarm,
+    // because fog is part of three's program cache key.
+    if (S.fog && (!S.plate.url || S.plate.fog)) {
       this.scene.fog = new THREE.Fog(
         new THREE.Color().setHex(S.fogColor, THREE.LinearSRGBColorSpace),
         S.fogNear, S.fogFar);
@@ -256,7 +259,10 @@ export class LoadoutMenu {
     // top-edge highlight without disturbing the existing key/rim balance.
     const top = new THREE.DirectionalLight(L.topColor, L.top);
     top.position.set(...L.topPos);
-    top.castShadow = true;
+    // Still lights the gun when the shadow is off — the top-edge highlight is
+    // half of why this light exists. Dropping the cast is what skips the pass:
+    // with no caster left, three does no shadow render at all.
+    top.castShadow = !S.plate.url || S.plate.shadow;
     top.shadow.mapSize.set(S.shadowSize, S.shadowSize);
     top.shadow.camera.near = 0.5;
     top.shadow.camera.far = 8;
@@ -371,9 +377,67 @@ export class LoadoutMenu {
     };
   }
 
+  // A painted room instead of the gradient. Same quad, same slot, same clip-space
+  // vertex shader — only the fragment differs, so everything downstream (bloom,
+  // OutputPass, the thumbnail bake's hide list) is untouched.
+  //
+  // `uReady` rather than a placeholder texture: a null sampler2D binds as white
+  // in three, which would flash a white screen for however many frames the load
+  // takes. Black until the plate arrives is the only acceptable first frame.
+  _buildPlateBackdrop() {
+    const P = S.plate;
+    const mat = new THREE.ShaderMaterial({
+      depthTest: false,
+      depthWrite: false,
+      uniforms: {
+        uPlate: { value: null },
+        uCover: { value: new THREE.Vector2(1, 1) }, // set by _resizeViewer
+        uAnchor: { value: P.anchorY },
+        uGain: { value: P.gain },
+        uReady: { value: 0 },
+      },
+      vertexShader: `
+        varying vec2 vNdc;
+        void main() {
+          vNdc = position.xy;
+          // straight to clip space at the far plane; no matrices involved
+          gl_Position = vec4(position.xy, 1.0, 1.0);
+        }`,
+      fragmentShader: `
+        uniform sampler2D uPlate;
+        uniform vec2 uCover;
+        uniform float uAnchor, uGain, uReady;
+        varying vec2 vNdc;
+
+        void main() {
+          // uCover carries the aspect correction, so this is a cover-fit: the
+          // plate fills the frame and the long axis is cropped rather than
+          // squashed. ClampToEdge on the texture handles an anchor that pushes
+          // the window off the image — the plate's borders are near-black, so
+          // the smear is invisible.
+          vec2 uv = vNdc * 0.5 * uCover + vec2(0.5, uAnchor);
+          vec3 col = texture2D(uPlate, uv).rgb * uGain * uReady;
+
+          // scene-linear out; OutputPass tone maps and encodes
+          gl_FragColor = vec4(max(col, 0.0), 1.0);
+        }`,
+    });
+    new THREE.TextureLoader().load(P.url, (tex) => {
+      // sRGB: this one IS a colour, unlike the deck's map — three decodes it to
+      // scene-linear on sample and OutputPass puts it back through the curve.
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+      mat.uniforms.uPlate.value = tex;
+      mat.uniforms.uReady.value = 1;
+      this._resizeViewer(); // the plate's aspect is only knowable now
+    }, undefined, () => console.warn(`armory plate failed to load: ${P.url}`));
+    return mat;
+  }
+
   _buildBackdrop() {
     const K = S.sky;
-    const mat = new THREE.ShaderMaterial({
+    const mat = S.plate.url ? this._buildPlateBackdrop() : new THREE.ShaderMaterial({
       depthTest: false,
       depthWrite: false,
       uniforms: {
@@ -1008,6 +1072,15 @@ export class LoadoutMenu {
     this.mirror.scale.set(1, -1, 1);
     this.scene.add(this.mirror);
     this._mirrorShaders = []; // live uniforms, re-aimed whenever floorY moves
+
+    // The plate paints its own floor, so the deck stands down — and with
+    // `plate.shadow` off the contact shadow goes with it. The mirror stays.
+    // Built rather than skipped so the switch is one flag both ways:
+    // `plate.url: null` and the deck is simply visible again.
+    if (S.plate.url) {
+      this.floor.visible = false;
+      if (!S.plate.shadow) this.shadowPlane.visible = false;
+    }
   }
 
   // A reflection at flat opacity is a detached ghost floating in the dark: the
@@ -1245,7 +1318,7 @@ export class LoadoutMenu {
   }
 
   async _loadDeckGlb() {
-    if (!S.deckGlb) return;
+    if (!S.deckGlb || S.plate.url) return; // the plate is the floor now
     this._deckHaze = [];
     let gltf;
     try {
@@ -1406,6 +1479,21 @@ export class LoadoutMenu {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this._frameCamera(); // framing depends on aspect
+    this._fitPlate(w / h);
+  }
+
+  // Cover-fit for the plate: keep its aspect, crop the axis with slack, never
+  // squash. uCover is the fraction of the image each screen axis spans, so 1
+  // means "this axis shows the whole plate" and the other one is the cropped
+  // one. Both 1 would be a stretch-to-fill, which is exactly what we do not want
+  // on a photograph of a room with straight architecture in it.
+  _fitPlate(viewAspect) {
+    const u = this.backdrop && this.backdrop.material.uniforms;
+    if (!u || !u.uCover || !u.uPlate.value) return;
+    const img = u.uPlate.value.image;
+    const plateAspect = img.width / img.height;
+    if (viewAspect > plateAspect) u.uCover.value.set(1, plateAspect / viewAspect);
+    else u.uCover.value.set(viewAspect / plateAspect, 1);
   }
 
   // ---------------------------------------------------------------- UI --
@@ -1763,8 +1851,11 @@ export class LoadoutMenu {
     // updateProjectionMatrix() and already carries setViewOffset's lens shift.
     this.camera.updateMatrixWorld();
     const bu = this.backdrop.material.uniforms;
-    bu.uProjInv.value.copy(this.camera.projectionMatrixInverse);
-    bu.uViewInv.value.copy(this.camera.matrixWorld);
+    // The plate is screen-space and has no view ray to feed.
+    if (bu.uProjInv) {
+      bu.uProjInv.value.copy(this.camera.projectionMatrixInverse);
+      bu.uViewInv.value.copy(this.camera.matrixWorld);
+    }
     this.composer.render();
   }
 }
