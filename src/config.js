@@ -296,7 +296,7 @@ export const PRIMARIES = ['ar', 'br'];
 // takeoff speed, so doubling the height is only 1.41x the velocity and airtime.
 export const CLASSES = {
   assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine2', gadgets: ['frag', 'medkit'] },
-  engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine', gadgets: ['repair', 'mines'] },
+  engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine3', gadgets: ['repair', 'mines'] },
   recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine', gadgets: ['sensor', 'frag'] },
   support: { name: 'Support', secondaries: ['shotgun'], model: 'marine', gadgets: ['ammo', 'medkit'] },
   spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70, jumpHeight: 3, gadgets: ['frag', 'shield'] },
@@ -345,6 +345,7 @@ export const ASSET_PATHS = {
     elite: { url: '/Covenant/Characters/Elite/Elite_1.glb', height: 2.35 },
     marine: { url: '/UNSC/Characters/Marine/Marine_1.glb', height: 1.86 },
     marine2: { url: '/UNSC/Characters/Marine/Marine_2.glb', height: 1.86 },
+    marine3: { url: '/UNSC/Characters/Marine/Marine_3.glb', height: 1.86 },
   },
   animations: {
     // Two rifle idles, assigned per soldier at spawn so a crowd standing around
