@@ -627,15 +627,12 @@ export class LoadoutMenu {
         }
       }
 
-      // Fine grain on top, per pixel so it is seamless for free. Weighted toward
-      // the middle, or the map reads as static rather than as a surface.
-      const img = g.getImageData(0, 0, N, N);
-      const d = img.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const n = ((rnd() + rnd() + rnd()) / 3 - 0.5) * 26;
-        d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, d[i] + n));
-      }
-      g.putImageData(img, 0, 0);
+      // No fine grain on top. Per-pixel noise is the highest-frequency content
+      // there is, and at 4.8 cm of eye height it is the first thing minification
+      // destroys — it reads as speckle for the first metre and then averages to
+      // flat grey, which is the detail edge this map exists to avoid. The smears
+      // above are the whole map on purpose.
+      //
       // same packing as the loaded path — the shader always expects normals in
       // G/B, so a generated map that left them as a copy of R would read as a
       // wildly tilted surface everywhere

@@ -325,7 +325,9 @@ export const CFG = {
     // metallicFactor is absent, which in glTF means 1.0 — a fully metallic deck
     // with a near-black albedo has almost no diffuse, so what you see is the
     // environment reflection plus the emissive. That is a Blender-side call.
-    deckGlb: '/Maps/floor_gun.glb',
+    // null = the deck below. Point it back at '/Maps/floor_gun.glb' to restore
+    // the authored GLB deck exactly as it was.
+    deckGlb: null,
     deckGlbScale: 1,
     // ---- deck-only haze -----------------------------------------------------
     // The GLB deck's own fog, patched into its material and nothing else's. The
@@ -371,7 +373,24 @@ export const CFG = {
     // This map is a lit tactical grid on a near-black field: mean luma 0.042,
     // 91% of its pixels under 0.063, and everything above that is the grid and
     // its halo reaching a full 1.0. Hence the floor sitting where it does.
-    deckUrl: '/textures/floor_1.png',
+    // null = generate a LOW-FREQUENCY map into a canvas at startup: broad soft
+    // buff smears, nothing else. That is the whole point rather than a fallback.
+    //
+    // Fine detail cannot work at this camera. The eye sits 4.8 cm above the deck,
+    // so the texel footprint runs about g^2 x 1.1 mm at ground distance g: ~5 mm
+    // of detail survives at 2 m, 27 mm at 5 m, 110 mm at 10 m. Anything small
+    // therefore reads for a metre or two and then vanishes, and the line where it
+    // vanishes is a visible edge across the middle of the floor — the failure
+    // every plate map, grid map and emissive map here has hit in turn.
+    //
+    // Broad soft shapes have no such line. Averaging a smooth gradient returns
+    // the same gradient, so the deck looks identical at 0.3 m and at 5 m, and
+    // consistency is what actually reads as a surface.
+    //
+    // Authoring rule if this is ever replaced by a hand-made map: nothing smaller
+    // than ~20 cm, soft edges only. It will look nearly blank in Blender and
+    // correct on the stand.
+    deckUrl: null,
     deckSeamBlend: 0,    // 0 = already tiles as authored. Leave it there for this
                          // map: it has a grid line sitting ON the border, and
                          // mirror-blending a band would ghost a second one beside
@@ -379,7 +398,8 @@ export const CFG = {
     deckTile: 2.5,       // metres per repeat — its 5 cells land on `gridStep`
                          // exactly, so the authored grid and the 0.5 m world
                          // ruler are the same lines instead of two beating grids
-    deckDetail: 0.5,     // how hard the map's SURFACE band modulates the deck
+    deckDetail: 0.85,    // how hard the map modulates the deck. THE knob for this
+                         // floor now — everything else about it is off.
     deckMapMax: 1.8,     // clamp on map/mean. Applies to the SURFACE read only —
                          // it is what stops a grid line, which is ~24x the mean,
                          // also blowing out as albedo underneath its own glow
@@ -397,7 +417,11 @@ export const CFG = {
     // channels clear it, so the halo comes out neon no matter how far the
     // strength is turned down. The map supplies the SHAPE, this supplies the hue.
     deckEmisColor: 0xa9cdf5,
-    deckEmisStrength: 2.6,
+    // 0, and it MUST be 0 for a smear map. This term lights whatever the map has
+    // above `deckEmisFloor`, and a smear map sits around 0.5 luma everywhere —
+    // the entire floor would clear the floor value at once and glow white. It is
+    // only meaningful against a map that is near-black with bright marks on it.
+    deckEmisStrength: 0,
     // Near gate, same idea as `seamNear` but its own knobs and much tighter: the
     // grid is the point here, not a garnish, so it only needs to stay off the
     // half-metre of deck directly under the camera where a hot line would sit at
