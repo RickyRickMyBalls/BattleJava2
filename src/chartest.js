@@ -1,6 +1,6 @@
-// Character test environment (/chartest.html): all three rigs side by side,
-// held gun + stowed back gun, with live tuning of the per-character BACK
-// transform. Copy the generated block into soldier.js when happy.
+// Character test environment (/chartest.html): every rig in ASSET_PATHS.characters
+// side by side, held gun + stowed back gun, with live tuning of the per-character
+// BACK transform. Copy the generated block into soldier.js when happy.
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -8,7 +8,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { loadAssets } from './assets.js';
 import { makeWeaponMount, makeBackMount, setHeldWeapon, BACK, GRIP } from './soldier.js';
-import { WEAPONS, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { WEAPONS, FP_DEFAULT, ADS_DEFAULT, ASSET_PATHS } from './config.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 
 const app = document.getElementById('app');
@@ -30,22 +30,42 @@ const sun = new THREE.DirectionalLight(0xfff2dd, 1.6);
 sun.position.set(4, 8, 5);
 scene.add(sun);
 
+// ---- line-up ------------------------------------------------------------
+// One slot per loaded character, so a new body in ASSET_PATHS shows up on the
+// range with no edit here. Held/stowed picks rotate through a rifle, a long
+// sniper and a bulky launcher to give every rig a size range to tune against.
+const HELD_PICKS = ['ar', 'br', 'smg'];
+const BACK_PICKS = ['br', 'sniper', 'rocket'];
+const SETUP = Object.keys(ASSET_PATHS.characters).map((key, i) => ({
+  key, held: HELD_PICKS[i % HELD_PICKS.length], back: BACK_PICKS[i % BACK_PICKS.length],
+}));
+// A rig with no BACK block yet still needs inputs to tune, so seed it off the
+// marine. dumpValues() then emits the new key in the paste-ready block.
+for (const cfg of SETUP) {
+  if (!BACK[cfg.key]) BACK[cfg.key] = { pos: [...BACK.marine.pos], rot: [...BACK.marine.rot] };
+}
+const SLOT_W = 1.7;                                  // metres between characters
+const slotX = (i) => (i - (SETUP.length - 1) / 2) * SLOT_W; // centred on x = 0
+const LINEUP_HALF = ((SETUP.length - 1) / 2) * SLOT_W;
+const RANGE_R = Math.max(7, LINEUP_HALF + 3);        // ground/grid grow with the line-up
+
 const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(7, 48).rotateX(-Math.PI / 2),
+  new THREE.CircleGeometry(RANGE_R, 48).rotateX(-Math.PI / 2),
   new THREE.MeshStandardMaterial({ color: 0x2c3440, roughness: 0.95 })
 );
 scene.add(ground);
-scene.add(new THREE.GridHelper(14, 28, 0x3a5566, 0x24303c));
+scene.add(new THREE.GridHelper(RANGE_R * 2, Math.round(RANGE_R * 4), 0x3a5566, 0x24303c));
 
 // ---- alignment targets (fp / ads modes) ---------------------------------
 // Sight alignment is a yes/no question, not a guess: bullseyes sit dead ahead
 // at eye height, so with pitch 0 the crosshair is exactly on centre and any
 // offset in the tuned pose shows up as the sight sitting off the bull.
 //
-// The lane is offset to +X because the characters stand at x = -1.7/0/+1.7 and
-// the middle one blocks a lane down x = 0. The fp camera starts on the lane;
-// turning left puts the line-up back in frame for a life-size reference.
-const LANE_X = 3.4;
+// The lane is offset to +X because the characters stand across x = 0 and would
+// block a lane down the middle. It sits one slot clear of the widest one, so it
+// stays clear as bodies are added. The fp camera starts on the lane; turning
+// left puts the line-up back in frame for a life-size reference.
+const LANE_X = LINEUP_HALF + SLOT_W;
 const targets = new THREE.Group();
 targets.visible = false;
 scene.add(targets);
@@ -97,7 +117,8 @@ makeBullseye(30, 0.9);
 makeBullseye(100, 2.6, 6);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 200);
-camera.position.set(0, 1.7, -4.2); // start behind the line-up: backs face -Z
+// Start behind the line-up (backs face -Z), far enough out to frame all of it.
+camera.position.set(0, 1.7, -(4.2 + Math.max(0, SETUP.length - 3) * 0.9));
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.1, 0);
 controls.enableDamping = true;
@@ -110,13 +131,6 @@ window.addEventListener('resize', () => {
   }
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
-// held / stowed picks give a size range: rifle, long sniper, bulky launcher
-const SETUP = [
-  { key: 'marine', held: 'ar', back: 'br' },
-  { key: 'spartan', held: 'br', back: 'sniper' },
-  { key: 'elite', held: 'smg', back: 'rocket' },
-];
 
 const chars = [];
 let mode = 'back'; // 'back' | 'grip' | 'fp' | 'ads' — the last two render through the first-person camera
@@ -709,7 +723,7 @@ async function boot() {
     const character = assets.characters[cfg.key];
     if (!character) return;
     const mesh = cloneSkeleton(character.template);
-    mesh.position.set((i - 1) * 1.7, 0, 0);
+    mesh.position.set(slotX(i), 0, 0);
     scene.add(mesh);
 
     const mixer = new THREE.AnimationMixer(mesh);

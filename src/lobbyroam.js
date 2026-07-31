@@ -9,7 +9,7 @@
 // States: idle → in → roam → out → idle.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS } from './config.js';
+import { CFG, CLASSES, WEAPONS } from './config.js';
 import { makeLobbyArena } from './arena.js';
 import { LobbyWorld } from './lobbyworld.js';
 import { Player } from './player.js';
@@ -95,7 +95,9 @@ export class LobbyRoam {
     });
 
     const lo = this.session.playerLoadout;
-    const charKey = this.arena.playerTeam === 1 ? 'elite' : (this.session.assets.characters[lo.cls] ? lo.cls : 'marine');
+    // Same rule as the match and the lobby portrait: Covenant is the Elite,
+    // UNSC wears whatever body its class declares (CLASSES[].model).
+    const charKey = this.arena.playerTeam === 1 ? 'elite' : (CLASSES[lo.cls].model || 'marine');
     const character = this.session.assets.characters[charKey] || this.session.assets.characters.marine;
     this.soldier = new Soldier(this.arena, 0, null, 'You', character, lo.cls, lo.primary, lo.secondary);
     this.soldier.isPlayer = true;

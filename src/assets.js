@@ -86,61 +86,93 @@ function hipsHeightAxis(v) {
 // frame: normalizing per clip pins every clip's opening pose to the character's
 // standing hip height, which silently cancels any clip that does not start
 // standing — crouches never lower, deaths never reach the floor.
-function retargetClip(clip, boneMap, srcHipsRest) {
+// The retarget is split in two because the halves have different dependencies.
+// Everything except the hips position depends only on the bone NAME mapping, so
+// any two rigs sharing a skeleton naming convention produce byte-identical
+// output — that half is the ~50 tracks per clip, and it can be computed once and
+// shared. The hips position track depends on this character's own bind pose,
+// which differs by a unit or two between exports of the same rig, so it is
+// always rebuilt. See loadAssets for the cache that exploits this.
+//
+// Rotations are kept, scale tracks are dropped entirely (this is what fixes
+// "animation resizes the character"), and position is kept for the hips only.
+function retargetPoseTracks(clip, boneMap) {
   const tracks = [];
+  for (const track of clip.tracks) {
+    const dot = track.name.lastIndexOf('.');
+    const prop = track.name.slice(dot + 1);
+    if (prop === 'scale' || prop === 'position') continue; // hips handled separately
+    const bone = boneMap.get(canonicalBoneName(track.name.slice(0, dot)));
+    if (!bone) continue;
+    const T = track.constructor;
+    tracks.push(new T(`${bone.name}.${prop}`, Array.from(track.times), Array.from(track.values)));
+  }
+  return tracks;
+}
+
+// `srcHipsRest` is the source rig's rest hips translation, captured at load. The
+// scale factor has to come from that rather than from the clip's own first
+// frame: normalizing per clip pins every clip's opening pose to the character's
+// standing hip height, which silently cancels any clip that does not start
+// standing — crouches never lower, deaths never reach the floor.
+function retargetHipsTrack(clip, boneMap, srcHipsRest) {
   const hips = boneMap.get('hips');
-  const rest = hips ? [hips.position.x, hips.position.y, hips.position.z] : null;
-  const cAx = rest ? hipsHeightAxis(rest) : 1;
+  if (!hips) return null;
+  const rest = [hips.position.x, hips.position.y, hips.position.z];
+  const cAx = hipsHeightAxis(rest);
   const sAx = srcHipsRest ? hipsHeightAxis(srcHipsRest) : cAx;
   // Source units vary per clip, so this converts the source rig's hip height
   // into the character's own units while preserving how far each frame deviates
   // from rest. Null when the rest pose is unknown — then the hips stay planted,
   // which is what the old per-clip normalization effectively did anyway.
-  const ratio = (rest && srcHipsRest && Math.abs(srcHipsRest[sAx]) > 1e-4)
+  const ratio = (srcHipsRest && Math.abs(srcHipsRest[sAx]) > 1e-4)
     ? rest[cAx] / srcHipsRest[sAx]
     : null;
   for (const track of clip.tracks) {
     const dot = track.name.lastIndexOf('.');
-    const nodeName = track.name.slice(0, dot);
-    const prop = track.name.slice(dot + 1);
-    const bone = boneMap.get(canonicalBoneName(nodeName));
-    if (!bone) continue;
-    if (prop === 'scale') continue;
-    if (prop === 'position') {
-      if (bone !== hips) continue;
-      const src = track.values;
-      // Trust the rest pose only if it actually belongs to this animation. An
-      // export whose bind pose was authored at a different scale than its track
-      // (rest -15 against a track at -103) would otherwise scale the whole body
-      // by that error and produce a giant. Clips legitimately open anywhere from
-      // a crouch (~0.4x standing) to upright, so anything outside that band is a
-      // broken export, not a pose — fall back to normalizing the opening frame,
-      // which is right for the standing clips this tends to happen to.
-      let scale = ratio;
-      if (scale !== null) {
-        const opening = (src[sAx] * scale) / rest[cAx];
-        if (!(opening > 0.25 && opening < 1.5)) {
-          scale = Math.abs(src[sAx]) > 1e-4 ? rest[cAx] / src[sAx] : null;
-          console.warn(`[assets] "${clip.name}": bind pose disagrees with its own hips track `
-            + `(rest ${srcHipsRest[sAx].toFixed(1)} vs track ${src[sAx].toFixed(1)}, `
-            + `would stand ${opening.toFixed(1)}x too tall). Falling back to first-frame `
-            + `normalization — re-export this clip to get correct vertical motion.`);
-        }
+    if (track.name.slice(dot + 1) !== 'position') continue;
+    if (boneMap.get(canonicalBoneName(track.name.slice(0, dot))) !== hips) continue;
+    const src = track.values;
+    // Trust the rest pose only if it actually belongs to this animation. An
+    // export whose bind pose was authored at a different scale than its track
+    // (rest -15 against a track at -103) would otherwise scale the whole body
+    // by that error and produce a giant. Clips legitimately open anywhere from
+    // a crouch (~0.4x standing) to upright, so anything outside that band is a
+    // broken export, not a pose — fall back to normalizing the opening frame,
+    // which is right for the standing clips this tends to happen to.
+    let scale = ratio;
+    if (scale !== null) {
+      const opening = (src[sAx] * scale) / rest[cAx];
+      if (!(opening > 0.25 && opening < 1.5)) {
+        scale = Math.abs(src[sAx]) > 1e-4 ? rest[cAx] / src[sAx] : null;
+        console.warn(`[assets] "${clip.name}": bind pose disagrees with its own hips track `
+          + `(rest ${srcHipsRest[sAx].toFixed(1)} vs track ${src[sAx].toFixed(1)}, `
+          + `would stand ${opening.toFixed(1)}x too tall). Falling back to first-frame `
+          + `normalization — re-export this clip to get correct vertical motion.`);
       }
-      const values = new Float32Array(src.length);
-      for (let i = 0; i < src.length; i += 3) {
-        values[i] = rest[0];                  // lock laterally: no root motion drift
-        values[i + 1] = rest[1];
-        values[i + 2] = rest[2];
-        if (scale !== null) values[i + cAx] = src[i + sAx] * scale;
-      }
-      tracks.push(new THREE.VectorKeyframeTrack(`${bone.name}.position`, Array.from(track.times), Array.from(values)));
-      continue;
     }
-    const T = track.constructor;
-    tracks.push(new T(`${bone.name}.${prop}`, Array.from(track.times), Array.from(track.values)));
+    const values = new Float32Array(src.length);
+    for (let i = 0; i < src.length; i += 3) {
+      values[i] = rest[0];                  // lock laterally: no root motion drift
+      values[i + 1] = rest[1];
+      values[i + 2] = rest[2];
+      if (scale !== null) values[i + cAx] = src[i + sAx] * scale;
+    }
+    return new THREE.VectorKeyframeTrack(`${hips.name}.position`, Array.from(track.times), Array.from(values));
   }
-  return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+  return null;
+}
+
+// Identity of a skeleton as far as the shareable half of the retarget goes:
+// which canonical bone each source track lands on, and what that bone is
+// actually called (the output track names are built from it). Two rigs agreeing
+// on that produce identical pose tracks — every marine variant off the same
+// Mixamo skeleton lands on one signature, even though their bind poses differ
+// slightly, because the bind pose only feeds the hips track.
+function boneNameSignature(boneMap) {
+  const parts = [];
+  for (const [canon, bone] of boneMap) parts.push(`${canon}>${bone.name}`);
+  return parts.sort().join('|');
 }
 
 // GPU prewarm: shader programs compile and textures upload the first time an
@@ -198,25 +230,21 @@ export async function loadAssets(onProgress) {
   const jobs = [];
   let done = 0;
   const total =
-    3 /* characters */ + Object.keys(WEAPONS).length +
+    Object.keys(ASSET_PATHS.characters).length + Object.keys(WEAPONS).length +
     Object.keys(ASSET_PATHS.animations).length +
     Object.keys(ASSET_PATHS.audio).length;
 
   const tick = (label) => { done++; onProgress?.(done / total, label); };
 
   // Characters ------------------------------------------------------------
-  const charDefs = [
-    { key: 'spartan', url: ASSET_PATHS.characters.spartan, height: 2.06 },
-    { key: 'elite', url: ASSET_PATHS.characters.elite, height: 2.35 },
-    { key: 'marine', url: ASSET_PATHS.characters.marine, height: 1.86 },
-  ];
-  for (const def of charDefs) {
+  // Straight off ASSET_PATHS — a new body needs no edit here.
+  for (const [key, def] of Object.entries(ASSET_PATHS.characters)) {
     jobs.push(loadGLB(def.url).then((gltf) => {
       const template = normalizeCharacter(gltf.scene, def.height);
       const boneMap = collectBones(template);
-      out.characters[def.key] = { key: def.key, template, boneMap, height: def.height };
-      tick(def.key);
-    }));
+      out.characters[key] = { key, template, boneMap, height: def.height };
+      tick(key);
+    }).catch((e) => { console.warn(`Failed character ${def.url}`, e); tick(key); }));
   }
 
   // Weapons ---------------------------------------------------------------
@@ -282,15 +310,30 @@ export async function loadAssets(onProgress) {
   await Promise.all(jobs);
 
   // Retarget every clip for every character type -------------------------
+  // The pose tracks are cached by bone-name signature rather than per character,
+  // so N marines off one Mixamo rig pay for the ~50-track bulk once and share
+  // the arrays; only the single hips track is rebuilt against each character's
+  // own bind pose. Tracks are immutable data and every soldier owns its own
+  // AnimationMixer, so sharing costs nothing at playback.
+  const poseCache = new Map(); // `${signature}|${animKey}` -> Track[]
   for (const charKey of Object.keys(out.characters)) {
     const ch = out.characters[charKey];
     ch.clips = {};
+    const sig = boneNameSignature(ch.boneMap);
+    let shared = 0;
     for (const [animKey, clip] of Object.entries(out.clips)) {
-      const rc = retargetClip(clip, ch.boneMap, out.clipHipsRest[animKey]);
-      if (rc.tracks.length >= 8) ch.clips[animKey] = rc;
-      else console.warn(`Retarget produced only ${rc.tracks.length} tracks for ${charKey}/${animKey} — skeleton mismatch?`);
+      const ck = `${sig}|${animKey}`;
+      let pose = poseCache.get(ck);
+      if (pose) shared++;
+      else poseCache.set(ck, (pose = retargetPoseTracks(clip, ch.boneMap)));
+      const hipsTrack = retargetHipsTrack(clip, ch.boneMap, out.clipHipsRest[animKey]);
+      const tracks = hipsTrack ? [...pose, hipsTrack] : pose.slice();
+      if (tracks.length >= 8) ch.clips[animKey] = new THREE.AnimationClip(clip.name, clip.duration, tracks);
+      else console.warn(`Retarget produced only ${tracks.length} tracks for ${charKey}/${animKey} — skeleton mismatch?`);
     }
-    console.log(`[assets] ${charKey}: ${ch.boneMap.size} bones, clips: ${Object.keys(ch.clips).join(', ')}`);
+    console.log(`[assets] ${charKey}: ${ch.boneMap.size} bones, `
+      + `${shared ? `${shared} clips share pose tracks with an identical rig, ` : ''}`
+      + `clips: ${Object.keys(ch.clips).join(', ')}`);
   }
 
   return out;

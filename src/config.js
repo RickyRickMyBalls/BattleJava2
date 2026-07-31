@@ -295,7 +295,7 @@ export const PRIMARIES = ['ar', 'br'];
 // playback speed all follow from it. Note height goes with the SQUARE of
 // takeoff speed, so doubling the height is only 1.41x the velocity and airtime.
 export const CLASSES = {
-  assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine', gadgets: ['frag', 'medkit'] },
+  assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine2', gadgets: ['frag', 'medkit'] },
   engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine', gadgets: ['repair', 'mines'] },
   recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine', gadgets: ['sensor', 'frag'] },
   support: { name: 'Support', secondaries: ['shotgun'], model: 'marine', gadgets: ['ammo', 'medkit'] },
@@ -334,10 +334,17 @@ export const MAPS = {
 };
 
 export const ASSET_PATHS = {
+  // Every character the loader should pull, keyed the way CLASSES[].model and
+  // soldier.js BACK key them. Adding a body is ONE entry here plus the `model:`
+  // field on the class that wears it — assets.js walks this map, so there is no
+  // second list to keep in sync. `height` is the normalized standing height in
+  // METRES (see normalizeCharacter: the GLB is scaled to hit it), measured from
+  // the union of per-SkinnedMesh bounding boxes — never from the raw GLB bbox.
   characters: {
-    spartan: '/UNSC/Characters/Spartan/Spartan_Mark-IV.glb',
-    elite: '/Covenant/Characters/Elite/Elite_1.glb',
-    marine: '/UNSC/Characters/Marine/Marine_1.glb',
+    spartan: { url: '/UNSC/Characters/Spartan/Spartan_Mark-IV.glb', height: 2.06 },
+    elite: { url: '/Covenant/Characters/Elite/Elite_1.glb', height: 2.35 },
+    marine: { url: '/UNSC/Characters/Marine/Marine_1.glb', height: 1.86 },
+    marine2: { url: '/UNSC/Characters/Marine/Marine_2.glb', height: 1.86 },
   },
   animations: {
     // Two rifle idles, assigned per soldier at spawn so a crowd standing around

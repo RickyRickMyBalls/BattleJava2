@@ -20,6 +20,8 @@ export const GRIP = { pos: [0.08, 0.12, 0.02], rot: [-Math.PI / 2, 0, 0] };
 // character rig in the /chartest.html test environment.
 export const BACK = {
   marine: { pos: [-0.12, 0.15, -0.28], rot: [-1.6, 0.4, -1.13] },
+  // Seeded from marine (same rig); retune on the range if the silhouette differs.
+  marine2: { pos: [-0.12, 0.15, -0.28], rot: [-1.6, 0.4, -1.13] },
   spartan: { pos: [-0.01, 0.05, -0.27], rot: [-1.7, 0.4, -1.4] },
   elite: { pos: [-0.06, 0.07, -0.41], rot: [-1.95, 0.4, -1.1] },
 };

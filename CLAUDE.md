@@ -49,6 +49,13 @@ owner approves each step — propose first when asked "give suggestion / read on
 - `source/` is the Vite publicDir (served at `/UNSC/...`, `/animations/...`, `/Maps/...`).
   **Excluded from git.** Owner has a live Blender bridge (BlenderMCP, TCP port 9876);
   Blender 5.2 at `G:\Steam\steamapps\common\Blender`.
+- **Adding a character body** is two edits: one `ASSET_PATHS.characters` entry
+  (`key: { url, height }`) plus the `model:` field on the class that wears it.
+  `assets.js` walks that map — no loader list to keep in sync. Also add a `BACK`
+  entry in `soldier.js` (falls back to `BACK.marine`); `/chartest.html` picks the
+  new rig up automatically and seeds one to tune. Retargeted pose tracks are
+  cached by bone-name signature, so marine variants off one rig cost a download,
+  not a retarget — the per-character bind pose still drives its own hips track.
 - Characters are Mixamo-rigged. Retarget strips `mixamorig[:_]` prefixes, drops scale
   tracks, hips-Y-only position. Height must be measured via per-SkinnedMesh
   `computeBoundingBox` union (bind matrices can carry ~100x scale; `Box3.setFromObject`
