@@ -2,13 +2,22 @@
 // weapons (auto/burst/semi/pump/projectile/charge fire modes), freecam.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS, CLASSES, FP_DEFAULT } from './config.js';
+import { CFG, WEAPONS, CLASSES, FP_DEFAULT, ADS_DEFAULT } from './config.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 
 const P = CFG.player;
 const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
+
+// Hip reference pose for the viewmodel holder. Aiming moves the holder to the
+// weapon's own `ads.pos` — the transform that puts that weapon's sight on the
+// crosshair — instead of the one slide-to-centre that used to serve every gun.
+const HIP_POS = [0.28, -0.24, -0.55];
+const HIP_FOV = 75;
+const HIP_SENS = 0.0021;
+const TAN_HIP = Math.tan(THREE.MathUtils.degToRad(HIP_FOV) / 2);
+const ZERO3 = [0, 0, 0];
 
 function mkWeaponState(key) {
   const def = WEAPONS[key];
@@ -54,6 +63,7 @@ export class Player {
     this.crouching = false;
     this.sprinting = false;
     this.ads = false;
+    this.lookSens = HIP_SENS; // recomputed per frame from the current zoom
     this.eye = P.eyeHeight;
 
     this.weapons = [mkWeaponState('ar'), mkWeaponState('smg')];
@@ -164,9 +174,8 @@ export class Player {
         this.fcPitch = Math.max(-1.55, Math.min(1.55, this.fcPitch));
         return;
       }
-      const sens = this.ads ? 0.0011 : 0.0021;
-      this.yaw -= e.movementX * sens;
-      this.pitch -= e.movementY * sens;
+      this.yaw -= e.movementX * this.lookSens;
+      this.pitch -= e.movementY * this.lookSens;
       this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
     });
   }
@@ -227,6 +236,11 @@ export class Player {
 
     this.recoil = 0;
     this.bobTime = 0;
+    // Lerped holder state. Z is tracked apart from viewmodel.position.z because
+    // recoil is added on top of it every frame and would otherwise be lerped in.
+    this.vmZ = HIP_POS[2];
+    this.vmRot = { x: 0, y: 0, z: 0 };
+    this.vmScale = 1;
     this._mountGun();
   }
 
@@ -359,12 +373,13 @@ export class Player {
     if (this.sprinting && mz > 0) speed *= P.sprintMult;
     if (this.crouching) speed *= P.crouchMult;
 
+    let wx = 0, wz = 0;
     if (moving) {
       const l = Math.hypot(mx, mz);
       mx /= l; mz /= l;
       const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-      const wx = -sin * mz + cos * mx;  // forward = (-sin,-cos), right = (cos,-sin)
-      const wz = -cos * mz - sin * mx;
+      wx = -sin * mz + cos * mx;  // forward = (-sin,-cos), right = (cos,-sin)
+      wz = -cos * mz - sin * mx;
       this.pos.x += wx * speed * dt;
       this.pos.z += wz * speed * dt;
     }
@@ -392,29 +407,57 @@ export class Player {
     this.game.world.clampToMap(this.pos);
 
     s.pos.copy(this.pos);
-    s.yaw = this.yaw;
+    // The body mesh faces its local +Z, i.e. (sin yaw, cos yaw) — the convention
+    // the AI and `muzzlePos` use. The camera looks the other way, along
+    // (-sin, -cos), so handing it the raw camera yaw left the third-person body
+    // facing backwards: invisible in first person, wrong in freecam/spectate and
+    // wrong for every directional locomotion clip picked off `moveF`.
+    s.yaw = this.yaw + Math.PI;
     s.speed2D = moving ? speed : 0;
     s.aiming = this.ads; // drives the body's aim pose; AI use `target` instead
+    s.crouching = this.crouching;
+    // Direction is resolved against the body's own facing, not the camera's, so
+    // the strafe clips stay correct however `s.yaw` is derived.
+    s.setMoveDir(wx, wz, moving ? 1 : 0);
 
     // ---- Camera ----
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-    const targetFov = this.ads ? this.weapon.def.adsFov : 75;
-    if (Math.abs(this.camera.fov - targetFov) > 0.1) {
-      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 12);
+    // ---- Aim: everything the weapon's `ads` block drives -------------------
+    // One rate for the whole pose so the gun arrives together, and the weapon
+    // owns it — a sniper comes up slower than an SMG. Tuned in /chartest.html.
+    const aim = this.ads;
+    const ads = this.weapon.def.ads || ADS_DEFAULT;
+    const k = Math.min(1, dt * (ads.speed || ADS_DEFAULT.speed));
+
+    const targetFov = aim ? this.weapon.def.adsFov : HIP_FOV;
+    if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+      this.camera.fov += (targetFov - this.camera.fov) * k;
       this.camera.updateProjectionMatrix();
     }
+    // Look speed follows the zoom, so `sens` is a per-weapon feel nudge and 1.0
+    // is already right at every magnification — no hand-picked ADS constant.
+    this.lookSens = HIP_SENS * (aim ? (ads.sens ?? 1) : 1) *
+      Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) / TAN_HIP;
 
-    // ---- Viewmodel bob/recoil ----
+    // ---- Viewmodel pose/bob/recoil ----
     if (moving && this.onGround) this.bobTime += dt * (this.sprinting ? 11 : 7.5);
-    const bobA = this.ads ? 0.004 : 0.012;
-    const vx = 0.28 + Math.sin(this.bobTime) * bobA - (this.ads ? 0.28 : 0);
-    const vy = -0.24 + Math.abs(Math.cos(this.bobTime)) * bobA - (this.ads ? 0.065 : 0);
-    this.viewmodel.position.x += (vx - this.viewmodel.position.x) * Math.min(1, dt * 10);
-    this.viewmodel.position.y += (vy - this.viewmodel.position.y) * Math.min(1, dt * 10);
+    const bobA = aim ? 0.004 : 0.012;
+    const base = aim ? ads.pos : HIP_POS;
+    const vx = base[0] + Math.sin(this.bobTime) * bobA;
+    const vy = base[1] + Math.abs(Math.cos(this.bobTime)) * bobA;
+    this.viewmodel.position.x += (vx - this.viewmodel.position.x) * k;
+    this.viewmodel.position.y += (vy - this.viewmodel.position.y) * k;
+    this.vmZ += (base[2] - this.vmZ) * k;
     this.recoil = Math.max(0, this.recoil - dt * 3);
-    this.viewmodel.position.z = -0.55 + this.recoil * 0.06;
-    this.viewmodel.rotation.x = this.recoil * 0.12;
+    this.viewmodel.position.z = this.vmZ + this.recoil * 0.06;
+    const rot = aim ? ads.rot : ZERO3;
+    this.vmRot.x += (rot[0] - this.vmRot.x) * k;
+    this.vmRot.y += (rot[1] - this.vmRot.y) * k;
+    this.vmRot.z += (rot[2] - this.vmRot.z) * k;
+    this.viewmodel.rotation.set(this.vmRot.x + this.recoil * 0.12, this.vmRot.y, this.vmRot.z);
+    this.vmScale += ((aim ? (ads.scale ?? 1) : 1) - this.vmScale) * k;
+    this.viewmodel.scale.setScalar(this.vmScale);
     this.flash.material.opacity = Math.max(0, this.flash.material.opacity - dt * 22);
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 110);
 
@@ -571,8 +614,8 @@ export class Player {
 
     this.camera.position.copy(this.fcPos);
     this.camera.rotation.set(this.fcPitch, this.fcYaw, 0, 'YXZ');
-    if (Math.abs(this.camera.fov - 75) > 0.1) {
-      this.camera.fov = 75;
+    if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
+      this.camera.fov = HIP_FOV;
       this.camera.updateProjectionMatrix();
     }
   }

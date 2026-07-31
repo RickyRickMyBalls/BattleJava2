@@ -118,6 +118,7 @@ export const WEAPONS = {
     grip: { pos: [0.08, 0.25, 0.02], rot: [-1.75, -0.2, -1.57] },
     mode: 'auto', rpm: 620, dmg: 8.5, mag: 60, reserve: 240, reload: 2.3,
     spreadHip: 0.028, spreadAds: 0.007, adsFov: 55,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [35, 150, 0.47], range: 320,
     tracer: { style: 'bolt', color: [1, 0.85, 0.5], len: 2, speed: 420, every: 2, opacity: 0.25 },
     snd: { key: 'shot', rate: 1.05, vol: 0.5 },
@@ -130,6 +131,7 @@ export const WEAPONS = {
     fp: { pos: [0.15, 0.11, -0.31], rot: [0, 0, 0] },
     mode: 'burst', burst: 3, burstInterval: 0.06, rpm: 270, dmg: 11, mag: 36, reserve: 288, reload: 2.4,
     spreadHip: 0.014, spreadAds: 0.004, adsFov: 50,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [60, 230, 0.55], range: 420,
     tracer: { style: 'bolt', color: [0.7, 0.9, 1], len: 5, speed: 500, opacity: 0.5 },
     snd: { key: 'shot', rate: 1.0, vol: 0.5 },
@@ -141,6 +143,7 @@ export const WEAPONS = {
     grip: { pos: [-0.03, 0.28, 0.02], rot: [-1.57, -0.2, -1.5] },
     mode: 'auto', rpm: 900, dmg: 6, mag: 60, reserve: 360, reload: 2.1,
     spreadHip: 0.042, spreadAds: 0.018, adsFov: 60,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [20, 80, 0.35], range: 200,
     tracer: { style: 'bolt', color: [1, 0.8, 0.45], len: 2.8, speed: 380, every: 2, opacity: 0.5 },
     snd: { key: 'shot', rate: 1.35, vol: 0.35 },
@@ -153,6 +156,7 @@ export const WEAPONS = {
     grip: { pos: [0.03, 0.38, 0], rot: [-1.57, -0.25, -1.5] },
     fp: { pos: [0.2, 0.07, -0.36], rot: [0, 0, 0] },
     spreadHip: 0.01, spreadAds: 0.006, adsFov: 60,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [12, 42, 0.2], range: 90,
     tracer: { style: 'bolt', color: [1, 0.7, 0.4], len: 1.6, speed: 300, every: 3, opacity: 0.5 }, // per pellet -> keep sparse
     snd: { key: 'shot', rate: 0.62, vol: 0.75 },
@@ -165,6 +169,7 @@ export const WEAPONS = {
     fp: { pos: [0.18, 0.12, -0.23], rot: [0, 0, 0] },
     mode: 'semi', rpm: 260, dmg: 20, mag: 15, reserve: 135, reload: 2.4,
     spreadHip: 0.012, spreadAds: 0.0025, adsFov: 38,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [80, 300, 0.6], range: 500,
     tracer: { style: 'bolt', color: [0.75, 0.92, 1], len: 5.5, speed: 520, opacity: 0.5 },
     snd: { key: 'dmrShot', rate: 1.0, vol: 0.55 },
@@ -182,6 +187,7 @@ export const WEAPONS = {
     scope: { material: 'sniper_screen', fov: 5, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,
+    ads: { pos: [0.15, -0.195, -0.435], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [200, 500, 0.8], range: 700,
     tracer: { style: 'vapor', color: [1, 0.9, 0.6], life: 0.85, drift: 0.35, opacity: 0.55 }, // lingering smoke trail
     snd: { key: 'sniperShot', rate: 1.0, vol: 0.65 },
@@ -194,6 +200,7 @@ export const WEAPONS = {
     fp: { pos: [0.07, 0.21, -0.31], rot: [0, 0, 0] },
     mode: 'projectile', rpm: 50, dmg: 120, splash: 5.5, projSpeed: 55, mag: 2, reserve: 8, reload: 3.4,
     spreadHip: 0.008, spreadAds: 0.004, adsFov: 50,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [50, 200, 1], range: 400,
     snd: { key: 'rocketShot', rate: 1.0, vol: 0.7 },
     ai: { aiMin: 35, range: 130, burst: [1, 1], interval: 1.2, pause: [3, 5], spread: 0.01, cooldown: 12 },
@@ -208,6 +215,7 @@ export const WEAPONS = {
     scope: { material: 'Spartan-Laser_screen', fov: 8, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'charge', chargeTime: 1.1, rpm: 40, dmg: 150, mag: 5, reserve: 5, reload: 3.0,
     spreadHip: 0.004, spreadAds: 0.0015, adsFov: 40,
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
     falloff: [400, 800, 1], range: 800,
     tracer: { style: 'beam', color: [1, 0.15, 0.1], life: 0.3, opacity: 0.85 }, // it IS a laser
     snd: { key: 'sniperShot', rate: 0.55, vol: 0.7 },
@@ -231,7 +239,9 @@ export const FP_DEFAULT = { pos: [0.15, 0.07, -0.31], rot: [0, 0, 0] };
 //           shares the main camera, so 22° magnifies it ~3.4x)
 //   sens  — multiplier on top of automatic zoom-proportional sensitivity
 //   speed — how fast the gun comes up; lerp rate, so bigger is snappier
-export const ADS_DEFAULT = { pos: [0, -0.305, -0.55], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 };
+// Seeded from the tuned MA5 pose — a new weapon starts somewhere sane rather
+// than at the old hardcoded slide-to-centre, which suited nothing.
+export const ADS_DEFAULT = { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 };
 
 export const PRIMARIES = ['ar', 'br'];
 
@@ -288,7 +298,15 @@ export const ASSET_PATHS = {
     run: '/animations/run-forward.glb',
     runBack: '/animations/run-backwards.glb',
     walk: '/animations/walk-forward-in-place.glb',
+    // doubles as the crouch idle — it is literally a crouched rifle-aim pose
     aim: '/animations/idle-crouching-aiming.glb',
+    // Crouch locomotion, 4-way. These are re-exports with the mesh stripped
+    // (~75 KB vs ~1.9 MB); several carry leftover actions, hence the explicit
+    // clip names — see the loader note in assets.js.
+    crouchFwd: { url: '/animations/crouch_walk_forward_aim/crouch_walk_forward_aim.glb', clip: 'walk-crouching-forward' },
+    crouchBack: { url: '/animations/crouch_walk_backwards_aim/crouch_walk_backwards_aim.glb', clip: 'walk-crouching-backward' },
+    crouchLeft: { url: '/animations/crouch_walk_left_aim/crouch_walk_left_aim.glb', clip: 'walk-crouching-left' },
+    crouchRight: { url: '/animations/crouch_walk_right_aim/crouch_walk_right_aim.glb', clip: 'walk-crouching-right' },
     death1: '/animations/dying_normal-with-rifle.glb',
     death2: '/animations/death_1.glb',
   },

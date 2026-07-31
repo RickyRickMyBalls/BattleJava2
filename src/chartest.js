@@ -539,7 +539,7 @@ function buildPanel(assets) {
 
   const ctl = {
     yaw: Math.PI, pitch: 0, keys: new Set(), firing: false, fireTimer: 0, recoil: 0,
-    adsHeld: false, sens: 0.0022,
+    adsHeld: false, sens: 0.0021,
   };
   renderer.domElement.addEventListener('mousedown', (e) => {
     if (!isFpMode(mode)) return;
@@ -635,7 +635,7 @@ function buildPanel(assets) {
     // Look speed scales with the zoom, so `sens` is a feel nudge and 1.0 is
     // already right at every magnification. This is the rule player.js should
     // adopt in place of its single 0.0011.
-    ctl.sens = 0.0022 * (a.sens ?? 1) *
+    ctl.sens = 0.0021 * (on ? (a.sens ?? 1) : 1) *
       Math.tan(THREE.MathUtils.degToRad(fpCam.fov) / 2) / TAN_HIP;
 
     for (let i = 0; i < TR; i++) {
