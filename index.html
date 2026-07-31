@@ -548,10 +548,12 @@
        top of the scene, which needs a crisp top edge — so the blur ramps in over
        ~30px around a hairline rather than fading over 70. */
     /* Positioning container only — no tint of its own, so the tab row inside it
-       sits over the bare scene. A hairline marks where the chrome begins. */
+       sits over the bare scene. It used to carry a full-width hairline as well,
+       marking where the chrome begins; that put a rule ABOVE the tabs and
+       another (.ar-panel's) below them, so the row sat in a drawn box. The
+       reference has one line, under the tabs. The tabs float on the deck now. */
     .ar-bottom {
       position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
-      border-top: 1px solid rgba(255,255,255,0.07);
     }
     /* The dark blurred slab starts BELOW the tabs, at the card row — matching the
        reference, where the class tabs float on the scene and only the loadout
@@ -586,7 +588,11 @@
     .ar-cards, .ar-foot { position: relative; z-index: 1; }
     /* Even, generous tabs like the reference — sized to a common width rather
        than to their own text, so the row reads as a segmented control. */
-    .ar-tabs { display: flex; gap: 5px; padding: 14px 4vw 0; }
+    /* Positioned, so the selected tab's glow paints OVER .ar-panel. Without
+       this the panel (which is position:relative and comes later in the DOM)
+       wins the paint order and clips the bloom dead at the tab's bottom edge —
+       and the spill onto the panel below is half of what reads as a light. */
+    .ar-tabs { position: relative; z-index: 1; display: flex; gap: 5px; padding: 14px 4vw 0; }
     /* Light chips, not dark ones: they read as controls sitting on top of the
        scene rather than holes punched through it. */
     /* Unselected tabs sit BELOW the panel in value, not above it. At 0.06 fill
@@ -600,17 +606,37 @@
       transition: background 0.12s, color 0.12s;
     }
     .ar-tabs button:hover { background: rgba(255,255,255,0.10); color: #dceaf5; }
+    /* Frosted glass lit from below, not a flat chip with a hairline under it.
+       Three things carry that in the reference and all three are here:
+         - a vertical gradient, brightest at the TOP edge, so the face reads as
+           glass catching light rather than as a uniform fill;
+         - the cyan warming the LAST third of that gradient, which is the bar
+           below bleeding up THROUGH the glass;
+         - the inset shadow, which is that same bleed as an actual soft falloff.
+       The old `inset 0 -2px 0` was a 2px line with no falloff at all, so the
+       tab read as flat no matter how bright the line got. */
     .ar-tabs button.sel {
-      background: rgba(255,255,255,0.16); color: #fff; font-weight: 500;
-      border-color: rgba(255,255,255,0.24);
-      box-shadow: inset 0 -2px 0 var(--hud-cyan);
+      background: linear-gradient(180deg,
+        rgba(255,255,255,0.22) 0,
+        rgba(255,255,255,0.11) 50%,
+        rgba(127,212,255,0.12) 100%);
+      color: #eaf6ff; font-weight: 500;
+      border-color: rgba(255,255,255,0.26);
+      border-top-color: rgba(255,255,255,0.40);
+      box-shadow: inset 0 -22px 28px -18px rgba(127,212,255,0.85);
     }
-    /* Cyan tick ABOVE the selected tab as well as the inset underline. The
-       underline alone sits on the panel edge and gets lost against it; the tick
-       is out in the open scene where nothing else is. */
-    .ar-tabs button.sel::before {
-      content: ''; position: absolute; left: 50%; top: -5px;
-      width: 28px; height: 2px; margin-left: -14px; background: var(--hud-cyan);
+    /* The lit bar. A real element rather than a border or an inset shadow,
+       because only a box can throw a box-shadow — and the BLOOM is the effect.
+       Three shadows at widening radius and falling opacity approximate the way
+       a bright source falls off; one shadow reads as a hard neon outline.
+       Hot near-white core, so the cyan is what surrounds it rather than what it
+       is: a light source clips its own hue at the centre. */
+    .ar-tabs button.sel::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+      background: #cfeeff;
+      box-shadow: 0 0 8px rgba(127,212,255,0.95),
+                  0 0 20px 3px rgba(127,212,255,0.60),
+                  0 0 44px 10px rgba(127,212,255,0.30);
     }
     /* No border-top here any more — .ar-panel owns the shelf edge now. */
     /* min-width:0 all the way down, or flex items refuse to shrink below their
