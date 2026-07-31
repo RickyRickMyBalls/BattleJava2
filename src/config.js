@@ -398,8 +398,27 @@ export const CFG = {
     deckTile: 2.5,       // metres per repeat — its 5 cells land on `gridStep`
                          // exactly, so the authored grid and the 0.5 m world
                          // ruler are the same lines instead of two beating grids
-    deckDetail: 0.85,    // how hard the map modulates the deck. THE knob for this
-                         // floor now — everything else about it is off.
+    deckDetail: 0.85,    // how hard the map modulates the deck as ALBEDO. Note
+                         // this multiplies, so against a floorBase this dark it
+                         // does much less than `deckNormal` does — the streaks
+                         // read because they catch light, not because they are
+                         // painted lighter.
+    // ---- the generated map's two layers ------------------------------------
+    // Broad soft smears: the buffed direction, and the only content here meant to
+    // read as form rather than detail.
+    deckSmears: 260,
+    // Short scratches on top. These are what the reference floor's glints are;
+    // 0 leaves only the smears. Higher than it looks like it needs to be, because
+    // they are now 3-15% of the map rather than crossing all of it.
+    deckScratches: 400,
+    // Scratches are grouped rather than scattered — wear happens where something
+    // was dragged, not uniformly. Fewer clusters = more obviously worn patches.
+    deckScratchClusters: 14,
+    deckScratchSpread: 0.18, // cluster radius as a fraction of the map
+    // Degrees either side of the buff direction. Both extremes fail: 0 puts every
+    // scratch on a line of constant depth where they band into scanlines, and 90
+    // (fully random) reads as hatching. See the note in _deckTexture.
+    deckScratchAngle: 22,
     deckMapMax: 1.8,     // clamp on map/mean. Applies to the SURFACE read only —
                          // it is what stops a grid line, which is ~24x the mean,
                          // also blowing out as albedo underneath its own glow
@@ -460,13 +479,18 @@ export const CFG = {
     // light. Faded out with haze in the shader, since normal maps alias badly
     // at exactly the grazing angles the far deck is seen at.
     //
-    // 0 = OFF, and it has to be while the deck map is an emissive one. Treating a
-    // lit grid as a height field puts a hard bevel down either side of every glow
-    // line — relief that is not in the art, and the brightest thing in the map
-    // driving the biggest gradient. Deriving relief from a light map is a
-    // category error; the fix is an authored normal map, not a smaller number
-    // here. `_packDeckMap` skips the Sobel entirely at 0 and writes G/B neutral.
-    deckNormal: 0,
+    // THE knob for this floor, and the reason its streaks are visible at all.
+    // The deck map only MULTIPLIES albedo, and against a floorBase this near
+    // black a multiply does nothing — the smears and scratches would be there in
+    // the texture and invisible on screen. Tilting the surface instead makes them
+    // catch the Fresnel sky reflection and the spec lobes, which at this grazing
+    // an angle stretch into exactly the long horizontal glints a buffed floor has.
+    //
+    // Was 0 while the map was an emissive grid: treating a lit grid as a height
+    // field puts a hard bevel down either side of every glow line. A smear map
+    // has the opposite problem and wants this ON — its gradients are broad and
+    // soft, which is the only kind of relief that survives out here anyway.
+    deckNormal: 0.35,
     // Radius in texels that the height is blurred by BEFORE the gradient is
     // taken. 0 lets the map's film grain become normals, which reads as speckle
     // on the deck rather than as surface relief; the features worth catching

@@ -605,33 +605,98 @@ export class LoadoutMenu {
       g.fillStyle = '#808080';
       g.fillRect(0, 0, N, N);
 
-      // Broad polish smears. Long and thin — the anisotropy of a floor that has
-      // been buffed in one direction, which is what gives the horizontal streaks
-      // at a grazing camera.
       let seed = 20260731;
       const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-      for (let i = 0; i < 260; i++) {
-        const y = rnd() * N;
-        const h = 1 + rnd() * rnd() * 26;
-        const v = (rnd() - 0.5) * 78;
-        const x0 = rnd() * N;
-        const w = N * (0.25 + rnd() * 0.9);
-        const grad = g.createLinearGradient(x0, 0, x0 + w, 0);
-        const c = `${128 + v | 0}`;
-        grad.addColorStop(0, `rgba(${c},${c},${c},0)`);
-        grad.addColorStop(0.5, `rgba(${c},${c},${c},${0.1 + rnd() * 0.4})`);
-        grad.addColorStop(1, `rgba(${c},${c},${c},0)`);
-        g.fillStyle = grad;
+
+      // One soft-edged elongated blob, drawn nine times so it wraps.
+      //
+      // An ellipse with a radial falloff rather than a faded rect, and that is
+      // the fix for the banding: a rect faded only along its LENGTH is cut dead
+      // across its WIDTH, and a hard edge is exactly what the Sobel below turns
+      // into a strong normal. Every smear used to contribute two sharp
+      // horizontal ridges. A radial falloff has no edge anywhere.
+      //
+      // The gradient is built INSIDE the transform, which is the other fix: the
+      // old code built it once in absolute canvas coordinates and then drew the
+      // rect at three different X offsets, so the wrapped copies landed outside
+      // their own gradient and painted nothing. Smears never tiled horizontally,
+      // and the discontinuity down the texture edge was the diagonal seam on the
+      // floor.
+      const blob = (cx, cy, w, h, ang, v, a) => {
+        const c = `${Math.max(0, Math.min(255, 128 + v)) | 0}`;
         for (const dx of [-N, 0, N]) {
-          for (const dy of [-N, 0, N]) g.fillRect(x0 + dx, y + dy, w, h);
+          for (const dy of [-N, 0, N]) {
+            g.save();
+            g.translate(cx + dx, cy + dy);
+            g.rotate(ang);
+            g.scale(Math.max(0.01, w / 2), Math.max(0.01, h / 2));
+            const grad = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+            grad.addColorStop(0, `rgba(${c},${c},${c},${a})`);
+            grad.addColorStop(1, `rgba(${c},${c},${c},0)`);
+            g.fillStyle = grad;
+            g.beginPath();
+            g.arc(0, 0, 1, 0, Math.PI * 2);
+            g.fill();
+            g.restore();
+          }
         }
+      };
+
+      // Broad polish smears — the buffed direction of the floor, and the only
+      // thing in this map meant to read as FORM rather than as detail. Long,
+      // soft, low contrast, and near enough axis-aligned to give the surface a
+      // grain without becoming lines.
+      for (let i = 0; i < S.deckSmears; i++) {
+        blob(rnd() * N, rnd() * N,
+             N * (0.25 + rnd() * 0.9),        // long
+             // ...and thin, but not thinner than about 10 px. A radial falloff
+             // needs room to fall off: squash the ellipse to 2-3 px and it comes
+             // back out as a hard line, which is the very thing this shape was
+             // chosen to avoid. The minimum is the whole point of the range.
+             10 + rnd() * rnd() * 26,
+             (rnd() - 0.5) * 0.12,            // barely off the buff direction
+             (rnd() - 0.5) * 78,
+             0.1 + rnd() * 0.4);
+      }
+
+      // Scratches: SHORT, clustered, and mostly following the buff direction.
+      //
+      // Short is the word that matters. These used to run 25-110% of the map
+      // width, so every one crossed the whole texture and they piled into a
+      // pick-up-sticks hatch — which is what the floor was showing. Real wear is
+      // short, grouped where something has been dragged across, and broadly
+      // aligned with how the surface was polished.
+      //
+      // Clustering plus a modest angle spread is what keeps them off the two
+      // failure modes either side: fully random angles read as hatching, and
+      // perfectly axis-aligned ones lie along lines of CONSTANT DEPTH on this
+      // floor, where they project to horizontal screen lines and stack into
+      // scanlines. Short and slightly angled does neither.
+      //
+      // They earn their place through the normal, not the albedo: a scratch
+      // multiplied into a floorBase this dark is invisible, but one that tilts
+      // the surface catches the sky reflection and the spec lobes and comes out
+      // as a glint.
+      const clusters = [];
+      for (let i = 0; i < S.deckScratchClusters; i++) clusters.push([rnd() * N, rnd() * N]);
+      for (let i = 0; i < S.deckScratches; i++) {
+        const [bx, by] = clusters[(rnd() * clusters.length) | 0];
+        const spread = N * S.deckScratchSpread;
+        blob(bx + (rnd() - 0.5) * spread, by + (rnd() - 0.5) * spread,
+             N * (0.03 + rnd() * rnd() * 0.12),   // 3-15% of the map, not 25-110%
+             2 + rnd() * rnd() * 2,               // 2-4 px, same reason as above
+             (rnd() - 0.5) * 2 * S.deckScratchAngle * Math.PI / 180,
+             // Mostly faint, occasionally not. Squaring keeps the strong ones
+             // rare, which is what stops scuffing reading as hatching.
+             (rnd() < 0.5 ? -1 : 1) * (18 + rnd() * rnd() * 60),
+             0.12 + rnd() * rnd() * 0.4);
       }
 
       // No fine grain on top. Per-pixel noise is the highest-frequency content
       // there is, and at 4.8 cm of eye height it is the first thing minification
       // destroys — it reads as speckle for the first metre and then averages to
       // flat grey, which is the detail edge this map exists to avoid. The smears
-      // above are the whole map on purpose.
+      // and scratches above are the whole map on purpose.
       //
       // same packing as the loaded path — the shader always expects normals in
       // G/B, so a generated map that left them as a copy of R would read as a
