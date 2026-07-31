@@ -475,44 +475,24 @@
 
     /* ---- Armory / loadout menu ---- */
     #armory {
-      position: fixed; inset: 0; z-index: 93; display: none; flex-direction: column;
-      background:
-        /* spotlight behind the weapon display */
-        radial-gradient(ellipse 46% 38% at 62% 36%, rgba(86, 160, 210, 0.14), transparent 70%),
-        /* floor glow beneath the weapon */
-        radial-gradient(ellipse 30% 6% at 62% 62%, rgba(127, 212, 255, 0.10), transparent 75%),
-        /* cold uplight from the deck */
-        linear-gradient(0deg, rgba(24, 46, 66, 0.55) 0%, transparent 30%),
-        linear-gradient(180deg, #04070c 0%, #0a1522 55%, #04070c 100%);
-      /* No top/side padding: the weapon viewer is full-bleed and the header
-         and info panel float over it. Only the bottom chrome is inset. */
-      pointer-events: auto; padding: 0 0 18px;
+      position: fixed; inset: 0; z-index: 93; display: none;
+      /* Flat, and only a fallback. The sky, its horizon band, the light column
+         and the vignette all moved INTO the 3D scene (menu.js _buildBackdrop),
+         because the deck has to be able to haze into the backdrop and a CSS
+         layer behind the canvas is not something a shader can blend toward.
+         This colour only shows in the frame or two before the viewer sizes
+         itself, so it just matches armoryStage.sky.top. */
+      background: #05090f;
+      /* No padding at all: the viewer runs edge to edge and every piece of
+         chrome — header, info panel, loadout panel — floats over it. */
+      pointer-events: auto;
     }
-    /* hangar light shafts, drifting very slowly */
-    #armory::before {
-      content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-      background: repeating-linear-gradient(97deg,
-        transparent 0px, transparent 140px,
-        rgba(127, 212, 255, 0.05) 190px, rgba(127, 212, 255, 0.02) 230px,
-        transparent 300px);
-      mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), rgba(0,0,0,0.3) 60%, transparent 92%);
-      -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), rgba(0,0,0,0.3) 60%, transparent 92%);
-      animation: ar-shafts 60s linear infinite;
-    }
-    @keyframes ar-shafts {
-      from { background-position: 0 0; }
-      to { background-position: 1200px 0; }
-    }
-    /* faint structural grid */
-    #armory::after {
-      content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-      background-image:
-        linear-gradient(rgba(127, 212, 255, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(127, 212, 255, 0.05) 1px, transparent 1px);
-      background-size: 52px 52px;
-      mask-image: radial-gradient(ellipse 70% 60% at 60% 40%, rgba(0,0,0,0.8), transparent 80%);
-      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 60% 40%, rgba(0,0,0,0.8), transparent 80%);
-    }
+    /* Two screen-space overlays used to live here and are gone for the same
+       reason: the drifting hangar light shafts (#armory::before), whose diagonal
+       streaks slid across the weapon regardless of where it was, and a 52px
+       structural grid (#armory::after) that fought the real world-space grid on
+       the deck. Both are the scene's job now — the deck's own polish streaks
+       replace the shafts, and above the horizon the reference has nothing. */
     .ar-head {
       position: absolute; top: 0; left: 0; right: 0; z-index: 3; pointer-events: none;
       display: flex; align-items: baseline; gap: 18px;
@@ -520,7 +500,11 @@
     }
     .ar-title { font-size: 22px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
     .ar-sub { font-size: 12px; letter-spacing: 3px; color: var(--hud-cyan); }
-    .ar-main { position: relative; flex: 1; min-height: 0; }
+    /* Full-bleed: the viewer owns the entire overlay, including the area behind
+       the loadout panel. That panel is translucent and blurs what is under it,
+       so the deck has to actually extend down there for the blur to have
+       anything to work with. */
+    .ar-main { position: absolute; inset: 0; }
     .ar-info {
       position: absolute; z-index: 2; left: 4vw; top: 78px; width: 320px;
       display: flex; flex-direction: column; gap: 10px;
@@ -537,39 +521,104 @@
     .ar-bar label { font-size: 9px; letter-spacing: 2px; color: #6e93a8; display: block; margin-bottom: 2px; }
     .ar-track { height: 5px; background: #13232f; }
     .ar-track > div { height: 100%; background: linear-gradient(90deg, #2b7bb8, #7fd4ff); }
+    /* No CSS stand line here any more: the weapon rests on a real deck rendered
+       in the 3D scene (menu.js _buildStage), which the camera pitch makes
+       visible. A flat overlay line fought with it. */
     .ar-viewer { position: absolute; inset: 0; }
-    /* display-stand line under the weapon — spans the band left over to the
-       right of the floating info panel, which is where the gun is framed */
-    .ar-viewer::after {
-      content: ''; position: absolute; left: calc(4vw + 348px); right: 4vw; top: 72%; height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(127, 212, 255, 0.35) 30%, rgba(127, 212, 255, 0.35) 70%, transparent);
-      box-shadow: 0 0 18px 2px rgba(127, 212, 255, 0.12);
-      pointer-events: none;
-    }
     .ar-viewer canvas { width: 100% !important; height: 100% !important; display: block; cursor: grab; }
     .ar-viewer canvas:active { cursor: grabbing; }
-    .ar-tabs { display: flex; gap: 4px; padding: 0 4vw; border-bottom: 1px solid var(--hud-cyan-dim); }
+    /* The loadout panel floats over the full-bleed viewer. */
+    /* A defined shelf, not a soft haze. The reference reads as a panel laid on
+       top of the scene, which needs a crisp top edge — so the blur ramps in over
+       ~30px around a hairline rather than fading over 70. */
+    /* Positioning container only — no tint of its own, so the tab row inside it
+       sits over the bare scene. A hairline marks where the chrome begins. */
+    .ar-bottom {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+      border-top: 1px solid rgba(255,255,255,0.07);
+    }
+    /* The dark blurred slab starts BELOW the tabs, at the card row — matching the
+       reference, where the class tabs float on the scene and only the loadout
+       area is backed. */
+    /* padding-top is the height knob. .ar-bottom is anchored to the bottom of the
+       screen, so growing the panel pushes its top edge UP — and carries the tab
+       row up with it, keeping the tabs clear of the tint. The extra band is where
+       the blurred deck reflection shows through. */
+    .ar-panel {
+      position: relative; padding: 18px 0 20px;
+      border-top: 1px solid rgba(255,255,255,0.11);
+    }
+    /* Tint and blur on a pseudo-element rather than on .ar-panel itself: a
+       backdrop-filter on the panel would blur its own children's backdrop too.
+       No mask fade here — the border-top above hides the blur's edge, which is
+       what gives the crisp shelf the reference has. */
+    .ar-panel::before {
+      content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+      backdrop-filter: blur(20px) saturate(0.85);
+      -webkit-backdrop-filter: blur(20px) saturate(0.85);
+      background: linear-gradient(180deg, rgba(6,11,18,0.86) 0, rgba(6,11,18,0.92) 100%);
+    }
+    .ar-cards, .ar-foot { position: relative; z-index: 1; }
+    /* Even, generous tabs like the reference — sized to a common width rather
+       than to their own text, so the row reads as a segmented control. */
+    .ar-tabs { display: flex; gap: 5px; padding: 14px 4vw 0; }
+    /* Light chips, not dark ones: they read as controls sitting on top of the
+       scene rather than holes punched through it. */
     .ar-tabs button {
-      cursor: pointer; background: rgba(10,22,34,0.8); color: #7c96a8; border: 1px solid var(--hud-cyan-dim);
-      border-bottom: none; padding: 10px 26px; font-size: 12px; letter-spacing: 3px;
+      cursor: pointer; background: rgba(255,255,255,0.06); color: #9db3c2;
+      border: 1px solid rgba(255,255,255,0.13); border-bottom-color: transparent;
+      min-width: 172px; padding: 13px 20px; font-size: 12px; letter-spacing: 4px;
+      transition: background 0.12s, color 0.12s;
     }
-    .ar-tabs button:hover { color: var(--hud-cyan); }
-    .ar-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
-    .ar-cards { display: flex; gap: 40px; padding: 14px 4vw; }
-    .ar-slot-label { font-size: 10px; letter-spacing: 3px; color: #6e93a8; margin-bottom: 6px; }
-    .ar-row { display: flex; gap: 10px; }
+    .ar-tabs button:hover { background: rgba(255,255,255,0.12); color: #dceaf5; }
+    .ar-tabs button.sel {
+      background: rgba(255,255,255,0.16); color: #fff; font-weight: 500;
+      border-color: rgba(255,255,255,0.24);
+      box-shadow: inset 0 -2px 0 var(--hud-cyan);
+    }
+    /* No border-top here any more — .ar-panel owns the shelf edge now. */
+    /* min-width:0 all the way down, or flex items refuse to shrink below their
+       content width and the row overflows anyway. */
+    .ar-cards { display: flex; gap: 46px; padding: 18px 4vw 4px; min-width: 0; }
+    .ar-slot { min-width: 0; }
+    /* Small cyan tick before the label, as in the reference */
+    .ar-slot-label {
+      font-size: 13px; letter-spacing: 4px; color: #93b0c4; margin-bottom: 14px;
+      border-left: 3px solid var(--hud-cyan); padding-left: 11px; line-height: 1;
+    }
+    .ar-row { display: flex; gap: 10px; min-width: 0; }
+    /* Wide letterbox tiles. The icons are dimmed hard when unselected — at full
+       cyan they out-shout the weapon on the stand, which is the thing you are
+       actually meant to be looking at. */
+    /* Width is what makes the art bigger, not height: the line drawings are about
+       3.1:1, so any card taller than width/3.1 is just air around the gun. Sized
+       so the widest class (2 primaries + 3 class weapons) still fits one row. */
+    /* 330 is the target, but it SHRINKS rather than overflowing: Spartan carries
+       four class weapons, so that row is six cards wide and does not fit at full
+       size. object-fit:contain scales the art down with it. */
     .ar-card {
-      cursor: pointer; width: 170px; background: rgba(12,24,36,0.85); border: 1px solid #24404f;
-      padding: 6px; transition: border-color 0.12s, background 0.12s;
+      cursor: pointer; flex: 0 1 330px; min-width: 0;
+      background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.10);
+      padding: 12px 12px 10px; transition: border-color 0.12s, background 0.12s;
     }
-    .ar-card:hover { border-color: var(--hud-cyan); }
-    .ar-card.sel { border-color: var(--hud-cyan); background: rgba(58,160,255,0.14); box-shadow: 0 0 12px rgba(127,212,255,0.15) inset; }
+    .ar-card:hover { border-color: rgba(127,212,255,0.55); background: rgba(255,255,255,0.075); }
+    .ar-card.sel {
+      border-color: var(--hud-cyan); background: rgba(58,160,255,0.12);
+      box-shadow: 0 0 12px rgba(127,212,255,0.15) inset, 0 0 20px rgba(127,212,255,0.3);
+    }
     .ar-card.viewing { outline: 1px solid rgba(127,212,255,0.4); }
-    .ar-card img { width: 100%; height: 72px; object-fit: contain; display: block; opacity: 0.85; }
-    .ar-card.sel img, .ar-card:hover img { opacity: 1; }
-    .ar-card-name { font-size: 10px; letter-spacing: 1px; color: #9ab4c4; margin-top: 4px; text-align: center; }
+    .ar-card img { width: 100%; height: 150px; object-fit: contain; display: block; }
+    /* Both card sources are line work now, so both dim by opacity alone — a
+       brightness filter on 1px strokes just eats them. */
+    .ar-thumb { opacity: 0.5; }
+    .ar-card:hover .ar-thumb { opacity: 0.8; }
+    .ar-card.sel .ar-thumb { opacity: 1; filter: drop-shadow(0 0 6px rgba(127,212,255,0.45)); }
+    .ar-line { opacity: 0.38; }
+    .ar-card:hover .ar-line { opacity: 0.7; }
+    .ar-card.sel .ar-line { opacity: 1; }
+    .ar-card-name { font-size: 11px; letter-spacing: 2px; color: #8fa7b8; margin-top: 10px; text-align: center; }
     .ar-card.sel .ar-card-name { color: var(--hud-cyan); }
-    .ar-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--hud-cyan-dim); padding: 12px 4vw 0; }
+    .ar-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.09); padding: 14px 4vw 0; margin-top: 14px; }
     .ar-summary { font-size: 12px; letter-spacing: 2px; color: #8fa9ba; }
     #arDeploy {
       cursor: pointer; background: rgba(127,212,255,0.12); color: var(--hud-cyan); border: 1px solid var(--hud-cyan);

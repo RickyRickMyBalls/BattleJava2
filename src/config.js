@@ -130,6 +130,193 @@ export const CFG = {
     highlightSpin: 1.2,  // light changes, both of which would cost a recompile
   },
 
+  // Armory weapon display. The gun stands on a lit deck rather than floating in
+  // a void, so every number the camera maths needs lives here instead of being
+  // spread through menu.js as magic constants.
+  armoryStage: {
+    // Degrees the camera looks DOWN at the weapon. NOT a free knob any more:
+    // at 0 the eye ends up ~9 cm above the deck, so the entire visible floor is
+    // far away and the haze gradient has no near field to grade across — the
+    // deck comes out a flat sheet. A few degrees buys ~40 cm of eye height and
+    // with it the near-dark / horizon-bright falloff the reference has.
+    pitch: 5,
+    pitchMin: -12,     // drag-to-orbit limits; below 0 you see the underside
+    pitchMax: 32,
+    pitchSpeed: 0.22,  // degrees per pixel dragged
+    infoBand: 348,     // px of viewer width the floating info panel covers
+    aimBias: 0.13,     // aim below the gun's centre so deck fills the lower frame
+    // Lens shift, exactly like Blender's Camera Data -> Shift Y. Slides the
+    // frustum without moving the camera, so perspective and the gun's contact
+    // with the deck are both untouched. Fraction of viewport height; POSITIVE
+    // moves the weapon DOWN. Stacks on top of the automatic shift that lifts the
+    // gun clear of the loadout panel, so 0 keeps the current framing.
+    // Use this rather than `aimBias` to reframe vertically: aimBias drags the
+    // camera down with the aim point and will put the eye under the deck.
+    shiftY: 0.1,
+    padX: 1.14,        // horizontal breathing room around the weapon's bounding box
+    heightPad: 1.24,   // ...and vertical, which also makes room for the deck
+    // How literally relative weapon sizes are shown.
+    //   1 = frame every gun against the LONGEST in the arsenal. Honest scale, but
+    //       an SMG becomes a speck and even a battle rifle only fills ~2/3.
+    //   0 = frame each gun to itself. Everything fills the frame, no scale at all.
+    // In between, the framed span is a geometric blend of the two.
+    // At 0 the scale cue moves to the deck: the grid is a fixed 0.5 m, so the
+    // number of squares a weapon spans reads its true length even though the
+    // camera has zoomed to fill the frame with it.
+    scaleFidelity: 0,
+    floorDrop: 0,      // metres of air under the gun's lowest point; 0 = resting
+                       // on the deck, negative sinks it in
+    // ---- The stage: sky, deck, and the haze that joins them ----------------
+    //
+    // Sky and deck are BOTH raw shaders authored in FINAL DISPLAY space (they
+    // bypass ACES — see the note on `light` below), which is the whole point:
+    // the deck fogs toward `sky.horizon`, the sky arrives at the same colour at
+    // ray.y == 0, so the join is invisible and there is no plane edge to see.
+    // If you change one of the two horizon colours, change the other.
+    //
+    // The sky is a full-screen quad INSIDE the scene, not a CSS gradient behind
+    // the canvas. A CSS backdrop cannot be fogged into, cannot be blurred by
+    // depth, and cannot be bloomed.
+    // Everything here is measured in ray.y / ray.x — the WORLD DIRECTION the
+    // pixel is looking along, not screen UV. Worth knowing how little of that
+    // range is on screen: at fov 35 the frame spans only about ±0.30 in ray.y,
+    // and the lens shift puts the horizon high, so the top edge is around 0.23.
+    // Numbers here are therefore much smaller than they look — `rise: 0.34`
+    // would mean the zenith colour is never reached anywhere in frame.
+    sky: {
+      // These are DARK, and deliberately so: sampled off the reference, its sky
+      // sits around #0b1018 and its brightest point on the horizon only reaches
+      // #0f1620. The stage reads as lit because of the ratio between the deck
+      // and the weapon, not because the backdrop carries any light of its own.
+      top: 0x05090f,      // straight up
+      horizon: 0x0d131c,  // at the horizon line — must match `floorHorizon`
+      rise: 0.10,         // how far up the horizon colour reaches, in ray.y
+      band: 0x0d151d,     // extra glow in a tight band hugging the horizon...
+      bandWidth: 0.02,    // ...how tight, also in ray.y
+      // One soft distant light column behind the weapon. columnX is a view-ray
+      // X (roughly -0.5..0.5 across the frame at this fov), columnW its width.
+      column: 0x0a1018,
+      columnX: 0.10,
+      columnW: 0.42,
+      vignette: 0.42,     // corner darkening; 0 = off
+    },
+
+    // Deck extent in metres. Large on purpose: the deck no longer fades to
+    // transparent, it hazes into the sky, so its far edge has to sit past the
+    // distance where the haze is total or you see the quad end.
+    floorSize: 140,
+    gridStep: 0.5,      // minor grid spacing (m) — round, so it reads as a ruler
+    gridMajor: 4,       // every Nth minor line is a major line
+    floorBase: 0x05080e,    // deck colour right under the camera — nearly black,
+                            // as in the reference. The near field is not lit.
+    floorHorizon: 0x0d131c, // ...and infinitely far away. Match `sky.horizon`.
+    // The pool of light under the weapon is the single easiest thing to
+    // overdo: it sits in the near field, which is the part that has to stay
+    // dark, and it lifts the whole bottom of the frame off black if you let it.
+    floorGlow: 0x060a10,
+    glowRadius: 1.4,        // ...how far it reaches
+    // Haze is measured in CAMERA distance, not distance from the weapon. That
+    // is what makes the deck read as a room: darkest under your feet, brightest
+    // at the horizon. Distance-from-origin (what this used to do) brightens the
+    // near field too, which is the "lit grid floating in a void" look.
+    // Haze per metre of camera distance, and the metres of clear deck before it
+    // starts. These look far too aggressive until you measure what is actually
+    // on screen: the eye sits ~18 cm above the deck, so the bottom HALF of the
+    // frame covers only 1.1 m down to 0.5 m, and everything past ~5 m is
+    // crushed into the few pixels above it. The whole gradient therefore has to
+    // happen between roughly 0.5 m and 5 m — a gentle per-metre figure spreads
+    // the ramp over distances that occupy no pixels and the deck comes out flat.
+    haze: 0.5,
+    hazeStart: 0.4,
+    // The deck has to arrive at the sky's horizon glow, not just at its base
+    // horizon colour, or there is a visible step in value exactly on the join.
+    // Match `sky.band`; `bandRamp` is how much of the haze ramp it occupies
+    // (0.6 = the glow only shows over the last 40% of the fade).
+    floorBand: 0x0d151d,
+    bandRamp: 0.6,
+    lineColor: 0x9fc8e0, // cool white, not cyan — the grid is a surface detail
+    lineMinor: 0.035,
+    lineMajor: 0.09,
+    lineNear: 1.0,      // camera distance where grid lines start to appear...
+    lineNearSoft: 2.2,  // ...and where they reach full strength. The near metre
+                        // of deck stays clean; the haze kills them far away.
+    // Surface detail — the scuffs and polish smears, and the thing doing more
+    // work than the grid is. A TEXTURE rather than procedural noise, and not
+    // only because it looks better: the deck is seen at a grazing angle, where
+    // any procedural pattern drops below one period per pixel and aliases into
+    // moire. Mipmaps plus anisotropic filtering are the hardware answer to
+    // exactly that, and a shader function cannot have them.
+    //
+    // `deckUrl` null = a seamless one is generated into a canvas at startup, so
+    // this works with no asset. Point it at a real authored map (greyscale,
+    // tiling, ~1-2k) and that wins — nothing else has to change.
+    deckUrl: null,      // e.g. '/other/deck_detail.jpg' (served from source/)
+    deckTile: 5.0,      // metres per repeat
+    deckDetail: 0.55,   // how hard the map modulates the deck, 0 = flat colour
+    floorAlpha: 1,      // the deck is opaque now; this is a global escape hatch
+    reflect: 0.5,     // mirrored-gun opacity at the contact line...
+    reflectFade: 0.2, // ...falling to nothing this many metres below it
+    shadowAlpha: 0.55,
+    shadowSize: 1024,
+
+    // Atmosphere on the weapon itself, so its far end sits back a little.
+    // three applies fog AFTER tone mapping and colour-space conversion
+    // (fog_fragment sits below tonemapping_fragment in the shader), so this is
+    // a FINAL DISPLAY colour like everything else on the stage — see the
+    // LinearSRGBColorSpace note where it is built in menu.js.
+    fog: true,
+    fogColor: 0x0d131c, // match `sky.horizon`
+    fogNear: 1.0,       // metres from the camera where haze starts
+    fogFar: 16,         // ...and where it would be total. Keep this large: the
+                        // weapon spans ~1 m, so it should only pick up a few
+                        // percent across its length.
+
+    // Loadout-card art, baked off the real models as blueprint line work.
+    // `cardEdgeAngle` is the crease threshold in degrees: only edges where two
+    // faces meet at more than this become lines. Low values approach a full
+    // wireframe (triangulation noise on these meshes); high values keep only the
+    // silhouette and the major panel breaks, which is the reference look.
+    cardEdgeAngle: 24,
+    cardLineColor: 0xa8c8de,
+    cardThumbW: 528,   // 2x the card's image box, and matched to its aspect so
+    cardThumbH: 168,   // object-fit:contain fills the card instead of letterboxing
+
+    // Hero-shot lighting. Ambient is deliberately LOW and the directionals high:
+    // definition comes from the ratio between them, so filling the shadows is
+    // exactly what flattens the weapon out. Tone mapping is armory-only — the
+    // match, lobby and deploy renderers are still linear, so the same rifle is
+    // lit differently here than in your hands. That is deliberate.
+    light: {
+      exposure: 1.1,          // ACES filmic tone-mapping exposure
+      env: 0.2,              // RoomEnvironment PMREM — the specular ambient
+      envBlur: 0.25,          // lower = sharper reflections = crisper highlights
+      hemi: 0.1,             // sky/ground diffuse ambient
+      hemiSky: 0xdfeeff,
+      hemiGround: 0x394450,
+      // The *Pos entries are DIRECTIONS, not places: these are DirectionalLights,
+      // so only the angle from the origin matters and distance is irrelevant. The
+      // weapon lies along X with its muzzle at -X; the camera sits at +Z.
+      key: 0.25, keyColor: 0xffffff, keyPos: [2, 3, 4],      // front-right, main shaper
+      // High and directly BEHIND. A rim has to graze along the silhouette to draw
+      // an edge — the old [-3, 1, -2] was nearly level with the gun, so it lit the
+      // far side, the side facing away from you, and did essentially nothing.
+      rim: 1.0, rimColor: 0x808080, rimPos: [0, 3.6, -3.0],
+      top: 5, topColor: 0x808080, topPos: [2, 5, 2], // ALSO the shadow caster
+      // Light thrown back UP off the deck. Nothing else lights the underside —
+      // key/rim/top are all overhead and the hemisphere's ground term is far too
+      // weak on its own. Tinted like the deck, because that is what it is
+      // bouncing off. Push it too far and the gun starts to look like it is lit
+      // from a floor panel rather than resting on one.
+      bounce: 0.5, bounceColor: 0xffffff, bouncePos: [0.5, -3, 1.5],
+      // Upper-front-LEFT, on the muzzle side. The reference's read comes from
+      // here: it is what puts the highlight along the barrel, the top of the
+      // carry handle and the crown of the scope. `key` sits at +X and only lights
+      // the stock end; `rim` is on the muzzle side but behind, so between them the
+      // front of the weapon got nothing.
+      front: 2.0, frontColor: 0xffffff, frontPos: [-3.4, 3.6, 2.8],
+    },
+  },
+
   ai: {
     spreadPerMeter: 0.00012,
     damageScale: 0.85,      // AI bullets hit a bit softer, keeps TTK fair at 32v32
