@@ -23,7 +23,16 @@ export class Game {
     this.session = session || null;
     this.playerTeam = TEAM.BLUE;
     // the session owns the loadout so lobby customization carries into the game
-    this.playerLoadout = validateLoadout(session ? session.playerLoadout : makeLoadout('assault'));
+    // No session (a scripted/headless match) gets its own kit; otherwise this
+    // reads through to the session every time — see the getter below.
+    this._soloLoadout = session ? null : validateLoadout(makeLoadout('assault'));
+    // Read through to the session rather than capturing the reference here, the
+    // way arena.js already does. Switching loadout slot on the deploy screen
+    // repoints session.playerLoadout at a different stored kit, and a captured
+    // reference would leave the match still holding the kit you started on.
+    Object.defineProperty(this, 'playerLoadout', {
+      get: () => (this.session ? this.session.playerLoadout : this._soloLoadout),
+    });
 
     this.world = new World(scene, mapDef, mapData);
     this.audio = new GameAudio(this);

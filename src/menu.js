@@ -20,7 +20,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { CFG, WEAPONS, CLASSES } from './config.js';
-import { SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout, switchClass } from './loadout.js';
+import { SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout, selectClass, saveBook } from './loadout.js';
 import { prewarm, weaponClones } from './assets.js';
 
 const S = CFG.armoryStage;
@@ -176,9 +176,6 @@ const DitherShader = {
 export class LoadoutMenu {
   constructor(game) {
     this.game = game;
-    // Repair on the way in: a session loadout may predate a config change, or
-    // still be the old two-field shape, and every screen assumes six legal slots.
-    this.loadout = validateLoadout(game.playerLoadout);
     this.visible = false;
     this.mode = 'deploy';
     this.onDeploy = null;
@@ -200,6 +197,18 @@ export class LoadoutMenu {
     this._buildViewer();
     this._loadIcons();
     this.refresh();
+  }
+
+  // Read through to the host rather than capturing the object: selecting a
+  // different loadout slot on the deploy screen REPOINTS the session at another
+  // stored kit, and a captured reference would leave the armoury editing the
+  // one you had before.
+  get loadout() { return this.game.playerLoadout; }
+
+  // `this.game` is the session before a match exists and the Game once one does.
+  // Both reach the same book; only the path differs.
+  _session() {
+    return this.game.session || (this.game.loadouts ? this.game : null);
   }
 
   // ---------------------------------------------------------------- DOM --
@@ -1594,13 +1603,14 @@ export class LoadoutMenu {
       b.textContent = def.name.toUpperCase();
       b.classList.toggle('sel', lo.cls === key);
       b.onclick = () => {
-        // Same call the deploy screen makes: switching class lands on that
-        // class's first preset. If the two screens resolved a class switch
-        // differently, changing class here and then looking at the deploy strip
-        // would show a different kit than the one you just picked.
-        switchClass(lo, key);
+        // Repoint the session at that class's remembered slot — the same call
+        // the deploy screen makes. Mutating this loadout's `cls` instead would
+        // rewrite a stored kit into a different class's slot.
+        const sess = this._session();
+        if (sess) selectClass(sess, key);
+        else { lo.cls = key; validateLoadout(lo); }
         this.pickSlot = null;          // a pool you were browsing may be gone
-        this._view(slotById('primary'), lo.primary);
+        this._view(slotById('primary'), this.loadout.primary);
         this.refresh();
       };
       this.el.tabs.appendChild(b);
@@ -1616,6 +1626,11 @@ export class LoadoutMenu {
     // The panel's height drives the framing, and the picker is a different
     // height from the grid — so re-aim after the rows are rebuilt, not before.
     this._frameCamera();
+
+    // Every edit lands in the stored kit already (playerLoadout IS that kit),
+    // so this is only the write to disk.
+    const sess = this._session();
+    if (sess) saveBook(sess.loadouts);
 
     // keep the deploy screen's loadout strip and lobby preview in sync
     if (this.game.deployScreen) this.game.deployScreen.refreshLoadout();

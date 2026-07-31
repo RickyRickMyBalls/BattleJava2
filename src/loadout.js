@@ -202,21 +202,10 @@ export function applyPreset(lo, preset) {
   return validateLoadout(lo);
 }
 
-// Switch class and land on that class's first preset rather than on whatever
-// makeLoadout assembles from the head of every pool. Those two only coincided
-// for three of the five classes, so switching to Engineer or Spartan used to
-// show MODIFIED before you had modified anything — you were on a kit with no
-// name. Every screen that changes class goes through here so they agree.
-export function switchClass(lo, cls) {
-  lo.cls = cls;
-  const first = presetsFor(cls)[0];
-  return first ? applyPreset(lo, first) : validateLoadout(lo);
-}
-
-// Which preset the current loadout still matches, if any. Presets SEED rather
-// than lock, so this is how the UI knows to say MODIFIED once you have changed
-// something — order-insensitive on the gadget pair, because taking the same two
-// gadgets in the other order is the same kit.
+// Which preset a loadout still matches, if any. Order-insensitive on the gadget
+// pair, because taking the same two gadgets in the other order is the same kit.
+// Only used to label a slot that has not been touched — a slot IS its contents
+// now, not a pointer at a preset.
 export function matchingPreset(lo) {
   if (!lo) return null;
   const mine = [...(lo.gadgets || [])].sort().join();
@@ -225,6 +214,100 @@ export function matchingPreset(lo) {
     && p.grenade === lo.grenade
     && p.melee === lo.melee
     && [...(p.gadgets || [])].sort().join() === mine) || null;
+}
+
+// ------------------------------------------------------------- Loadout book --
+// Three editable kits per class. The LOADOUTS presets are no longer something
+// you pick — they are what a slot STARTS as and what RESET puts back, which
+// collapses "preset" and "custom loadout" into one concept: you always have
+// three kits and they begin good instead of beginning empty.
+export const SLOTS_PER_CLASS = 3;
+const STORE_KEY = 'fc.loadouts.v1';
+
+export function makeBook() {
+  const book = {};
+  for (const cls of Object.keys(CLASSES)) {
+    const presets = presetsFor(cls);
+    book[cls] = [];
+    for (let i = 0; i < SLOTS_PER_CLASS; i++) {
+      const lo = { cls, gadgets: [] };
+      const p = presets[i] || presets[presets.length - 1];
+      book[cls].push(p ? applyPreset(lo, p) : validateLoadout(lo));
+    }
+  }
+  return book;
+}
+
+// Put a slot back to the kit it shipped with. This is the whole reason the
+// LOADOUTS registry survives editing — without it there is no way back once a
+// slot has been changed.
+export function resetSlot(book, cls, i) {
+  const lo = book[cls] && book[cls][i];
+  if (!lo) return null;
+  lo.cls = cls;
+  const p = presetsFor(cls)[i] || presetsFor(cls)[0];
+  return p ? applyPreset(lo, p) : validateLoadout(lo);
+}
+
+export function saveBook(book) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(book)); } catch (e) { /* private mode */ }
+}
+
+// Stored kits are UNTRUSTED input — they were written by an older build of the
+// config and may name a gadget that has since been renamed, moved pool, or
+// stopped existing. Every field is copied onto a freshly-defaulted slot and run
+// through validateLoadout, so a stale save degrades to something legal instead
+// of breaking the armoury. `cls` is forced from the book rather than read from
+// storage: a corrupt file must not be able to file an Engineer kit under
+// Assault.
+export function loadBook() {
+  const book = makeBook();
+  let raw = null;
+  try { raw = localStorage.getItem(STORE_KEY); } catch (e) { return book; }
+  if (!raw) return book;
+  let saved;
+  try { saved = JSON.parse(raw); } catch (e) { return book; }
+  if (!saved || typeof saved !== 'object') return book;
+  for (const cls of Object.keys(book)) {
+    const list = saved[cls];
+    if (!Array.isArray(list)) continue;
+    for (let i = 0; i < SLOTS_PER_CLASS; i++) {
+      const s = list[i];
+      // Unusable entries are SKIPPED rather than copied-then-repaired. Both end
+      // up legal, but repairing junk lands on the head of every pool, whereas
+      // skipping leaves the slot on the preset it was seeded with — which is
+      // the kit the player would recognise as belonging there.
+      if (!s || typeof s !== 'object' || typeof s.primary !== 'string') continue;
+      const lo = book[cls][i];
+      lo.cls = cls;
+      lo.primary = s.primary;
+      lo.secondary = s.secondary;
+      lo.gadgets = Array.isArray(s.gadgets) ? [...s.gadgets] : [];
+      lo.grenade = s.grenade;
+      lo.melee = s.melee;
+      validateLoadout(lo);
+    }
+  }
+  return book;
+}
+
+// Selecting a class or a slot REPOINTS session.playerLoadout at the stored kit
+// rather than copying into a single live object. That is what makes editing
+// automatic: the armoury already edits whatever playerLoadout points at, so
+// every change lands in the slot with no save step of its own.
+export function selectSlot(session, i) {
+  const cls = session.activeCls;
+  const idx = Math.max(0, Math.min(SLOTS_PER_CLASS - 1, i | 0));
+  session.activeSlot[cls] = idx;
+  session.playerLoadout = validateLoadout(session.loadouts[cls][idx]);
+  return session.playerLoadout;
+}
+
+export function selectClass(session, cls) {
+  if (!CLASSES[cls]) return session.playerLoadout;
+  session.activeCls = cls;
+  // Each class remembers which of its three slots you were last on.
+  return selectSlot(session, session.activeSlot[cls] || 0);
 }
 
 // A random legal loadout — what the 63 AI soldiers spawn with, so a squad is a

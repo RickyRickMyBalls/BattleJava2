@@ -5,8 +5,8 @@
 import * as THREE from 'three';
 import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
 import {
-  SLOTS, slotValue, slotDef, validateLoadout,
-  presetsFor, applyPreset, matchingPreset, switchClass,
+  SLOTS, slotValue, slotDef, validateLoadout, matchingPreset,
+  SLOTS_PER_CLASS, selectClass, selectSlot, resetSlot, saveBook,
 } from './loadout.js';
 import { terrainHeight } from './world.js';
 
@@ -96,11 +96,15 @@ export class DeployScreen {
         </div>
         <div class="dp-load2">
           <div class="dp-classtabs" id="dpClassTabs"></div>
-          <!-- Named kits. This is the fast path: class -> kit -> deploy, without
-               opening the armoury at all. The armoury stays the place you go to
-               customize, which keeps its two-state panel from needing a third. -->
-          <div class="dp-presets" id="dpPresets"></div>
-          <div class="dp-slotrow" id="dpSlots"></div>
+          <!-- Three editable kits per class down the left, the slot cards to
+               their right, in one panel. This is the fast path: class -> kit ->
+               deploy, without opening the armoury. The armoury stays the place
+               you customize, which keeps its two-state panel from needing a
+               third state. -->
+          <div class="dp-kitrow">
+            <div class="dp-kits" id="dpKits"></div>
+            <div class="dp-slotrow" id="dpSlots"></div>
+          </div>
         </div>
         <div class="dp-bottom">
           <button id="dpDeploy" disabled>DEPLOY</button>
@@ -116,7 +120,7 @@ export class DeployScreen {
       killed: el.querySelector('#dpKilled'),
       squad: el.querySelector('#dpSquad'),
       classTabs: el.querySelector('#dpClassTabs'),
-      presets: el.querySelector('#dpPresets'),
+      kits: el.querySelector('#dpKits'),
       slots: el.querySelector('#dpSlots'),
       deploy: el.querySelector('#dpDeploy'),
       status: el.querySelector('#dpStatus'),
@@ -534,6 +538,7 @@ export class DeployScreen {
   // other direction — without it, applying a preset would leave the armoury
   // showing the kit you had before you picked one.
   _syncScreens() {
+    if (this.game.session) saveBook(this.game.session.loadouts);
     if (this.game.armory && this.game.armory.visible) this.game.armory.refresh();
     if (this.game.lobby && this.game.lobby.active) this.game.lobby.refreshPreview();
   }
@@ -549,34 +554,49 @@ export class DeployScreen {
       b.textContent = def.name.toUpperCase();
       b.classList.toggle('sel', lo.cls === key);
       b.onclick = () => {
-        // Lands on the class's first preset, so you are always on a named kit
-        // rather than on whatever the head of each pool happened to be.
-        switchClass(lo, key);
+        // Repoints at that class's remembered slot rather than mutating the
+        // current kit — the kit belongs to a class and must stay filed under it.
+        selectClass(this.game.session, key);
         this.refreshLoadout();
         this._syncScreens();
       };
       this.el.classTabs.appendChild(b);
     }
 
-    // Preset row. A preset seeds the slots and nothing more, so changing any
-    // slot afterwards simply stops matching — which is what MODIFIED reports,
-    // rather than the kit being in some half-applied state.
-    const active = matchingPreset(lo);
-    this.el.presets.innerHTML = '';
-    for (const p of presetsFor(lo.cls)) {
+    // Three editable kits for this class. A slot IS its contents — editing any
+    // slot in the armoury writes straight into the stored kit, because
+    // playerLoadout is a reference to it rather than a copy.
+    const sess = this.game.session;
+    const cls = lo.cls;
+    const activeIdx = (sess && sess.activeSlot[cls]) || 0;
+    this.el.kits.innerHTML = '';
+    for (let i = 0; i < SLOTS_PER_CLASS; i++) {
+      const kit = sess ? sess.loadouts[cls][i] : lo;
+      const preset = matchingPreset(kit);
       const b = document.createElement('button');
-      b.className = 'dp-preset' + (active && active.id === p.id ? ' sel' : '');
-      b.innerHTML = `<span class="n">${p.name}</span>`;
-      b.title = p.desc;
-      b.onclick = () => { applyPreset(lo, p); this.refreshLoadout(); this._syncScreens(); };
-      this.el.presets.appendChild(b);
+      b.className = 'dp-kit' + (i === activeIdx ? ' sel' : '');
+      // The subtitle is the preset it still matches, or CUSTOM once edited —
+      // which is how a slot says what is in it without needing a name of its own.
+      b.innerHTML = `<span class="n">LOADOUT ${i + 1}</span>`
+        + `<span class="s">${preset ? preset.name : 'CUSTOM'}</span>`;
+      b.title = preset ? preset.desc : 'Edited loadout';
+      b.onclick = () => {
+        if (sess) selectSlot(sess, i);
+        this.refreshLoadout();
+        this._syncScreens();
+      };
+      this.el.kits.appendChild(b);
     }
-    if (!active) {
-      const tag = document.createElement('span');
-      tag.className = 'dp-preset-mod';
-      tag.textContent = 'MODIFIED';
-      this.el.presets.appendChild(tag);
-    }
+    const reset = document.createElement('button');
+    reset.className = 'dp-kit-reset';
+    reset.textContent = 'RESET SLOT';
+    reset.title = 'Put this slot back to the kit it shipped with';
+    reset.onclick = () => {
+      if (sess) { resetSlot(sess.loadouts, cls, activeIdx); selectSlot(sess, activeIdx); }
+      this.refreshLoadout();
+      this._syncScreens();
+    };
+    this.el.kits.appendChild(reset);
 
     // Slot row, driven off the same table the armoury builds from, so the two
     // screens cannot disagree about what a loadout contains. Weapons show their

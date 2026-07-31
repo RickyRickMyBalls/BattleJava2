@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MAPS } from './config.js';
-import { makeLoadout } from './loadout.js';
+import { loadBook, selectClass } from './loadout.js';
 import { loadAssets } from './assets.js';
 import { loadMap } from './maps.js';
 import { Game } from './game.js';
@@ -42,11 +42,20 @@ window.addEventListener('resize', () => {
 window.addEventListener('error', (e) => { loadmsg.textContent = `Error: ${e.message}`; });
 window.addEventListener('unhandledrejection', (e) => { loadmsg.textContent = `Rejection: ${e.reason && (e.reason.message || e.reason)}`; });
 
-// The session outlives screens: it owns the loadout (customized in the lobby,
+// The session outlives screens: it owns the loadouts (customized in the lobby,
 // carried into the game) and the shared menu-open flag.
+//
+// `loadouts` is the book — three editable kits per class, restored from
+// localStorage and seeded from the LOADOUTS presets on a first run. Nothing
+// copies out of it: `playerLoadout` is a REFERENCE to whichever slot is active,
+// so the armoury editing "the loadout" is editing the stored kit directly and
+// there is no separate save step to forget.
 const session = {
   assets: null,
-  playerLoadout: makeLoadout('assault'),
+  loadouts: loadBook(),
+  activeCls: 'assault',
+  activeSlot: {},          // cls -> index, so each class remembers its own slot
+  playerLoadout: null,     // set by selectClass below
   gameType: 'conquest',
   mapId: 'demo',
   menuOpen: false,
@@ -54,6 +63,7 @@ const session = {
   armory: null,
   lobby: null,
 };
+selectClass(session, 'assault');   // points playerLoadout at Assault's slot 1
 
 let game = null;
 let menu = null;
