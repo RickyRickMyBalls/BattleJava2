@@ -256,6 +256,28 @@
     }
     .dp-classtabs button:hover { color: var(--hud-cyan); }
     .dp-classtabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
+    /* Preset kits, between the class tabs and the slot strip. Lighter weight
+       than either — the tabs are the big decision and the slots are the result;
+       this row is a shortcut through the middle, so it should not out-shout
+       what it sits between. */
+    .dp-presets { display: flex; gap: 4px; align-items: center; }
+    .dp-preset {
+      cursor: pointer; background: rgba(8,18,28,0.7); color: #7c96a8;
+      border: 1px solid #1e3543; padding: 4px 13px;
+      font-size: 10px; letter-spacing: 2px;
+      transition: color 0.12s, border-color 0.12s, background 0.12s;
+    }
+    .dp-preset:hover { color: var(--hud-cyan); border-color: var(--hud-cyan-dim); }
+    .dp-preset.sel {
+      color: var(--hud-cyan); border-color: var(--hud-cyan);
+      background: rgba(127,212,255,0.10);
+    }
+    /* Shown when the loadout matches no preset. Not an error — presets seed the
+       slots, so drifting off one is the expected result of customizing. */
+    .dp-preset-mod {
+      font-size: 9px; letter-spacing: 2px; color: #6d8496;
+      margin-left: 6px; align-self: center;
+    }
     .dp-slotrow {
       display: flex; gap: 8px; align-items: stretch; padding: 9px 12px;
       background: rgba(6,14,22,0.88); border: 1px solid var(--hud-cyan-dim);

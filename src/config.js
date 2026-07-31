@@ -1108,6 +1108,64 @@ export const CLASSES = {
 };
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Preset loadouts. Named kits per class, so picking a class does not drop you
+// into whatever `makeLoadout` assembled from the first entry of every pool —
+// that is mechanically sensible and says nothing about what a build is FOR.
+//
+// These are designer-authored and read-only. Applying one copies it onto the
+// session loadout and runs it through validateLoadout, so a preset that names
+// something illegal — a gadget that was renamed, a pool that changed, a pair
+// that breaks the one-weapon-gadget rule — self-repairs instead of breaking.
+// That is what makes them safe to hand-author here and safe to persist later.
+//
+// A preset SEEDS the slots rather than locking them: change anything afterwards
+// and you simply stop matching that preset (the deploy screen shows MODIFIED).
+// ---------------------------------------------------------------------------
+export const LOADOUTS = {
+  assault: [
+    { id: 'rifleman', name: 'RIFLEMAN', desc: 'The baseline. Rifle, sidearm, and something for a wall and for open ground.',
+      primary: 'ar', secondary: 'magnum', gadgets: ['breach', 'smoke'], grenade: 'frag', melee: 'bash' },
+    { id: 'breacher', name: 'BREACHER', desc: 'Shotgun and a charge. Nothing past twenty metres, everything inside it.',
+      primary: 'shotgun', secondary: 'magnum', gadgets: ['shotgun_kit', 'breach'], grenade: 'frag', melee: 'bash' },
+    { id: 'gunslinger', name: 'GUNSLINGER', desc: 'Two rifles and no pistol. Covers every range and carries less ammo for it.',
+      primary: 'ar', secondary: 'br', gadgets: ['webbing', 'smoke'], grenade: 'frag', melee: 'bash' },
+  ],
+  engineer: [
+    { id: 'tankhunter', name: 'TANK HUNTER', desc: 'Rifle and a tube. Armour is the job; the EMP is for whatever survives.',
+      primary: 'ar', secondary: 'rocket', gadgets: ['launcher_kit', 'emp'], grenade: 'frag', melee: 'bash' },
+    { id: 'sapper', name: 'SAPPER', desc: 'No launcher at all. Pure fortification — cover where there was none.',
+      primary: 'br', secondary: 'magnum', gadgets: ['quickwall', 'emp'], grenade: 'frag', melee: 'bash' },
+    { id: 'fortifier', name: 'FORTIFIER', desc: 'Laser and a wall. Hold the ground you just took and punish what comes for it.',
+      primary: 'ar', secondary: 'laser', gadgets: ['launcher_kit', 'quickwall'], grenade: 'frag', melee: 'bash' },
+  ],
+  recon: [
+    { id: 'marksman', name: 'MARKSMAN', desc: 'Sniper and a sensor. Reach, and something watching your flank while you use it.',
+      primary: 'sniper', secondary: 'magnum', gadgets: ['marksman_kit', 'sensor'], grenade: 'frag', melee: 'bash' },
+    { id: 'scout', name: 'SCOUT', desc: 'No long gun. Close-quarters weapons and both eyes on the map.',
+      primary: 'smg', secondary: 'm6g', gadgets: ['sensor', 'drone'], grenade: 'frag', melee: 'bash' },
+    { id: 'designator', name: 'DESIGNATOR', desc: 'DMR and a drone. Sees the target, marks it, and can take it itself.',
+      primary: 'dmr', secondary: 'magnum', gadgets: ['marksman_kit', 'drone'], grenade: 'frag', melee: 'bash' },
+  ],
+  support: [
+    { id: 'quartermaster', name: 'QUARTERMASTER', desc: 'Both crates, no utility. The squad runs on you and you carry nothing else.',
+      primary: 'ar', secondary: 'magnum', gadgets: ['ammocrate', 'medcrate'], grenade: 'frag', melee: 'bash' },
+    { id: 'medic', name: 'MEDIC', desc: 'Health forward. A station to hold and a pouch for whoever cannot reach it.',
+      primary: 'smg', secondary: 'magnum', gadgets: ['medcrate', 'supplypouch'], grenade: 'frag', melee: 'bash' },
+    { id: 'anchor', name: 'ANCHOR', desc: 'Ammunition and a plate. Stands in the doorway and keeps the squad shooting.',
+      primary: 'br', secondary: 'm6g', gadgets: ['ammocrate', 'ballisticshield'], grenade: 'frag', melee: 'bash' },
+  ],
+  spartan: [
+    { id: 'juggernaut', name: 'JUGGERNAUT', desc: 'Shotgun in the second slot and a shield to reach it behind.',
+      primary: 'ar', secondary: 'shotgun', gadgets: ['overshield', 'grapple'], grenade: 'frag', melee: 'bash' },
+    { id: 'ghost', name: 'GHOST', desc: 'Camouflage, a sniper, and the height to use it from.',
+      primary: 'smg', secondary: 'sniper', gadgets: ['camo', 'jetpack'], grenade: 'frag', melee: 'bash' },
+    { id: 'skirmisher', name: 'SKIRMISHER', desc: 'Grapple and jetpack. Arrives from a direction nobody is watching.',
+      primary: 'br', secondary: 'm6g', gadgets: ['grapple', 'jetpack'], grenade: 'frag', melee: 'bash' },
+  ],
+};
+
+// ---------------------------------------------------------------------------
 // Gadget registry. `kind` is what the code branches on — never the gadget's
 // identity — so a new gadget of an existing kind is a config entry and nothing
 // more:

@@ -9,7 +9,7 @@
 
 import {
   CLASSES, WEAPONS, GADGETS, GRENADES, MELEE, PERKS,
-  GLOBAL_GADGETS, ALL_WEAPONS,
+  GLOBAL_GADGETS, ALL_WEAPONS, LOADOUTS,
 } from './config.js';
 
 export function classPerk(cls) {
@@ -180,6 +180,51 @@ export function validateLoadout(lo) {
 // taking the first entry of each pool, so this stays correct as pools change.
 export function makeLoadout(cls = 'assault') {
   return validateLoadout({ cls, gadgets: [] });
+}
+
+// ---------------------------------------------------------------------- Presets --
+export function presetsFor(cls) { return LOADOUTS[cls] || []; }
+
+// Copy a preset onto a loadout IN PLACE — the session holds one loadout object
+// that several screens read through, so replacing the reference would leave the
+// deploy strip and the lobby preview pointed at the old one.
+//
+// It goes through validateLoadout on the way out, which is what makes
+// hand-authored presets safe: one naming something illegal is repaired rather
+// than breaking, and the same guarantee will cover saved loadouts if those land.
+export function applyPreset(lo, preset) {
+  if (!lo || !preset) return lo;
+  lo.primary = preset.primary;
+  lo.secondary = preset.secondary;
+  lo.gadgets = [...(preset.gadgets || [])];
+  lo.grenade = preset.grenade;
+  lo.melee = preset.melee;
+  return validateLoadout(lo);
+}
+
+// Switch class and land on that class's first preset rather than on whatever
+// makeLoadout assembles from the head of every pool. Those two only coincided
+// for three of the five classes, so switching to Engineer or Spartan used to
+// show MODIFIED before you had modified anything — you were on a kit with no
+// name. Every screen that changes class goes through here so they agree.
+export function switchClass(lo, cls) {
+  lo.cls = cls;
+  const first = presetsFor(cls)[0];
+  return first ? applyPreset(lo, first) : validateLoadout(lo);
+}
+
+// Which preset the current loadout still matches, if any. Presets SEED rather
+// than lock, so this is how the UI knows to say MODIFIED once you have changed
+// something — order-insensitive on the gadget pair, because taking the same two
+// gadgets in the other order is the same kit.
+export function matchingPreset(lo) {
+  if (!lo) return null;
+  const mine = [...(lo.gadgets || [])].sort().join();
+  return presetsFor(lo.cls).find((p) => p.primary === lo.primary
+    && p.secondary === lo.secondary
+    && p.grenade === lo.grenade
+    && p.melee === lo.melee
+    && [...(p.gadgets || [])].sort().join() === mine) || null;
 }
 
 // A random legal loadout — what the 63 AI soldiers spawn with, so a squad is a

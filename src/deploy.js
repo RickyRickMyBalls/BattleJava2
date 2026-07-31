@@ -4,7 +4,10 @@
 
 import * as THREE from 'three';
 import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
-import { SLOTS, slotValue, slotDef, validateLoadout } from './loadout.js';
+import {
+  SLOTS, slotValue, slotDef, validateLoadout,
+  presetsFor, applyPreset, matchingPreset, switchClass,
+} from './loadout.js';
 import { terrainHeight } from './world.js';
 
 const _v = new THREE.Vector3();
@@ -93,6 +96,10 @@ export class DeployScreen {
         </div>
         <div class="dp-load2">
           <div class="dp-classtabs" id="dpClassTabs"></div>
+          <!-- Named kits. This is the fast path: class -> kit -> deploy, without
+               opening the armoury at all. The armoury stays the place you go to
+               customize, which keeps its two-state panel from needing a third. -->
+          <div class="dp-presets" id="dpPresets"></div>
           <div class="dp-slotrow" id="dpSlots"></div>
         </div>
         <div class="dp-bottom">
@@ -109,6 +116,7 @@ export class DeployScreen {
       killed: el.querySelector('#dpKilled'),
       squad: el.querySelector('#dpSquad'),
       classTabs: el.querySelector('#dpClassTabs'),
+      presets: el.querySelector('#dpPresets'),
       slots: el.querySelector('#dpSlots'),
       deploy: el.querySelector('#dpDeploy'),
       status: el.querySelector('#dpStatus'),
@@ -521,6 +529,15 @@ export class DeployScreen {
     this.timer = t;
   }
 
+  // The armoury and the lobby preview read the same loadout object, and the
+  // armoury already calls back into here when it changes something. This is the
+  // other direction — without it, applying a preset would leave the armoury
+  // showing the kit you had before you picked one.
+  _syncScreens() {
+    if (this.game.armory && this.game.armory.visible) this.game.armory.refresh();
+    if (this.game.lobby && this.game.lobby.active) this.game.lobby.refreshPreview();
+  }
+
   refreshLoadout() {
     const lo = validateLoadout(this.game.playerLoadout);
     const icons = (this.game.armory && this.game.armory.icons) || {};
@@ -532,13 +549,33 @@ export class DeployScreen {
       b.textContent = def.name.toUpperCase();
       b.classList.toggle('sel', lo.cls === key);
       b.onclick = () => {
-        lo.cls = key;
-        // Same repair the armoury runs, from the same module — these two screens
-        // edit one loadout object and each used to carry its own copy of this.
-        validateLoadout(lo);
+        // Lands on the class's first preset, so you are always on a named kit
+        // rather than on whatever the head of each pool happened to be.
+        switchClass(lo, key);
         this.refreshLoadout();
+        this._syncScreens();
       };
       this.el.classTabs.appendChild(b);
+    }
+
+    // Preset row. A preset seeds the slots and nothing more, so changing any
+    // slot afterwards simply stops matching — which is what MODIFIED reports,
+    // rather than the kit being in some half-applied state.
+    const active = matchingPreset(lo);
+    this.el.presets.innerHTML = '';
+    for (const p of presetsFor(lo.cls)) {
+      const b = document.createElement('button');
+      b.className = 'dp-preset' + (active && active.id === p.id ? ' sel' : '');
+      b.innerHTML = `<span class="n">${p.name}</span>`;
+      b.title = p.desc;
+      b.onclick = () => { applyPreset(lo, p); this.refreshLoadout(); this._syncScreens(); };
+      this.el.presets.appendChild(b);
+    }
+    if (!active) {
+      const tag = document.createElement('span');
+      tag.className = 'dp-preset-mod';
+      tag.textContent = 'MODIFIED';
+      this.el.presets.appendChild(tag);
     }
 
     // Slot row, driven off the same table the armoury builds from, so the two

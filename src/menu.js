@@ -20,7 +20,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { CFG, WEAPONS, CLASSES } from './config.js';
-import { SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout } from './loadout.js';
+import { SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout, switchClass } from './loadout.js';
 import { prewarm, weaponClones } from './assets.js';
 
 const S = CFG.armoryStage;
@@ -1594,10 +1594,11 @@ export class LoadoutMenu {
       b.textContent = def.name.toUpperCase();
       b.classList.toggle('sel', lo.cls === key);
       b.onclick = () => {
-        lo.cls = key;
-        // Every slot can be invalidated by a class switch, not just the one the
-        // old code repaired — and the repair order matters. loadout.js owns it.
-        validateLoadout(lo);
+        // Same call the deploy screen makes: switching class lands on that
+        // class's first preset. If the two screens resolved a class switch
+        // differently, changing class here and then looking at the deploy strip
+        // would show a different kit than the one you just picked.
+        switchClass(lo, key);
         this.pickSlot = null;          // a pool you were browsing may be gone
         this._view(slotById('primary'), lo.primary);
         this.refresh();
