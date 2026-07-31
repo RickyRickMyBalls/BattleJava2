@@ -427,6 +427,11 @@ export class LoadoutMenu {
     cv.width = W; cv.height = H;
     const g = cv.getContext('2d', { willReadFrequently: true });
     g.drawImage(img, 0, 0);
+    // 0 = the map already tiles as authored, and blending is not free of charge:
+    // it MIRRORS a band inward, so anything sitting on the border comes back as a
+    // ghost of itself a few pixels in. A map with a grid line on its edge wants
+    // this off, not merely small.
+    if (S.deckSeamBlend <= 0) return cv;
     const band = Math.max(1, Math.round(Math.min(W, H) * S.deckSeamBlend));
     const src = g.getImageData(0, 0, W, H);
     const mid = g.createImageData(W, H);
@@ -482,6 +487,24 @@ export class LoadoutMenu {
       h[p] = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
       sum += h[p];
     }
+    // The gradient is only taken when something is going to read it. Skipping is
+    // not an optimisation, it is correctness: an EMISSIVE map is not a height
+    // field, and Sobelling one puts a hard bevel down either side of every glow
+    // line, with the brightest thing in the map driving the biggest gradient.
+    // G/B go neutral rather than being left as the source's own chroma, so a
+    // later non-zero deckNormal on a map with no authored relief reads as flat
+    // instead of as a wildly tilted surface.
+    if (S.deckNormal <= 0) {
+      for (let p = 0, i = 0; p < W * H; p++, i += 4) {
+        d[i] = Math.round(h[p] * 255);
+        d[i + 1] = d[i + 2] = 128;
+        d[i + 3] = 255;
+      }
+      g.putImageData(img, 0, 0);
+      this._mapMid.value = Math.max(0.02, sum / (W * H));
+      return cv;
+    }
+
     // Blur a COPY of the height before differencing it. A Sobel over the raw
     // map turns its film grain into normals too, and grain-sized normals read
     // as speckle rather than as surface — the relief we want is the bolts,
@@ -660,6 +683,12 @@ export class LoadoutMenu {
         uGrooveStr: { value: S.grooveGlowStrength },
         uGrooveLo: { value: S.grooveLo },
         uGrooveHi: { value: S.grooveHi },
+        // A LIGHT, so scene-linear like the other two — no stageColor.
+        uEmisColor: { value: new THREE.Color(S.deckEmisColor) },
+        uEmisStr: { value: S.deckEmisStrength },
+        uEmisFloor: { value: S.deckEmisFloor },
+        uEmisNear: { value: S.deckEmisNear },
+        uEmisSoft: { value: S.deckEmisSoft },
         uF0: { value: S.reflectF0 },
         uReflect: { value: S.reflectStrength },
         uRough: { value: S.reflectRough },
@@ -692,8 +721,9 @@ export class LoadoutMenu {
         uniform float uStep, uMajor, uSeamOn;
         uniform float uSeamStr, uSeamStrMajor, uSeamW, uSeamWMajor;
         uniform float uSeamGlowW, uSeamDrop, uSeamVary, uPanelTone;
-        uniform vec3 uGrooveGlow, uSpec;
+        uniform vec3 uGrooveGlow, uSpec, uEmisColor;
         uniform float uGrooveStr, uGrooveLo, uGrooveHi;
+        uniform float uEmisStr, uEmisFloor, uEmisNear, uEmisSoft;
         uniform float uF0, uReflect, uRough, uSpecPow, uL1Str, uL2Str, uGlossVar, uNormalStr;
         uniform vec3 uL1, uL2;
         uniform float uHaze, uHazeStart, uLineNear, uLineSoft;
@@ -782,8 +812,29 @@ export class LoadoutMenu {
           // Keyed off the map going dark, so it follows whatever panelling the
           // map has and is aligned to it by construction — which is the whole
           // reason the procedural seams below are off when a map is in use.
+          // Off for an emissive map, where the lit part is the BRIGHT part —
+          // see uGrooveStr in config.
           float groove = 1.0 - smoothstep(uGrooveLo, uGrooveHi, m);
           col += uGrooveGlow * groove * uGrooveStr * amp;
+
+          // ---- the deck map's emissive grid ----
+          // The other half of the same texture read, and the reason the map is
+          // sampled once but interpreted twice. det above went through the mean
+          // and the uMapMax clamp to become surface; here it is taken RAW,
+          // because for a lit map the absolute level is the signal — the field
+          // sits near black and everything above it is light.
+          //
+          // (No backticks anywhere in this shader: it is a JS template literal,
+          // so quoting an identifier the way the JS comments above do would end
+          // the string and take the whole module out with it.)
+          //
+          // A floor subtracted and the remainder rescaled, rather than a
+          // smoothstep: the halo either side of each line is authored into the
+          // texture, and this keeps its falloff exactly. It ADDS, so unlike the
+          // albedo path it does not care that floorBase is nearly black.
+          float ampE = smoothstep(uEmisNear, uEmisSoft, d);
+          float emis = max(det - uEmisFloor, 0.0) / max(1e-3, 1.0 - uEmisFloor);
+          col += uEmisColor * emis * uEmisStr * ampE;
 
           // ---- procedural panel seams (only without a panelled deck map) ----
           if (uSeamOn > 0.5) {

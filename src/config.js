@@ -291,16 +291,18 @@ export const CFG = {
                         // of deck stays clean; the haze kills them far away.
                         // Also gates grooveGlow.
 
-    // Light in the deck map's OWN grooves. Keyed off the map going dark, so it
+    // Light in the deck map's OWN grooves. Keyed off the map going DARK, so it
     // follows whatever panelling the map has — no alignment problem, and it
     // inherits the map's irregularity for free. Like seamGlow this is a LIGHT:
     // scene-linear, driven past 1.0 so it clears the bloom threshold.
-    // These are fractions of the map's MEAN, and the mean is a poor midpoint for
-    // a map like this one: its plates are near-black and its mean is dragged up
-    // by bright bolt specks, so anything near 0.5 catches whole plate interiors
-    // and lights them up in blotches. Only the darkest cores are grooves.
+    //
+    // OFF, and it stays off for as long as the deck map is an emissive one. This
+    // lights the map where it is darkest, which on a lit-grid map is the plate
+    // field — the grid itself would get nothing and the glow would come out
+    // sprayed over the plates' darkest noise. `deckEmisStrength` below is the
+    // same idea keyed the right way round for this kind of map.
     grooveGlow: 0xcfe6f7,
-    grooveGlowStrength: 0.9,
+    grooveGlowStrength: 0,
     grooveLo: 0.05,     // map/mean at or below this is fully "groove"...
     grooveHi: 0.42,     // ...and at or above this is fully "plate"
     // Surface detail — the scuffs and polish smears, and the thing doing more
@@ -311,23 +313,53 @@ export const CFG = {
     // exactly that, and a shader function cannot have them.
     //
     // `deckUrl` null = a seamless one is generated into a canvas at startup, so
-    // this works with no asset. Point it at a real authored map (greyscale,
-    // tiling, ~1-2k) and that wins — nothing else has to change.
-    // The deck map now owns the PLATE STRUCTURE — grooves, bolts, cracks,
-    // plate-to-plate tone — not just scuffs. It is read as a multiplicative
-    // albedo against its own mean (measured at load, so any map drops in
-    // without re-tuning): at the mean it changes nothing, grooves darken,
-    // bolt highlights brighten.
+    // this works with no asset. Point it at a real authored map and that wins.
     //
-    // This one is not seamless as authored (~23/255 mismatch left to right) and
-    // its panel pitch is not a whole fraction of its width, so it cannot simply
-    // be cropped square. `deckSeamBlend` fixes it at load — see _makeSeamless.
-    deckUrl: '/textures/deck_plates.png',
-    deckSeamBlend: 0.10, // border band mirror-blended to make the map tile
-    deckTile: 2.0,       // metres per repeat — puts its plates at roughly 48 cm
-    deckDetail: 0.85,    // how hard the map modulates the deck, 0 = flat colour
-    deckMapMax: 3.0,     // clamp on map/mean, so bolt specks cannot blow out
+    // The map is read TWICE, on two different curves, split at `deckEmisFloor`:
+    //   * BELOW it the map is SURFACE — multiplied into the deck colour against
+    //     the map's own mean (measured at load, so any map drops in without
+    //     re-tuning uDetail). This is the grain, the tick marks, the panel tone.
+    //   * ABOVE it the map is LIGHT — added in scene-linear, past 1.0 on purpose.
+    // Reading it once as a multiplier is what a plate-albedo map wants and is
+    // exactly wrong for a lit one: a glow line multiplied into a base of
+    // `floorBase` is still near-black, and the whole grid goes out.
+    //
+    // This map is a lit tactical grid on a near-black field: mean luma 0.042,
+    // 91% of its pixels under 0.063, and everything above that is the grid and
+    // its halo reaching a full 1.0. Hence the floor sitting where it does.
+    deckUrl: '/textures/floor_1.png',
+    deckSeamBlend: 0,    // 0 = already tiles as authored. Leave it there for this
+                         // map: it has a grid line sitting ON the border, and
+                         // mirror-blending a band would ghost a second one beside
+                         // it. Its edge columns already agree to ~0.002 luma.
+    deckTile: 2.5,       // metres per repeat — its 5 cells land on `gridStep`
+                         // exactly, so the authored grid and the 0.5 m world
+                         // ruler are the same lines instead of two beating grids
+    deckDetail: 0.5,     // how hard the map's SURFACE band modulates the deck
+    deckMapMax: 1.8,     // clamp on map/mean. Applies to the SURFACE read only —
+                         // it is what stops a grid line, which is ~24x the mean,
+                         // also blowing out as albedo underneath its own glow
     floorAlpha: 1,      // the deck is opaque now; this is a global escape hatch
+    // ---- the deck map's emissive grid --------------------------------------
+    // Read in RAW luminance, not against the mean, because the levels here are
+    // absolute and known. Subtracting a floor and rescaling PRESERVES the falloff
+    // the art already carries — the soft halo either side of every line is in the
+    // texture, and a smoothstep invented on top of it would only flatten it.
+    // Like seamGlow this is a LIGHT: scene-linear, driven past 1.0 so it clears
+    // `bloomThreshold` (0.35), ACES rolls it off and bloom widens it.
+    deckEmisFloor: 0.06,  // luma at or below this is surface, above it is light
+    // Cool WHITE with a blue lean, NOT the map's own saturated blue. A saturated
+    // hue interacts badly with the bloom threshold: only the green and blue
+    // channels clear it, so the halo comes out neon no matter how far the
+    // strength is turned down. The map supplies the SHAPE, this supplies the hue.
+    deckEmisColor: 0xa9cdf5,
+    deckEmisStrength: 2.6,
+    // Near gate, same idea as `seamNear` but its own knobs and much tighter: the
+    // grid is the point here, not a garnish, so it only needs to stay off the
+    // half-metre of deck directly under the camera where a hot line would sit at
+    // the very bottom of frame and pull the eye off the weapon.
+    deckEmisNear: 0.25,
+    deckEmisSoft: 1.2,
     // ---- Environment reflection -------------------------------------------
     // What makes the deck read as a polished floor in a room rather than a dark
     // plane with lines on it, and the biggest single thing the stage was
@@ -359,7 +391,14 @@ export const CFG = {
     // of relief in the texture is painted-on shading that cannot respond to
     // light. Faded out with haze in the shader, since normal maps alias badly
     // at exactly the grazing angles the far deck is seen at.
-    deckNormal: 0.1,
+    //
+    // 0 = OFF, and it has to be while the deck map is an emissive one. Treating a
+    // lit grid as a height field puts a hard bevel down either side of every glow
+    // line — relief that is not in the art, and the brightest thing in the map
+    // driving the biggest gradient. Deriving relief from a light map is a
+    // category error; the fix is an authored normal map, not a smaller number
+    // here. `_packDeckMap` skips the Sobel entirely at 0 and writes G/B neutral.
+    deckNormal: 0,
     // Radius in texels that the height is blurred by BEFORE the gradient is
     // taken. 0 lets the map's film grain become normals, which reads as speckle
     // on the deck rather than as surface relief; the features worth catching
