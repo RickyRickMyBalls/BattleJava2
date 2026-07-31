@@ -1022,7 +1022,10 @@ export const GADGETS = {
 // ---------------------------------------------------------------------------
 export const GRENADES = {
   frag: {
-    name: 'M9 FRAG', model: '/UNSC/weapons/Gernade/Frag.glb',
+    // `len` normalizes the model the way WEAPONS[].len does — the GLB is
+    // authored 0.26 m on its longest axis, which is football-sized for
+    // something you throw. A real M9 is about a handspan.
+    name: 'M9 FRAG', model: '/UNSC/weapons/Gernade/Frag.glb', len: 0.12,
     // Same line art as the GADGETS.frag stub — every slot registry carries an
     // `svg` so the armoury card renderer never has to know which registry an
     // item came from.
@@ -1034,6 +1037,12 @@ export const GRENADES = {
     count: 2,           // carried per spawn
     cooldown: 1.0,      // between throws
     useTime: 0.6,       // wind-up before release; needs a throw animation
+    // AI throw policy. The range band is bounded by the physics, not taste:
+    // GRENADE_GRAV in combat.js puts a flat throw at ~17 m and a 45-degree lob
+    // at 27 m, so asking for a throw past that just drops it short. `cooldown`
+    // is per soldier and deliberately long — 15 AI on a side each holding two
+    // frags is a lot of explosive, and the sim reads as artillery without it.
+    ai: { minRange: 9, maxRange: 22, cluster: 2, cooldown: 16 },
   },
 };
 
@@ -1054,7 +1063,14 @@ export const MELEE = {
     svg: '<path d="M12 4.5l4.2 4.2-4.2 4.2-4.2-4.2z"/><path d="M8.2 13.2 3.5 20.5"/><path d="M17.8 4.2 19.8 2.2M18.8 8.6l2.4-.9M14.6 2.6l.7-1.4"/>',
     dmg: 60,
     range: 2.2,         // metres from the eye
-    arc: 0.7,           // radians of forgiveness either side of the crosshair
+    arc: 0.7,           // radians of forgiveness either side of the crosshair, HORIZONTAL
+    // Vertical tolerance as a FOOT-TO-FOOT height difference, so level ground
+    // is 0 and this reads the same up or down. Its own number rather than
+    // reusing `range`, because the two do different jobs: `range` is how far
+    // you can reach, this is how much height difference a bash still crosses.
+    // Generous enough for a slope or a low ledge, tight enough that someone on
+    // a roof 2.5 m up does not eat a rifle butt through the ceiling.
+    vertical: 1.5,
     useTime: 0.45,      // locked out of firing
     cooldown: 0.9,
   },
@@ -1093,6 +1109,12 @@ export const ASSET_PATHS = {
     marine: { url: '/UNSC/Characters/Marine/Marine_1.glb', height: 1.86 },
     marine2: { url: '/UNSC/Characters/Marine/Marine_2.glb', height: 1.86 },
     marine3: { url: '/UNSC/Characters/Marine/Marine_3.glb', height: 1.86 },
+  },
+  // World props that are neither a character nor a held weapon: things the sim
+  // spawns copies of. Loaded and length-normalized exactly like weapons, and
+  // walked straight off this map, so adding one is a single entry.
+  props: {
+    frag: { url: '/UNSC/weapons/Gernade/Frag.glb', len: 0.12 },
   },
   animations: {
     // Two rifle idles, assigned per soldier at spawn so a crowd standing around

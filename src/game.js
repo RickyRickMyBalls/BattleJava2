@@ -84,7 +84,7 @@ export class Game {
           ? this.assets.characters[CLASSES[cls].model] || this.assets.characters.marine
           : this.assets.characters.elite;
         const s = new Soldier(this, def.team, squad, label, char, cls, primary, secondary);
-        s.setGadgets(kit.gadgets);
+        s.setGadgets(kit.gadgets, kit.grenade);
         s.isPlayer = isPlayer;
         if (isPlayer) {
           this.playerSoldier = s;

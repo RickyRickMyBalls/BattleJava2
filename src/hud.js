@@ -77,16 +77,23 @@ export class Hud {
   // Consumable gadget charges. Rebuilt only when the readout actually changes —
   // this runs every frame, and blowing away innerHTML each time would restart
   // the SVGs and thrash the layout for no reason.
-  setGadgets(gadgets) {
-    const shown = (gadgets || []).filter((g) => g && g.def.kind === 'consumable');
-    const sig = shown.map((g) => `${g.key}:${g.charges}:${g.useTimer > 0 ? 1 : 0}`).join('|');
+  setGadgets(gadgets, grenade) {
+    // Consumable gadgets carry a key number; the grenade rides the same row but
+    // is bound to G, so it is built from the same template with a different tag.
+    const shown = (gadgets || [])
+      .filter((g) => g && g.def.kind === 'consumable')
+      .map((g, i) => ({ def: g.def, n: g.charges, busy: g.useTimer > 0, tag: `key ${i + 3}` }));
+    if (grenade) {
+      shown.push({ def: grenade.def, n: grenade.count, busy: grenade.useTimer > 0, tag: 'key G' });
+    }
+    const sig = shown.map((g) => `${g.def.name}:${g.n}:${g.busy ? 1 : 0}`).join('|');
     if (sig === this._gadgetSig) return;
     this._gadgetSig = sig;
-    this.el.gadgets.innerHTML = shown.map((g, i) => {
-      const cls = g.useTimer > 0 ? 'busy' : (g.charges <= 0 ? 'empty' : '');
-      return `<div class="gad ${cls}" title="${g.def.name} — key ${i + 3}">
+    this.el.gadgets.innerHTML = shown.map((g) => {
+      const cls = g.busy ? 'busy' : (g.n <= 0 ? 'empty' : '');
+      return `<div class="gad ${cls}" title="${g.def.name} — ${g.tag}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${g.def.svg || ''}</svg>
-        <span class="n">${g.charges}</span>
+        <span class="n">${g.n}</span>
       </div>`;
     }).join('');
   }

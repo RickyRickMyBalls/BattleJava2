@@ -14,6 +14,16 @@ const _trace = { t: 0, hit: null, isHead: false, blockT: 1 };
 const MAX_TRACERS = 140;
 const MAX_ROCKETS = 12;
 const MAX_BOOMS = 8;
+const MAX_GRENADES = 24;
+// Grenade gravity, heavier than real g so a throw arcs visibly instead of
+// sailing. Worked out against the actual numbers rather than picked: a throw
+// leaves the eye at 1.78 m and 18 m/s with the player's 0.24 loft, which is a
+// 13.5 degree launch, so direct range before the first bounce is
+//    9.8 -> 20.4 m | 12 -> 17.5 m | 15 -> 14.7 m | 18 -> 12.9 m
+// 18 was the first guess here and it is too short to be worth a slot. 12 lands
+// a level throw at ~17 m with roughly 2 s of fuse left to roll, and caps a
+// deliberate 45-degree lob at 27 m.
+const GRENADE_GRAV = 12;
 
 export class Combat {
   constructor(game) {
@@ -70,6 +80,24 @@ export class Combat {
       this.rockets.push({ mesh: m, active: false, pos: new THREE.Vector3(), vel: new THREE.Vector3(), owner: null, def: null, life: 0 });
     }
 
+    // Pooled grenades. Unlike rockets these do not detonate on contact — they
+    // bounce, settle, and go off on their fuse, which is the whole reason you
+    // can bank one around a corner.
+    this.grenades = [];
+    const fallbackGeo = new THREE.SphereGeometry(0.06, 6, 5);
+    const fallbackMat = new THREE.MeshStandardMaterial({ color: 0x3f4a3a, roughness: 0.8 });
+    const fragModel = game.assets && game.assets.props && game.assets.props.frag;
+    for (let i = 0; i < MAX_GRENADES; i++) {
+      // The authored frag if it loaded, a dull olive pebble if it did not.
+      const m = fragModel ? fragModel.clone(true) : new THREE.Mesh(fallbackGeo, fallbackMat);
+      m.visible = false;
+      this.scene.add(m);
+      this.grenades.push({
+        mesh: m, active: false, pos: new THREE.Vector3(), vel: new THREE.Vector3(),
+        owner: null, def: null, fuse: 0, spin: new THREE.Vector3(),
+      });
+    }
+
     // Pooled explosion flashes
     this.booms = [];
     const boomGeo = new THREE.SphereGeometry(1, 10, 8);
@@ -122,6 +150,76 @@ export class Combat {
     if (shooter.isPlayer) this.game.audio.playShot(def);
     else this.game.audio.playShotAt(from, def);
     this.game.hud.notePlayerAwareShot(shooter);
+  }
+
+  // ---- Grenades ---------------------------------------------------------
+  throwGrenade(thrower, from, dir, def) {
+    const g = this.grenades.find((x) => !x.active);
+    if (!g) return null;
+    g.active = true;
+    g.pos.copy(from);
+    g.vel.copy(dir).normalize().multiplyScalar(def.throwSpeed);
+    g.owner = thrower;
+    g.def = def;
+    g.fuse = def.fuse;
+    // Tumble. Purely cosmetic, but a grenade that flies without rotating reads
+    // as a thrown rock.
+    g.spin.set(6 + Math.random() * 6, 4 + Math.random() * 4, 3 + Math.random() * 5);
+    g.mesh.visible = true;
+    g.mesh.position.copy(from);
+    return g;
+  }
+
+  _updateGrenades(dt) {
+    const world = this.game.world;
+    for (const g of this.grenades) {
+      if (!g.active) continue;
+      g.fuse -= dt;
+      const ox = g.pos.x, oy = g.pos.y, oz = g.pos.z;
+      g.vel.y -= GRENADE_GRAV * dt;
+      g.pos.addScaledVector(g.vel, dt);
+
+      // Walls and cover: no surface normal is available from the raycasts, so
+      // the step is rejected and the horizontal velocity reversed and damped.
+      // Crude, but at a grenade's size and speed it reads exactly like a bounce
+      // and it can never tunnel through a wall into a room it should not reach.
+      if (world.raycastCover(ox, oy, oz, g.pos.x, g.pos.y, g.pos.z) < 1
+          || world.raycastTerrain(ox, oy, oz, g.pos.x, g.pos.y, g.pos.z) < 1) {
+        g.pos.set(ox, oy, oz);
+        g.vel.x *= -g.def.bounce;
+        g.vel.z *= -g.def.bounce;
+        g.vel.y *= 0.5;
+      }
+
+      // Ground. `groundAt` where there is collision geometry (so it settles on
+      // tunnel floors and roofs, not the terrain underneath them), heightfield
+      // otherwise.
+      const col = world.collision;
+      const gy = col ? col.groundAt(g.pos.x, g.pos.y + 0.5, g.pos.z) : null;
+      const floor = gy !== null ? gy : world.heightAt(g.pos.x, g.pos.z);
+      if (g.pos.y <= floor) {
+        g.pos.y = floor;
+        if (Math.abs(g.vel.y) > 1.2) {
+          g.vel.y = -g.vel.y * g.def.bounce;   // bounce
+          g.vel.x *= 0.75; g.vel.z *= 0.75;
+        } else {
+          g.vel.y = 0;                          // settled: roll to a stop
+          g.vel.x *= 0.86; g.vel.z *= 0.86;
+        }
+      }
+      world.clampToMap(g.pos);
+
+      if (g.fuse <= 0) {
+        g.active = false;
+        g.mesh.visible = false;
+        this._explode(g.pos, g.owner, g.def);
+        continue;
+      }
+      g.mesh.position.copy(g.pos);
+      g.mesh.rotation.x += g.spin.x * dt;
+      g.mesh.rotation.y += g.spin.y * dt;
+      g.mesh.rotation.z += g.spin.z * dt;
+    }
   }
 
   _explode(pos, owner, def) {
@@ -330,6 +428,7 @@ export class Combat {
 
   update(dt) {
     this._updateRockets(dt);
+    this._updateGrenades(dt);
 
     let dirty = false;
     const p = this.tracerPos, c = this.tracerCol;

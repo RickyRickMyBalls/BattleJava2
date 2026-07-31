@@ -226,11 +226,12 @@ export function characterClones(assets) {
 
 
 export async function loadAssets(onProgress) {
-  const out = { characters: {}, clips: {}, clipHipsRest: {}, audio: {}, weaponModels: {} };
+  const out = { characters: {}, clips: {}, clipHipsRest: {}, audio: {}, weaponModels: {}, props: {} };
   const jobs = [];
   let done = 0;
   const total =
     Object.keys(ASSET_PATHS.characters).length + Object.keys(WEAPONS).length +
+    Object.keys(ASSET_PATHS.props || {}).length +
     Object.keys(ASSET_PATHS.animations).length +
     Object.keys(ASSET_PATHS.audio).length;
 
@@ -266,6 +267,28 @@ export async function loadAssets(onProgress) {
       out.weaponModels[key] = wrapper;
       tick(key);
     }).catch((e) => { console.warn(`Failed weapon ${def.model}`, e); tick(key); }));
+  }
+
+  // Props -----------------------------------------------------------------
+  // Same normalize-to-`len` treatment the weapons get, and for the same reason:
+  // an authored GLB's scale is whatever the artist's scene was in, and the frag
+  // ships at 0.26 m on its longest axis. Centred on its own origin so a pooled
+  // copy can just have its position set.
+  for (const [key, def] of Object.entries(ASSET_PATHS.props || {})) {
+    jobs.push(loadGLB(def.url).then((gltf) => {
+      const scene = gltf.scene;
+      scene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(scene);
+      const size = box.getSize(new THREE.Vector3());
+      const s = def.len / (Math.max(size.x, size.y, size.z) || 1);
+      const wrapper = new THREE.Group();
+      scene.scale.setScalar(s);
+      scene.position.sub(box.getCenter(new THREE.Vector3()).multiplyScalar(s));
+      wrapper.add(scene);
+      wrapper.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      out.props[key] = wrapper;
+      tick(key);
+    }).catch((e) => { console.warn(`Failed prop ${def.url}`, e); tick(key); }));
   }
 
   // Animations ------------------------------------------------------------

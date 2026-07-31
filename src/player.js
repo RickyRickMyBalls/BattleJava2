@@ -2,7 +2,7 @@
 // weapons (auto/burst/semi/pump/projectile/charge fire modes), freecam.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS, CLASSES, GADGETS, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { CFG, WEAPONS, CLASSES, GADGETS, GRENADES, MELEE, FP_DEFAULT, ADS_DEFAULT } from './config.js';
 import { weaponSlotGadget } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
@@ -94,6 +94,9 @@ export class Player {
 
     this.weapons = [mkWeaponState('ar'), mkWeaponState('smg')];
     this.gadgets = [];      // one state per loadout.gadgets entry, same order
+    this.grenade = null;    // { def, count, useTimer, cooldown, released }
+    this.melee = null;      // { def, useTimer, cooldown, struck }
+    this.swing = 0;         // 0..1 viewmodel dip, drives throw and bash motion
     this.active = 0;
     this.switchTimer = 0;
     this.fireTimer = 0;
@@ -168,6 +171,8 @@ export class Player {
         if (e.code === 'Digit2') this.switchWeapon(1);
         if (e.code === 'Digit3') this.useGadget(0);
         if (e.code === 'Digit4') this.useGadget(1);
+        if (e.code === 'KeyG') this.throwGrenade();
+        if (e.code === 'KeyV') this.meleeAttack();
         if (e.code === 'KeyQ') this.switchWeapon(1 - this.active);
       }
     });
@@ -371,6 +376,12 @@ export class Player {
     this.weapons = [mkWeaponState(loadout.primary), mkWeaponState(loadout.secondary)]
       .map((w) => this._applyReservePenalty(w));
     this.gadgets = (loadout.gadgets || []).map(mkGadgetState);
+    const gdef = GRENADES[loadout.grenade];
+    this.grenade = gdef
+      ? { def: gdef, count: gdef.count, useTimer: 0, cooldown: 0, released: false }
+      : null;
+    const mdef = MELEE[loadout.melee];
+    this.melee = mdef ? { def: mdef, useTimer: 0, cooldown: 0, struck: false } : null;
     this.active = 0;
     this.fireTimer = 0;
     this._mountGun();
@@ -403,7 +414,7 @@ export class Player {
 
   switchWeapon(i) {
     if (i === this.active || !this.weapons[i]) return;
-    if (this.gadgetBusy()) return;          // mid-injection, both hands occupied
+    if (this.actionBusy()) return;          // hands occupied
     const w = this.weapon;
     w.reloading = false;
     w.burstLeft = 0;
@@ -442,6 +453,15 @@ export class Player {
     return this.gadgets.some((g) => g && g.useTimer > 0);
   }
 
+  // Any hands-busy action: injecting, throwing, or swinging. Firing, reloading
+  // and swapping all check this — you get one of them at a time, and that
+  // exclusivity is what stops a grenade from being free.
+  actionBusy() {
+    return this.gadgetBusy()
+      || !!(this.grenade && this.grenade.useTimer > 0)
+      || !!(this.melee && this.melee.useTimer > 0);
+  }
+
   useGadget(i) {
     const g = this.gadgets[i];
     if (!g || this.freecam) return;
@@ -450,7 +470,7 @@ export class Player {
     // Only consumables do anything on a keypress. weaponSlot gadgets (combat
     // webbing) are passive — they were spent at the armoury, on the loadout.
     if (g.def.kind !== 'consumable') return;
-    if (this.gadgetBusy() || g.cooldown > 0) return;
+    if (this.actionBusy() || g.cooldown > 0) return;
     if (g.charges <= 0) { this.game.hud.message(`${g.def.name} — EMPTY`, 1.5); return; }
     if (s.health >= CFG.soldier.health) {
       this.game.hud.message(`${g.def.name} — NOT INJURED`, 1.5);
@@ -495,9 +515,146 @@ export class Player {
     }
   }
 
+  // ---------------------------------------------------- Grenade & melee --
+  // Both follow the same shape as biofoam: commit to a lockout, and the effect
+  // lands PART WAY THROUGH rather than on the keypress. The recovery tail after
+  // it is what makes the action cost something.
+  //
+  // Neither has an animation yet — there is no throw or bash clip in
+  // ASSET_PATHS.animations — so the feedback is a viewmodel dip driven by
+  // `swing`. The timings below are authored to suit a real clip when one lands.
+  _cancelWeaponAction() {
+    const w = this.weapon;
+    w.reloading = false;
+    w.burstLeft = 0;
+    w.chargeT = 0;
+    this.game.hud.setReloading(false);
+  }
+
+  throwGrenade() {
+    const g = this.grenade;
+    if (!g || this.freecam) return;
+    const s = this.soldier;
+    if (!s || !s.alive) return;
+    if (this.actionBusy() || g.cooldown > 0) return;
+    if (g.count <= 0) { this.game.hud.message('NO GRENADES', 1.5); return; }
+    g.count--;
+    g.useTimer = g.def.useTime;
+    g.released = false;
+    this._cancelWeaponAction();
+  }
+
+  meleeAttack() {
+    const m = this.melee;
+    if (!m || this.freecam) return;
+    const s = this.soldier;
+    if (!s || !s.alive) return;
+    if (this.actionBusy() || m.cooldown > 0) return;
+    m.useTimer = m.def.useTime;
+    m.struck = false;
+    this._cancelWeaponAction();
+  }
+
+  _releaseGrenade() {
+    const g = this.grenade;
+    this.camera.getWorldDirection(_dir);
+    // Loft. Without it a level throw drills straight into the floor a few
+    // metres out, because gravity is the only thing shaping the arc.
+    _dir.y += 0.24;
+    _dir.normalize();
+    // Leave from just in front of the eye, not the barrel — the throw is the
+    // other hand, and spawning inside the player's own collision would have it
+    // bounce off geometry it should already be past.
+    _from.copy(this.camera.position).addScaledVector(_dir, 0.6);
+    this.game.combat.throwGrenade(this.soldier, _from, _dir, g.def);
+  }
+
+  // Short forward sweep. Nearest enemy inside `range` and within `arc` of the
+  // crosshair takes it — one target, so a bash cannot clear a doorway.
+  _meleeStrike() {
+    const m = this.melee;
+    const s = this.soldier;
+    if (!s) return;
+    this.camera.getWorldDirection(_dir);
+    const eyeY = this.pos.y + this.eye;
+    const cosArc = Math.cos(m.def.arc);
+    // The arc is measured on the HORIZONTAL plane only, with height handled as
+    // a separate limit. Testing it in full 3D looked right and was not: the eye
+    // sits at 1.78 m and the target's mass at ~1.0, so someone standing right
+    // in front of you is already 24 degrees below the crosshair, and that tilt
+    // ate most of the arc before any left-right forgiveness was applied. A
+    // target 35 degrees off-centre — comfortably inside the 40-degree arc —
+    // came out at a dot of 0.747 against a 0.765 threshold and was missed.
+    // You should be able to bash what is in front of you regardless of whether
+    // it is slightly up or down a slope.
+    const fLen = Math.hypot(_dir.x, _dir.z) || 1;
+    let best = null, bestD = Infinity;
+    for (const e of this.game.allSoldiers) {
+      if (!e.alive || e.team === s.team) continue;
+      const dx = e.pos.x - this.pos.x;
+      const dz = e.pos.z - this.pos.z;
+      // Height difference FOOT TO FOOT, not eye to chest. Measuring it from the
+      // eye made the band lopsided: standing on level ground already puts a
+      // target 0.78 m "below" you, so a 0.8 m dip fell outside a 1.5 m limit
+      // while a 1.0 m rise sat comfortably inside it. Foot to foot, level
+      // ground is 0 and the knob means what it says in both directions.
+      const dLevel = e.pos.y - this.pos.y;
+      const flat = Math.hypot(dx, dz);
+      // Not someone on a roof or down a shaft. Its own limit, and it has to be
+      // checked before the arc: a target directly overhead has no horizontal
+      // offset to measure an angle against, so without this it was reachable
+      // straight through the ceiling.
+      if (Math.abs(dLevel) > (m.def.vertical ?? 1.5)) continue;
+      const d = Math.hypot(flat, dLevel);
+      if (d > m.def.range) continue;
+      if (flat > 0.001 && (dx * _dir.x + dz * _dir.z) / (flat * fLen) < cosArc) continue;
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (!best) return;
+    const killed = best.takeDamage(m.def.dmg, s, false);
+    this.game.hud.showHitmarker(killed);
+  }
+
+  _updateActions(dt) {
+    const g = this.grenade;
+    if (g) {
+      if (g.cooldown > 0) g.cooldown = Math.max(0, g.cooldown - dt);
+      if (g.useTimer > 0) {
+        g.useTimer -= dt;
+        // Release part way through the motion, so the rest of the timer is the
+        // recovery you are paying rather than a delay before anything happens.
+        if (!g.released && g.useTimer <= g.def.useTime * 0.55) {
+          g.released = true;
+          this._releaseGrenade();
+        }
+        if (g.useTimer <= 0) { g.useTimer = 0; g.cooldown = g.def.cooldown; }
+      }
+    }
+    const m = this.melee;
+    if (m) {
+      if (m.cooldown > 0) m.cooldown = Math.max(0, m.cooldown - dt);
+      if (m.useTimer > 0) {
+        m.useTimer -= dt;
+        if (!m.struck && m.useTimer <= m.def.useTime * 0.5) {
+          m.struck = true;
+          this._meleeStrike();
+        }
+        if (m.useTimer <= 0) { m.useTimer = 0; m.cooldown = m.def.cooldown; }
+      }
+    }
+    // Viewmodel dip: rises with how far into the action we are, falls away
+    // after. Stands in for the animation that does not exist yet.
+    const active = Math.max(
+      g && g.useTimer > 0 ? g.useTimer / g.def.useTime : 0,
+      m && m.useTimer > 0 ? m.useTimer / m.def.useTime : 0,
+    );
+    const target = active > 0 ? Math.sin(Math.PI * (1 - active)) : 0;
+    this.swing += (target - this.swing) * Math.min(1, dt * 14);
+  }
+
   startReload() {
     const w = this.weapon;
-    if (this.gadgetBusy()) return;
+    if (this.actionBusy()) return;
     if (w.reloading || w.mag >= w.def.mag || w.reserve <= 0) return;
     w.reloading = true;
     w.reloadTimer = w.def.reload;
@@ -630,18 +787,28 @@ export class Player {
     this.vmRot.x += (rot[0] - this.vmRot.x) * k;
     this.vmRot.y += (rot[1] - this.vmRot.y) * k;
     this.vmRot.z += (rot[2] - this.vmRot.z) * k;
-    this.viewmodel.rotation.set(this.vmRot.x + this.recoil * 0.12, this.vmRot.y, this.vmRot.z);
+    // `swing` drops the gun out of frame and rolls it while a throw or a bash
+    // is playing — it stands in for the animation, and it also reads as the
+    // reason you cannot shoot during one.
+    this.viewmodel.position.y -= this.swing * 0.22;
+    this.viewmodel.position.z += this.swing * 0.10;
+    this.viewmodel.rotation.set(
+      this.vmRot.x + this.recoil * 0.12 - this.swing * 0.55,
+      this.vmRot.y,
+      this.vmRot.z + this.swing * 0.35,
+    );
     this.vmScale += ((aim ? (ads.scale ?? 1) : 1) - this.vmScale) * k;
     this.viewmodel.scale.setScalar(this.vmScale);
     this.flash.material.opacity = Math.max(0, this.flash.material.opacity - dt * 22);
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 110);
 
     this._updateGadgets(dt);
+    this._updateActions(dt);
     this._updateWeapon(dt, moving, speed);
 
     const w = this.weapon;
     this.game.hud.setAmmo(w.mag, w.reserve);
-    this.game.hud.setGadgets(this.gadgets);            // no-op unless changed
+    this.game.hud.setGadgets(this.gadgets, this.grenade); // no-op unless changed
     if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;
   }
@@ -650,10 +817,10 @@ export class Player {
     const w = this.weapon;
     const def = w.def;
 
-    // Both hands are busy with the injector. Bleed the fire timer down so the
-    // gun is ready the instant the lockout ends rather than adding a second
-    // delay on top of it.
-    if (this.gadgetBusy()) {
+    // Hands busy — injecting, throwing or swinging. Bleed the fire timer down
+    // so the gun is ready the instant the lockout ends rather than adding a
+    // second delay on top of it.
+    if (this.actionBusy()) {
       this.fireTimer -= dt;
       return;
     }

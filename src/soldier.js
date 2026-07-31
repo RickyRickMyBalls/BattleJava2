@@ -3,12 +3,16 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
-import { CFG, TEAM, WEAPONS, CLASSES, GADGETS } from './config.js';
+import { CFG, TEAM, WEAPONS, CLASSES, GADGETS, GRENADES } from './config.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;
 const _v = new THREE.Vector3();
+// Second scratch, for a throw direction. Safe to pass into throwGrenade because
+// that only ever READS the direction (it copies it into the pooled grenade's
+// velocity) — see the all-bullets-miss note in combat.js for why that matters.
+const _v2 = new THREE.Vector3();
 
 // Held-weapon grip transform relative to the right-hand bone (meters / radians).
 // Tuned visually against the Mixamo rigs used by all three character models.
@@ -330,7 +334,7 @@ export class Soldier {
 
   // Equip the gadget slots. Only the ones with AI behaviour behind them are
   // tracked — the rest are loadout data the sim has nothing to do with yet.
-  setGadgets(keys) {
+  setGadgets(keys, grenadeKey) {
     this.gadgetKeys = keys || [];
     this.biofoam = null;
     for (const k of this.gadgetKeys) {
@@ -340,6 +344,10 @@ export class Soldier {
         break;
       }
     }
+    const gdef = GRENADES[grenadeKey];
+    this.grenade = gdef ? { def: gdef, count: gdef.count } : null;
+    // Staggered, so a squad that spawns together does not throw together.
+    this.grenadeCooldown = Math.random() * (gdef ? gdef.ai.cooldown : 10);
   }
 
   spawnAt(x, z) {
@@ -350,11 +358,15 @@ export class Soldier {
     this.health = S.health;
     this.target = null;
     this.burstLeft = 0;
-    // A respawn is a fresh kit, injector included.
+    // A respawn is a fresh kit — injector, frags and all.
     if (this.biofoam) {
       this.biofoam.charges = this.biofoam.def.charges;
       this.biofoam.useTimer = 0;
       this.biofoam.healLeft = 0;
+    }
+    if (this.grenade) {
+      this.grenade.count = this.grenade.def.count;
+      this.grenadeCooldown = Math.random() * this.grenade.def.ai.cooldown;
     }
     if (this.mesh) {
       this.mesh.visible = !this.isPlayer;
@@ -566,6 +578,7 @@ export class Soldier {
   _fire(dt) {
     this.fireTimer -= dt;
     this.rocketCooldown -= dt;
+    if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
     if (!this.target || !this.target.alive) return;
     const dist = this.pos.distanceTo(this.target.pos);
     if (dist > this.maxRange) return;
@@ -577,6 +590,27 @@ export class Soldier {
         this.fireTimer = 0.4;
         return;
       }
+      // Frag a clustered group. Sits ahead of the rocket check because it is
+      // the shorter-ranged answer to the same situation, and `_explode` only
+      // damages the thrower's enemies, so there is no friendly-fire risk to
+      // weigh — the AI never has to decide whether a throw is safe.
+      if (this.grenade && this.grenade.count > 0 && this.grenadeCooldown <= 0
+          && dist >= this.grenade.def.ai.minRange && dist <= this.grenade.def.ai.maxRange
+          && this._clusterSize(this.target) >= this.grenade.def.ai.cluster) {
+        const def = this.grenade.def;
+        this.muzzlePos(_v);
+        const dx = this.target.pos.x - _v.x, dz = this.target.pos.z - _v.z;
+        const flat = Math.hypot(dx, dz) || 1;
+        // Loft scaled by distance. Not a ballistic solve — a frag is an area
+        // weapon and landing near is the whole requirement.
+        _v2.set(dx / flat, 0.22 + flat * 0.012, dz / flat).normalize();
+        this.game.combat.throwGrenade(this, _v.clone(), _v2, def);
+        this.grenade.count--;
+        this.grenadeCooldown = def.ai.cooldown;
+        this.fireTimer = def.useTime;
+        return;
+      }
+
       // Engineer: rocket a clustered group on cooldown
       if (this.secondary.mode === 'projectile' && this.rocketCooldown <= 0
           && dist >= this.secondary.ai.aiMin && dist <= this.secondary.ai.range
