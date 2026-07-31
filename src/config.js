@@ -134,12 +134,19 @@ export const CFG = {
   // a void, so every number the camera maths needs lives here instead of being
   // spread through menu.js as magic constants.
   armoryStage: {
-    // Degrees the camera looks DOWN at the weapon. NOT a free knob any more:
-    // at 0 the eye ends up ~9 cm above the deck, so the entire visible floor is
-    // far away and the haze gradient has no near field to grade across — the
-    // deck comes out a flat sheet. A few degrees buys ~40 cm of eye height and
-    // with it the near-dark / horizon-bright falloff the reference has.
-    pitch: 5,
+    // Degrees the camera looks DOWN at the weapon, and the ONLY thing that sets
+    // where the horizon sits relative to the gun: horizon screen fraction works
+    // out as 0.5 - tan(pitch)/(2*tan(fov/2)) - lensShift. Everything else
+    // (aimBias, shiftY) translates the whole image, horizon included, so if the
+    // deck is taking up too much frame this is the knob — at 5 the horizon
+    // landed at 0.23 of frame height against the reference's 0.57.
+    //
+    // It briefly had to be non-zero: when the deck's gradient came from haze
+    // alone, a near-zero eye height left no near field to grade across and the
+    // floor read as a flat sheet. The Fresnel reflection supplies that gradient
+    // now — it keys off the ratio of eye height to distance, so it still falls
+    // off correctly with the eye only centimetres up — and 0 is fine again.
+    pitch: 0,
     pitchMin: -12,     // drag-to-orbit limits; below 0 you see the underside
     pitchMax: 32,
     pitchSpeed: 0.22,  // degrees per pixel dragged
