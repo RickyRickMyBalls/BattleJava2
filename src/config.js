@@ -808,19 +808,25 @@ export const WEAPONS = {
   },
 
   // --- Sidearms ------------------------------------------------------------
-  // The default occupant of the second weapon slot. Every class starts with it
+  // The default occupant of the second weapon slot. Every class starts with one
   // and the ones that spend a gadget slot trade UP out of it (Assault's webbing,
-  // Engineer's launcher, Recon's long gun), so it has to be worth carrying on
-  // its own rather than being a consolation prize.
+  // Engineer's launcher, Recon's long gun), so a sidearm has to be worth
+  // carrying on its own rather than being a consolation prize.
   //
-  // Balanced deliberately BELOW the rifles on sustained output — 7 shots to
-  // clear 100 EHP at 330 rpm is ~1.05 s, a hair slower than the MA5 — and above
-  // them on one axis only: `swapTime`. Its niche is the dry-mag moment, not the
-  // stand-up fight.
+  // Both are balanced deliberately BELOW the rifles on sustained output and
+  // above them on one axis only: `swapTime`. The niche is the dry-mag moment,
+  // not the stand-up fight.
+  //
+  // The two differ on volume vs punch, and land within ~0.05 s of each other on
+  // time-to-kill against 100 EHP so neither is simply better:
+  //   M6C  15 x 7 shots at 330 rpm = 1.09 s, 12 in the magazine
+  //   M6G  22 x 5 shots at 210 rpm = 1.14 s,  8 in the magazine
+  // The M6G kills in fewer hits and punishes a miss far harder — five of its
+  // eight rounds are the kill, so a magazine is one engagement.
   magnum: {
     // len matches the GLB's authored longest axis (0.26 m), so the model keeps
     // the scale it was built at — an M6 is ~0.27 m, so it was already right.
-    name: 'M6 MAGNUM', model: '/UNSC/weapons/Magnum/Magnum_2.1.glb', len: 0.26,
+    name: 'M6C MAGNUM', model: '/UNSC/weapons/Magnum/Magnum_2.1.glb', len: 0.26,
     icon: '/UNSC/weapons/Magnum/Pistol_icon.svg',
     // UNTUNED — seeded from the M7's pose because it is the closest thing in the
     // armoury by size, and a pistol is held nothing like an SMG. Wants a pass in
@@ -835,6 +841,29 @@ export const WEAPONS = {
     tracer: { style: 'bolt', color: [1, 0.82, 0.5], len: 3, speed: 440, opacity: 0.45 },
     snd: { key: 'pistolShot', rate: 1.0, vol: 0.5 },
     ai: { aiMin: 0, range: 50, burst: [2, 3], interval: 0.18, pause: [0.5, 1.0], spread: 0.011 },
+  },
+  m6g: {
+    // Same M6 family as the M6C, a different Misriah export: polished chrome
+    // where the other is worn gunmetal, so the two read apart instantly on the
+    // card and in the hand despite sharing a silhouette.
+    // len is the GLB's authored longest axis (0.235 m) — slightly shorter than
+    // the M6C's model, which is the export's own proportion, not a mistake.
+    name: 'M6G MAGNUM', model: '/UNSC/weapons/pistol/pistol.glb', len: 0.235,
+    icon: '/UNSC/weapons/pistol/Pistol_icon.svg',
+    // UNTUNED — same seed as the M6C. Both want a /chartest.html pass:
+    // GRIP tab -> `grip`, VIEWMODEL tab -> `fp`, ADS tab -> `ads`.
+    grip: { pos: [-0.03, 0.28, 0.02], rot: [-1.57, -0.2, -1.5] },
+    fp: { pos: [0.17, 0.02, -0.38], rot: [0, 0, 0] },
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 13 },
+    mode: 'semi', rpm: 210, dmg: 22, mag: 8, reserve: 48, reload: 2.0,
+    // Still far faster than a reload, but a beat slower than the M6C — the
+    // heavier gun costs you something on the draw as well as in the magazine.
+    swapTime: 0.28,
+    spreadHip: 0.020, spreadAds: 0.005, adsFov: 45,
+    falloff: [22, 80, 0.45], range: 150,
+    tracer: { style: 'bolt', color: [1, 0.86, 0.6], len: 3.4, speed: 460, opacity: 0.5 },
+    snd: { key: 'pistolShot2', rate: 1.0, vol: 0.55 },
+    ai: { aiMin: 0, range: 55, burst: [1, 2], interval: 0.28, pause: [0.6, 1.2], spread: 0.010 },
   },
 };
 
@@ -859,7 +888,9 @@ export const WEAPONS = {
 // rest of the specialists rather than being a free pick for every class.
 export const STANDARD_POOL = ['ar', 'br', 'smg'];
 export const SPECIALIST_POOL = ['shotgun', 'dmr', 'sniper', 'rocket', 'laser'];
-export const SIDEARM_POOL = ['magnum'];
+// Two of them, so the second weapon slot is a real decision for every class
+// rather than a single default nobody chooses. Volume against punch.
+export const SIDEARM_POOL = ['magnum', 'm6g'];
 // Everything, for the Spartan's perk — it reaches the whole armoury in slot 2
 // without spending a gadget on it. Sidearm FIRST so a Spartan's default slot 2
 // is the Magnum like everyone else's: the perk is that they may upgrade out of
@@ -1409,6 +1440,9 @@ export const ASSET_PATHS = {
     // The Magnum model ships without audio of its own; these come from the
     // neighbouring `pistol/` folder, which is the same weapon's sound set.
     pistolShot: '/UNSC/weapons/pistol/Pistol_shot1.mp3',
+    // The folder ships two shot samples; the heavier M6G takes the second so
+    // the two sidearms do not sound identical.
+    pistolShot2: '/UNSC/weapons/pistol/Pistol_shot2.mp3',
     pistolReload: '/UNSC/weapons/pistol/Pistol_reload.mp3',
     reload: '/UNSC/weapons/assault rifle/audio/assault-rifle-reload-1.mp3',
     empty: '/UNSC/weapons/pistol/empty_sound.mp3',

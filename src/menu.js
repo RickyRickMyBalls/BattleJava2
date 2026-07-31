@@ -48,7 +48,8 @@ const DESCRIPTIONS = {
   sniper: 'Anti-personnel sniper system. Two body shots or one clean headshot.',
   rocket: 'Shoulder-fired rockets with a wide blast radius. Vehicles, squads, problems.',
   laser: 'Charge, hold the line steady, and delete whatever the beam touches.',
-  magnum: 'Sidearm you can draw twice as fast as you can reload. For the moment your rifle clicks empty.',
+  magnum: 'Service sidearm you can draw twice as fast as you can reload. Twelve rounds and a forgiving one.',
+  m6g: 'Heavier M6. Five rounds kill and you carry eight, so a magazine is one engagement and a miss is expensive.',
   // Non-weapon slots. Keyed the same way — the info panel reads one map.
   biofoam: 'Field injector. Your shields come back on their own; your health does not. This is what buys it back.',
   frag: 'Fragmentation grenade. Three-second fuse, wide lethal radius — the answer to a held room.',
