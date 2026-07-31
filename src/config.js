@@ -854,9 +854,17 @@ export const WEAPONS = {
 //
 // Membership drives `def.slot` below, so a weapon's tier is stated once.
 // ---------------------------------------------------------------------------
-export const STANDARD_POOL = ['ar', 'br', 'smg', 'shotgun'];
-export const SPECIALIST_POOL = ['dmr', 'sniper', 'rocket', 'laser'];
+// The shotgun moved OUT of standard. It is a committing, close-range weapon and
+// should be uncommon on the field, so it is gated behind a gadget slot like the
+// rest of the specialists rather than being a free pick for every class.
+export const STANDARD_POOL = ['ar', 'br', 'smg'];
+export const SPECIALIST_POOL = ['shotgun', 'dmr', 'sniper', 'rocket', 'laser'];
 export const SIDEARM_POOL = ['magnum'];
+// Everything, for the Spartan's perk — it reaches the whole armoury in slot 2
+// without spending a gadget on it. Sidearm FIRST so a Spartan's default slot 2
+// is the Magnum like everyone else's: the perk is that they may upgrade out of
+// it for free, not that they start somewhere different.
+export const ALL_WEAPONS = [...SIDEARM_POOL, ...STANDARD_POOL, ...SPECIALIST_POOL];
 
 // Let a weapon def know its own key (used for held-weapon attachment) and its
 // tier. `swapTime` falls back to the player default so only weapons that mean
@@ -886,131 +894,346 @@ export const FP_DEFAULT = { pos: [0.15, 0.07, -0.31], rot: [0, 0, 0] };
 // than at the old hardcoded slide-to-centre, which suited nothing.
 export const ADS_DEFAULT = { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 };
 
-// LEGACY. The flat global primary list, still read by game.js (AI rolls) and
-// menu.js (armoury PRIMARY row). Superseded by per-class `primaries` below —
-// deliberately left at its old value so this config pass changes no behaviour;
-// it goes away when those two consumers migrate.
-export const PRIMARIES = ['ar', 'br'];
-
 // ---------------------------------------------------------------------------
 // Loadout schema. Every soldier, player or AI, carries exactly:
 //
 //   2 weapons  — `primary` + `secondary`
-//   2 gadgets  — one from the class's gadgetA pool, one from gadgetB
+//   2 gadgets  — both drawn from ONE class pool, no duplicates
 //   1 grenade
 //   1 melee
+//   1 perk     — fixed by class, never chosen, not a slot
 //
-// The second weapon slot is the interesting one. It holds the class sidearm by
-// default, and certain gadgets (kind: 'weaponSlot') OVERRIDE it with something
-// better — that is the single mechanic behind Assault's second rifle, and later
-// Engineer's launcher and Recon's long gun. So "2 weapons" is never violated;
-// what changes is what earned the right to sit in slot two.
+// Plus biofoam, which every soldier carries and nobody picks (see BIOFOAM).
 //
-// This shape is not read anywhere yet — player.js still builds its own two-slot
-// array from {cls, primary, secondary}. It lands here first so the migration has
-// something to migrate TO.
+// The weapon slots are the interesting part. Both hold a default — a standard
+// primary and the Magnum — and a gadget with kind 'weaponSlot' UPGRADES one of
+// them. That is one mechanic covering four cases:
+//
+//   Assault  shotgun_kit   upgrades PRIMARY   -> shotgun, keeps the Magnum
+//   Assault  webbing       upgrades SECONDARY -> a second standard primary
+//   Engineer launcher_kit  upgrades SECONDARY -> rocket or laser, keeps the rifle
+//   Recon    marksman_kit  upgrades PRIMARY   -> sniper or DMR, keeps the Magnum
+//
+// A kit that upgrades the PRIMARY is a commitment — you give up your rifle and
+// keep the pistol. One that upgrades the SECONDARY is additive — you keep the
+// rifle and gain a tool. That split is deliberate: the shotgun and sniper are
+// guns you commit to, the launcher is one you swap to.
+//
+// Only ONE weapon gadget may be carried (see validateLoadout). Without that
+// rule an Assault could take shotgun + webbing and cover every range at once,
+// which is exactly what upgrading the primary was meant to cost.
 // ---------------------------------------------------------------------------
-export const DEFAULT_LOADOUT = {
-  cls: 'assault',
-  primary: 'ar',
-  secondary: 'br',        // webbing is in the gadget list, so slot 2 is a rifle
-  gadgets: ['biofoam', 'webbing'],
-  grenade: 'frag',
-  melee: 'bash',
+// There is deliberately no DEFAULT_LOADOUT constant. `makeLoadout(cls)` in
+// loadout.js builds one by taking the first entry of every pool, so the default
+// kit follows the pools automatically and there is no second copy to drift out
+// of agreement with them. Order each class's lists with that in mind: whatever
+// sits first IS the default, which is why every class leads with its signature
+// gadget.
+
+// Biofoam is universal — every soldier has it, nobody spends a slot on it, and
+// it is the currency for picking a downed squadmate up as well as for patching
+// yourself. Support carries five times the field ration, which is the class's
+// logistical identity rather than a gadget choice.
+//
+// It used to be Assault's identity gadget. Making it universal is what turns
+// health from a class privilege into an economy: `perClass` below is the only
+// place that ration is set, and the ammo crate is what refills it.
+export const BIOFOAM = {
+  name: 'BIOFOAM',
+  svg: '<rect x="9" y="7" width="6" height="10" rx="1"/><path d="M12 3v4M9.5 5h5M12 17v4"/>',
+  heal: 55,           // full health bar — revisit if armour carves the 100 EHP budget
+  healRate: 22,       // HP per second once the injection lands
+  useTime: 1.2,       // locked out of firing for this long
+  cooldown: 1.0,      // between charges
+  count: 3,           // everyone
+  perClass: { support: 15 },
+  // AI use policy. Measured, not guessed: over 120 s of live 32v32, carriers
+  // were hurt below 80% in 97 alive-samples and exactly ONE had gone 4.5 s
+  // without being hit — 71 had gone 2-4.5 s. A hurt soldier here either dies or
+  // gets a short lull, never five quiet seconds, so the calm window is its own
+  // number rather than CFG.soldier.shieldRegenDelay.
+  aiUseBelow: 0.7,
+  aiCalmTime: 2.0,
 };
 
-// `shield` overrides the default soldier shield; `model` picks the character
-// mesh for the class (blue team) — Spartans are the only class in MJOLNIR.
-// `jumpHeight` overrides CFG.soldier.jumpHeight for the class, in METRES — the
-// only jump number to touch. Takeoff velocity, airtime and the jump clip's
-// playback speed all follow from it. Note height goes with the SQUARE of
-// takeoff speed, so doubling the height is only 1.41x the velocity and airtime.
+// ---------------------------------------------------------------------------
+// Perks. One per class, fixed, never chosen, and not a slot. This is the home
+// for what used to be ad-hoc class fields — the Spartan's `shield: 70` and
+// `jumpHeight: 3` were perks in everything but the name, and without somewhere
+// to put them every new class trait would have accreted as another loose key on
+// CLASSES.
 //
-// New-shape fields: `primaries` / `sidearms` are weapon-key lists, `gadgetA` and
-// `gadgetB` are two SEPARATE pools rather than one list of four — that is what
-// stops a build taking two of the same kind of thing, and it gives each class a
-// slot for its identity (A) and a slot for its utility (B).
+// Two kinds of effect, and the rule that keeps perks from becoming the balance
+// problem: perks grant UTILITY, never LETHALITY. A free repair tool kills
+// nobody. Free access to a rocket launcher would make "free" the strongest word
+// in the game.
 //
-// `secondaries` / `gadgets` are the LEGACY fields. Assault carries both shapes
-// during the migration; the other four are untouched and move over class by
-// class once Assault proves the system end to end.
+//   grants  — a free item or access that costs no slot
+//   stats   — passive modifiers (shield, jumpHeight, stamina, build rate)
+//
+// Nothing reads `grants`/`stats` beyond shield and jumpHeight yet; the rest are
+// declared so the systems that arrive later have a place to look.
+// ---------------------------------------------------------------------------
+export const PERKS = {
+  marathon: {
+    name: 'MARATHON',
+    desc: 'Larger stamina pool, and it recovers faster and while still moving.',
+    stats: { staminaMax: 1.5, staminaRegen: 1.5 },
+  },
+  combatEngineer: {
+    name: 'COMBAT ENGINEER',
+    desc: 'Carries a repair tool free, places blueprints, builds and repairs faster.',
+    grants: ['repairtool'],       // removed from their gadget pool — that IS the perk
+    stats: { buildRate: 2, repairRate: 2 },
+  },
+  combatLifesaver: {
+    name: 'COMBAT LIFESAVER',
+    desc: 'Picks a downed soldier up in a third of the normal time.',
+    stats: { reviveRate: 3 },
+  },
+  mjolnir: {
+    name: 'MJOLNIR',
+    desc: 'Powered armour: heavier shields, a three-metre jump, and no stamina limit.',
+    // Free reach into the whole armoury in slot 2. This is the one perk that
+    // brushes the utility-not-lethality rule, and it is why the Spartan pays
+    // for it everywhere else on the sheet rather than getting a gadget too.
+    freeSecondary: true,
+    stats: { shield: 70, jumpHeight: 3, staminaMax: Infinity },
+  },
+  // Recon has no perk yet — the one open cell in the roster. Candidates: enemies
+  // it fires on stay marked far longer (hud.js `spottedShooters` already tracks
+  // exactly this on a 3 s TTL), or a squad spawn beacon.
+  recon: {
+    name: 'RECON',
+    desc: 'Perk not yet decided.',
+    stats: {},
+  },
+};
+
+// Jump height, in METRES, is the only jump number to touch — takeoff speed,
+// hang time and the jump clip's playback rate all derive from it. Note height
+// goes with the SQUARE of takeoff speed, so doubling it is only 1.41x the
+// velocity and airtime. It lives on the PERK now (MJOLNIR clears 3 m), as does
+// shield.
+// `model` picks the character mesh for the class (blue team) — Spartans are the
+// only class in MJOLNIR. `perk` keys into PERKS, and that is where shield and
+// jumpHeight now live.
+//
+// `gadgets` is ONE pool and you take two from it. The earlier design had two
+// separate pools, an identity slot and a utility slot; a single pool is simpler
+// to read and it allows builds the split forbade — an Engineer who takes wall
+// plus EMP and no launcher at all is a legitimate pure-fortification build.
+//
+// Everything in `gadgets` below is DECLARED, not implemented. Only `webbing`
+// has behaviour behind it. The rest exist so the armoury shows the real shape
+// of every class before any of it is built.
 export const CLASSES = {
   assault: {
-    name: 'Assault', model: 'marine2',
-    primaries: ['ar', 'br', 'smg'],
-    sidearms: ['magnum'],
-    gadgetA: ['biofoam'],
-    gadgetB: ['webbing'],
+    name: 'Assault', model: 'marine2', perk: 'marathon',
+    primaries: STANDARD_POOL,
+    sidearms: SIDEARM_POOL,
+    // The only class with TWO weapon gadgets, and the only one the
+    // one-weapon-gadget rule can bite: shotgun upgrades the primary, webbing
+    // upgrades the secondary, and taking both would cover every range.
+    gadgets: ['shotgun_kit', 'webbing', 'breach', 'smoke'],
     grenades: ['frag'],
     melees: ['bash'],
-    // legacy shape — still what game.js/menu.js/deploy.js read today
-    secondaries: ['smg', 'shotgun'], gadgets: ['frag', 'medkit'],
   },
-  engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine3', gadgets: ['repair', 'mines'] },
-  recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine', gadgets: ['sensor', 'frag'] },
-  support: { name: 'Support', secondaries: ['shotgun'], model: 'marine', gadgets: ['ammo', 'medkit'] },
-  spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70, jumpHeight: 3, gadgets: ['frag', 'shield'] },
+  engineer: {
+    name: 'Engineer', model: 'marine3', perk: 'combatEngineer',
+    primaries: STANDARD_POOL,
+    sidearms: SIDEARM_POOL,
+    gadgets: ['launcher_kit', 'quickwall', 'emp'],
+    grenades: ['frag'],
+    melees: ['bash'],
+  },
+  recon: {
+    name: 'Recon', model: 'marine', perk: 'recon',
+    primaries: STANDARD_POOL,
+    sidearms: SIDEARM_POOL,
+    gadgets: ['marksman_kit', 'sensor', 'drone'],
+    grenades: ['frag', 'smokenade'],
+    melees: ['bash'],
+  },
+  support: {
+    name: 'Support', model: 'marine', perk: 'combatLifesaver',
+    primaries: STANDARD_POOL,
+    sidearms: SIDEARM_POOL,
+    // Both crates are in one pool, so bringing both costs the whole gadget
+    // budget and leaves no utility. That is the class's loadout decision.
+    gadgets: ['medcrate', 'ammocrate', 'supplypouch', 'ballisticshield'],
+    grenades: ['frag'],
+    melees: ['bash'],
+  },
+  spartan: {
+    name: 'Spartan', model: 'spartan', perk: 'mjolnir',
+    primaries: STANDARD_POOL,
+    // Overridden by the MJOLNIR perk's freeSecondary — the whole armoury.
+    sidearms: SIDEARM_POOL,
+    gadgets: ['overshield', 'camo', 'grapple', 'jetpack'],
+    grenades: ['frag'],
+    melees: ['bash'],
+  },
 };
 
-// Gadget registry: line-art slot icons (stroke uses currentColor).
+// ---------------------------------------------------------------------------
+// Gadget registry. `kind` is what the code branches on — never the gadget's
+// identity — so a new gadget of an existing kind is a config entry and nothing
+// more:
 //
-// `kind` is what the code branches on, and there are only a few:
-//   consumable  — a charge you spend on yourself (biofoam)
-//   weaponSlot  — replaces the sidearm with a pick from `pool` (webbing)
-//   placeable   — a prop you put in the world (crates, turret, wall)
-//   passive     — always-on (overshield)
-// Entries without a `kind` are pre-migration stubs: icon art and nothing else.
+//   weaponSlot  — upgrades one weapon slot with a pick from a pool
+//   consumable  — a charge spent on yourself
+//   placeable   — a prop put into the world
+//   tool        — a held device with a sustained effect
+//   passive     — always on
+//   movement    — changes how the carrier moves
+//   deployable  — a controllable second entity
+//
+// ONLY `webbing` has behaviour behind it. Everything else is declared so the
+// armoury shows the true shape of all five classes before any of it is built —
+// `built: false` marks which, so the UI can say so rather than implying a
+// gadget works.
+//
+// weaponSlot gadgets carry:
+//   upgrades  'primary' | 'secondary' — which slot they replace
+//   pool      name of a CLASSES[cls] list, OR
+//   weapons   an explicit list of weapon keys
+// ---------------------------------------------------------------------------
 export const GADGETS = {
-  // --- Assault -------------------------------------------------------------
-  // Health does not regenerate (CFG.soldier: shield 45 does, health 55 does
-  // not), so restoring it is a real resource and this is the whole reason the
-  // class exists. The injection LOCKS you for `useTime` — that is the cost —
-  // and the heal then flows over `heal / healRate` seconds while you are free to
-  // move and shoot again. A snap-heal would make the commitment invisible.
-  biofoam: {
-    name: 'BIOFOAM', kind: 'consumable',
-    svg: '<rect x="9" y="7" width="6" height="10" rx="1"/><path d="M12 3v4M9.5 5h5M12 17v4"/>',
-    heal: 55,           // full health bar
-    healRate: 22,       // HP per second once the injection lands (~2.5 s to full)
-    useTime: 1.2,       // locked out of firing for this long
-    charges: 2,
-    cooldown: 1.0,      // between charges
-    // --- AI use policy -----------------------------------------------------
-    // When an AI decides it is worth a charge. These were originally the health
-    // threshold below and CFG.soldier.shieldRegenDelay, and that pairing made
-    // the gadget nearly inert: sampling 120 s of a live 32v32, carriers were
-    // hurt below 80% in 97 alive-samples, and of those exactly ONE had gone
-    // 4.5 s without being hit. 71 had gone 2-4.5 s. A hurt soldier in this game
-    // either dies or gets a short lull — it does not get five quiet seconds.
-    //
-    // So `aiCalmTime` is its own number rather than borrowed from shield regen:
-    // the two are answering different questions ("have my shields had time to
-    // come back" vs "am I being shot at right now").
-    aiUseBelow: 0.7,    // fraction of max health under which a charge is worth it
-    aiCalmTime: 2.0,    // seconds since last damage before injecting
-  },
+  // --- Weapon kits ---------------------------------------------------------
   // Trades the sidearm for a second weapon out of the class's own primary pool.
   // Costs no new machinery — player.weapons is already a 2-array of arbitrary
-  // weapon keys — so the expensive part of this gadget is the balancing, not the
-  // building. `reserveMult` is that balance: two long guns means less spare ammo
-  // for each, which is legible, and it makes the webbing build genuinely want
-  // Support's ammo crate instead of being self-sufficient.
+  // weapon keys — so the expensive part is the balancing, not the building.
+  // `reserveMult` is that balance: two long guns means less spare ammo for each,
+  // which is legible, and it makes the build want Support's ammo crate rather
+  // than being self-sufficient.
   webbing: {
-    name: 'COMBAT WEBBING', kind: 'weaponSlot',
+    name: 'COMBAT WEBBING', kind: 'weaponSlot', built: true,
     svg: '<path d="M7.5 4l4.5 4 4.5-4"/><path d="M7.5 4 6 6v14h12V6l-1.5-2"/><path d="M12 8v12"/>',
-    pool: 'primaries',  // which CLASSES[cls] list the second slot may draw from
-    reserveMult: 0.6,   // applied to BOTH weapons' reserve ammo
+    upgrades: 'secondary', pool: 'primaries',
+    reserveMult: 0.6,
+  },
+  // Upgrades the PRIMARY, so you keep the Magnum and give up your rifle. The
+  // shotgun is gated behind a slot precisely so it stays uncommon.
+  shotgun_kit: {
+    name: 'BREACHING SHOTGUN', kind: 'weaponSlot', built: false,
+    svg: '<path d="M3 11h13l4 2v2h-6l-2-2H3z"/><path d="M6 15v3M16 9V6"/>',
+    upgrades: 'primary', weapons: ['shotgun'],
+  },
+  // Additive rather than committing: the launcher rides in slot 2 and the
+  // Engineer keeps a standard rifle, because a rocket is a tool you swap to.
+  launcher_kit: {
+    name: 'HEAVY WEAPON', kind: 'weaponSlot', built: false,
+    svg: '<path d="M3 13h11l6-3v5l-6 2H3z"/><path d="M7 17v3"/>',
+    upgrades: 'secondary', weapons: ['rocket', 'laser'],
+  },
+  // Committing, like the shotgun — a marksman gives up the mid-range rifle.
+  marksman_kit: {
+    name: 'MARKSMAN RIFLE', kind: 'weaponSlot', built: false,
+    svg: '<path d="M3 12h16"/><path d="M6 12v3M14 9.5V12"/><circle cx="14" cy="8" r="2"/>',
+    upgrades: 'primary', weapons: ['sniper', 'dmr'],
   },
 
-  // --- Pre-migration stubs (other classes) ---------------------------------
-  frag: { name: 'M9 FRAG', svg: '<circle cx="12" cy="14" r="6"/><rect x="10" y="4" width="4" height="3.4"/><circle cx="16.4" cy="5" r="1.8"/>' },
-  medkit: { name: 'MED KIT', svg: '<rect x="4" y="6" width="16" height="13" rx="2"/><path d="M12 9.5v6M9 12.5h6"/>' },
-  repair: { name: 'REPAIR TOOL', svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>' },
-  mines: { name: 'AT MINES', svg: '<path d="M12 5l8 14H4z"/><path d="M12 11v4.5"/>' },
-  sensor: { name: 'MOTION SENSOR', svg: '<circle cx="12" cy="13" r="2"/><path d="M7.5 13a4.5 4.5 0 0 1 9 0M4.5 13a7.5 7.5 0 0 1 15 0"/>' },
-  ammo: { name: 'AMMO PACK', svg: '<rect x="6" y="9" width="3" height="9"/><rect x="10.5" y="6.5" width="3" height="11.5"/><rect x="15" y="9" width="3" height="9"/>' },
-  shield: { name: 'OVERSHIELD', svg: '<path d="M12 3.5l7.5 2.8V12c0 4.6-3.2 7.4-7.5 8.5C7.7 19.4 4.5 16.6 4.5 12V6.3z"/>' },
+  // --- Assault -------------------------------------------------------------
+  breach: {
+    name: 'BREACHING CHARGE', kind: 'placeable', built: false,
+    svg: '<rect x="7" y="8" width="10" height="8" rx="1"/><path d="M12 4v4M9 20l3-4 3 4"/>',
+    charges: 2,
+  },
+  smoke: {
+    name: 'SMOKE LAUNCHER', kind: 'placeable', built: false,
+    svg: '<path d="M5 17a4 4 0 0 1 1-7 5 5 0 0 1 9-2 4 4 0 0 1 4 9z"/><path d="M8 20h9"/>',
+    charges: 2,
+  },
+
+  // --- Engineer ------------------------------------------------------------
+  // Instant cover, distinct from the blueprint system: a quick wall goes up in
+  // half a second and needs no repair tool. Blueprints are the larger, built
+  // fortifications. Two verbs on purpose.
+  quickwall: {
+    name: 'QUICK WALL', kind: 'placeable', built: false,
+    svg: '<rect x="4" y="8" width="16" height="10"/><path d="M4 13h16M12 8v10"/>',
+    charges: 2, deployTime: 0.5,
+  },
+  emp: {
+    name: 'EMP CHARGE', kind: 'placeable', built: false,
+    svg: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2 2M16.4 16.4l2 2M18.4 5.6l-2 2M7.6 16.4l-2 2"/>',
+    charges: 2,
+  },
+
+  // --- Recon ---------------------------------------------------------------
+  sensor: {
+    name: 'MOTION SENSOR', kind: 'placeable', built: false,
+    svg: '<circle cx="12" cy="13" r="2"/><path d="M7.5 13a4.5 4.5 0 0 1 9 0M4.5 13a7.5 7.5 0 0 1 15 0"/>',
+    charges: 2,
+  },
+  drone: {
+    name: 'SPOTTING DRONE', kind: 'deployable', built: false,
+    svg: '<circle cx="12" cy="12" r="2.5"/><path d="M6 6l3.5 3.5M18 6l-3.5 3.5M6 18l3.5-3.5M18 18l-3.5-3.5"/><circle cx="5" cy="5" r="1.6"/><circle cx="19" cy="5" r="1.6"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="19" r="1.6"/>',
+    charges: 1,
+  },
+
+  // --- Support -------------------------------------------------------------
+  medcrate: {
+    name: 'MEDICAL CRATE', kind: 'placeable', built: false,
+    svg: '<rect x="4" y="7" width="16" height="12" rx="1"/><path d="M12 10v6M9 13h6"/>',
+    charges: 1,
+  },
+  // The resupply hub: standing near one regenerates gadget charges, grenades,
+  // biofoam and reserve ammo for the whole team. That rule is what makes every
+  // "2 charges per life" number in this file a pacing figure rather than a cap.
+  ammocrate: {
+    name: 'AMMUNITION CRATE', kind: 'placeable', built: false,
+    svg: '<rect x="4" y="7" width="16" height="12" rx="1"/><path d="M8 11h2v4H8zM14 11h2v4h-2z"/>',
+    charges: 1,
+  },
+  supplypouch: {
+    name: 'SUPPLY POUCH', kind: 'placeable', built: false,
+    svg: '<path d="M7 9h10l1.5 10H5.5z"/><path d="M9.5 9V6.5a2.5 2.5 0 0 1 5 0V9"/>',
+    charges: 3,
+  },
+  ballisticshield: {
+    name: 'BALLISTIC SHIELD', kind: 'tool', built: false,
+    svg: '<path d="M12 3.5l7 2.6V12c0 4.3-3 7-7 8-4-1-7-3.7-7-8V6.1z"/><path d="M12 8v7"/>',
+  },
+
+  // --- Spartan -------------------------------------------------------------
+  overshield: {
+    name: 'OVERSHIELD', kind: 'consumable', built: false,
+    svg: '<path d="M12 3.5l7.5 2.8V12c0 4.6-3.2 7.4-7.5 8.5C7.7 19.4 4.5 16.6 4.5 12V6.3z"/>',
+    charges: 1,
+  },
+  camo: {
+    name: 'ACTIVE CAMOUFLAGE', kind: 'consumable', built: false,
+    svg: '<path d="M4 12s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5z" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="2"/>',
+    charges: 1,
+  },
+  grapple: {
+    name: 'GRAPPLE', kind: 'movement', built: false,
+    svg: '<path d="M5 20l7-7"/><path d="M12 13l3-3 4 4-3 3z"/><path d="M15 6l4 4"/>',
+    charges: 2,
+  },
+  jetpack: {
+    name: 'JETPACK', kind: 'movement', built: false,
+    svg: '<rect x="7" y="5" width="4" height="9" rx="2"/><rect x="13" y="5" width="4" height="9" rx="2"/><path d="M9 17v3M15 17v3"/>',
+  },
+
+  // --- Global --------------------------------------------------------------
+  // Available to every class rather than class-locked, so any squad member can
+  // contribute to fortifications. The Engineer carries it free via their perk,
+  // which is why it is REMOVED from their pool rather than offered twice —
+  // stated plainly, that removal is the perk.
+  repairtool: {
+    name: 'REPAIR TOOL', kind: 'tool', built: false, global: true,
+    svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>',
+  },
 };
+
+// Gadgets every class sees in its pool, on top of its own list. Globals are
+// utility by definition, and a class whose perk already grants one does not see
+// it offered again.
+export const GLOBAL_GADGETS = Object.entries(GADGETS)
+  .filter(([, g]) => g.global).map(([k]) => k);
 
 // ---------------------------------------------------------------------------
 // Grenades. Universal slot — every class carries one type, chosen from its
@@ -1043,6 +1266,20 @@ export const GRENADES = {
     // is per soldier and deliberately long — 15 AI on a side each holding two
     // frags is a lot of explosive, and the sim reads as artillery without it.
     ai: { minRange: 9, maxRange: 22, cluster: 2, cooldown: 16 },
+  },
+  // DECLARED, NOT BUILT. Recon's alternative. Cheap to throw and expensive to
+  // make matter: the cloud itself is a particle effect, but smoke that does not
+  // block AI vision is decoration, and `_canSee` in soldier.js runs per AI per
+  // fire decision — putting volume tests in that path is a real perf and
+  // correctness change, not a visual one. Frag stays first in Recon's pool so
+  // the class is complete without it.
+  smokenade: {
+    name: 'M19 SMOKE', built: false,
+    svg: '<path d="M5 17a4 4 0 0 1 1-7 5 5 0 0 1 9-2 4 4 0 0 1 4 9z"/><path d="M8 20h9"/>',
+    dmg: 0, splash: 0,
+    fuse: 1.6, throwSpeed: 18, bounce: 0.35,
+    count: 2, cooldown: 1.0, useTime: 0.6,
+    cloudRadius: 7, cloudLife: 14,
   },
 };
 

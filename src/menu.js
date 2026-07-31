@@ -34,8 +34,9 @@ const MODE_TAGS = {
 // The gadget-kind half of the same idea: a display name for GADGETS[].kind, so
 // the breadcrumb reads WEAPON SLOT rather than the raw `weaponSlot`.
 const KIND_TAGS = {
-  consumable: 'CONSUMABLE', weaponSlot: 'WEAPON SLOT',
-  placeable: 'DEPLOYABLE', passive: 'PASSIVE',
+  consumable: 'CONSUMABLE', weaponSlot: 'WEAPON UPGRADE',
+  placeable: 'PLACEABLE', passive: 'PASSIVE',
+  tool: 'TOOL', movement: 'MOBILITY', deployable: 'DEPLOYABLE',
 };
 
 const DESCRIPTIONS = {
@@ -50,9 +51,35 @@ const DESCRIPTIONS = {
   magnum: 'Sidearm you can draw twice as fast as you can reload. For the moment your rifle clicks empty.',
   // Non-weapon slots. Keyed the same way — the info panel reads one map.
   biofoam: 'Field injector. Your shields come back on their own; your health does not. This is what buys it back.',
-  webbing: 'Harness rated for a second long gun in place of the sidearm. Both weapons carry less spare ammo.',
   frag: 'Fragmentation grenade. Three-second fuse, wide lethal radius — the answer to a held room.',
+  smokenade: 'Screening smoke. Crosses open ground that rifles otherwise own.',
   bash: 'Buttstock across the jaw. Two strikes through full shields, one against anyone already stripped.',
+  // Weapon upgrades
+  webbing: 'Harness rated for a second long gun in place of the sidearm. Both weapons carry less spare ammo.',
+  shotgun_kit: 'Trades your rifle for the M90. Everything inside twenty metres dies; nothing outside it does.',
+  launcher_kit: 'Heavy tube in the second slot. You keep your rifle — this is for armour, not for people.',
+  marksman_kit: 'Trades your rifle for a long gun and leaves you the Magnum. Reach, at the cost of everything close.',
+  // Assault
+  breach: 'Shaped charge. Opens a wall, a door, or whatever the Engineers spent the last five minutes building.',
+  smoke: 'Screening smoke on a launcher. The tool for crossing ground you do not own yet.',
+  // Engineer
+  quickwall: 'Hardened barrier, up in half a second. Instant cover, not a fortification — blueprints are for those.',
+  emp: 'Burst that kills vehicle electronics, turrets and sensors without scratching the paint.',
+  // Recon
+  sensor: 'Ground sensor. Paints anything that moves near it onto the squad minimap.',
+  drone: 'Remote flyer. You leave your body behind to fly it, and everything it sees, your team sees.',
+  // Support
+  medcrate: 'Field station. Restores health to anyone standing over it.',
+  ammocrate: 'Resupply point. Refills ammunition, grenades, biofoam and gadget charges for the whole team.',
+  supplypouch: 'One soldier, one top-up, thrown. The crate when you cannot afford the crate.',
+  ballisticshield: 'Armour plate you hold. Stops what comes from the front and nothing else.',
+  // Spartan
+  overshield: 'Second shield layer over the first. Absorbs a burst that would otherwise strip you.',
+  camo: 'Light-bending sheath. Move slowly and you are very hard to see; sprint and you are not.',
+  grapple: 'Line and winch. Reaches rooftops and ledges nothing else on this roster can.',
+  jetpack: 'Sustained lift. Vertical becomes a direction you can attack from.',
+  // Global
+  repairtool: 'Welder. Builds blueprints, patches vehicles, and puts armour plating back on people.',
 };
 
 const norm = (v, min, max) => Math.max(0.05, Math.min(1, (v - min) / (max - min)));
@@ -1746,7 +1773,11 @@ export class LoadoutMenu {
       .filter(Boolean)
       .filter((t, i, a) => a.indexOf(t) === i);   // GRENADE / GRENADE reads as a bug
     this.el.crumb.innerHTML = `<i>&lsaquo;</i>` + crumb.map((t) => `<span>${t}</span>`).join('');
-    this.el.desc.textContent = DESCRIPTIONS[this.viewKey] || '';
+    // Most of the roster is declared and not yet built. Saying so is better
+    // than a card that looks identical to a working one and then does nothing.
+    const unbuilt = def.built === false;
+    this.el.desc.innerHTML = (unbuilt ? `<b class="ar-wip">NOT YET IMPLEMENTED</b> ` : '')
+      + (DESCRIPTIONS[this.viewKey] || '');
 
     const nums = this._statsFor(slot, def);
     this.el.nums.innerHTML = nums.map(([v, l]) =>
@@ -1780,18 +1811,28 @@ export class LoadoutMenu {
       ];
     }
     if (slot.id === 'grenade') {
-      return [[def.dmg, 'DAMAGE'], [`${def.splash}m`, 'RADIUS'], [def.count, 'CARRIED']];
+      return [[def.dmg || '—', 'DAMAGE'], [`${def.splash || def.cloudRadius || 0}m`, 'RADIUS'], [def.count, 'CARRIED']];
     }
     if (slot.id === 'melee') {
       return [[def.dmg, 'DAMAGE'], [`${def.range}m`, 'REACH'], [`${def.useTime}s`, 'SWING']];
     }
-    if (def.kind === 'consumable') {
-      return [[def.heal, 'RESTORES'], [def.charges, 'CHARGES'], [`${def.useTime}s`, 'INJECT']];
-    }
+    // A weapon upgrade's interesting numbers are which slot it rewrites, what
+    // it costs, and how many guns it opens up.
     if (def.kind === 'weaponSlot') {
-      return [['2nd', 'WEAPON'], [`×${def.reserveMult}`, 'RESERVE'], ['—', 'SIDEARM']];
+      const opts = (def.weapons && def.weapons.length) || 3;  // `pool` resolves per class
+      return [
+        [def.upgrades === 'primary' ? 'PRIMARY' : '2ND', 'UPGRADES'],
+        [def.reserveMult ? `×${def.reserveMult}` : '—', 'RESERVE'],
+        [opts, opts === 1 ? 'OPTION' : 'OPTIONS'],
+      ];
     }
-    return [];
+    // No TYPE stat here — the breadcrumb above already names the kind, and
+    // repeating it read as filler.
+    const out = [];
+    if (def.charges !== undefined) out.push([def.charges, 'CARRIED']);
+    const t = def.deployTime ?? def.useTime;
+    if (t !== undefined) out.push([`${t}s`, 'DEPLOY']);
+    return out;
   }
 
   // The armory owns a SEPARATE WebGLRenderer, so it shares nothing with the

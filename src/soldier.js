@@ -3,7 +3,8 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
-import { CFG, TEAM, WEAPONS, CLASSES, GADGETS, GRENADES } from './config.js';
+import { CFG, TEAM, WEAPONS, GRENADES, BIOFOAM } from './config.js';
+import { classPerk } from './loadout.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
 
 const S = CFG.soldier;
@@ -151,11 +152,15 @@ export class Soldier {
     this.primary = WEAPONS[primary];
     this.secondary = WEAPONS[secondary];
     this.activeWeapon = this.primary;
-    this.maxShield = (CLASSES[cls] && CLASSES[cls].shield) || S.shield;
+    // Shield and jump height are PERK stats now, not loose class fields — the
+    // Spartan's 70 / 3 m were perks in everything but the name, and giving them
+    // a home is what stops every future class trait accreting as another key.
+    const perkStats = (classPerk(cls) && classPerk(cls).stats) || {};
+    this.maxShield = perkStats.shield || S.shield;
     // How high this soldier jumps, in metres. Everything else about the jump —
     // takeoff speed, hang time, how fast the jump clip plays — is derived from
     // this one number, so it is the only thing to tune. MJOLNIR clears 3 m.
-    this.jumpHeight = (CLASSES[cls] && CLASSES[cls].jumpHeight) || S.jumpHeight;
+    this.jumpHeight = perkStats.jumpHeight || S.jumpHeight;
     // targeting reach = the longest gun carried (capped so recon isn't omniscient)
     this.engageRange = Math.min(320, Math.max(this.primary.ai.range, this.secondary.ai.range));
     this.maxRange = Math.max(this.primary.ai.range, this.secondary.ai.range);
@@ -336,18 +341,21 @@ export class Soldier {
   // tracked — the rest are loadout data the sim has nothing to do with yet.
   setGadgets(keys, grenadeKey) {
     this.gadgetKeys = keys || [];
-    this.biofoam = null;
-    for (const k of this.gadgetKeys) {
-      const def = GADGETS[k];
-      if (def && def.kind === 'consumable') {
-        this.biofoam = { def, charges: def.charges, useTimer: 0, healLeft: 0 };
-        break;
-      }
-    }
+    // Biofoam is universal — every soldier carries it, and Support carries the
+    // larger ration. It is no longer looked up in the gadget list because it is
+    // no longer a gadget.
+    this.biofoam = {
+      def: BIOFOAM,
+      charges: (BIOFOAM.perClass && BIOFOAM.perClass[this.cls]) || BIOFOAM.count,
+      useTimer: 0,
+      healLeft: 0,
+    };
     const gdef = GRENADES[grenadeKey];
     this.grenade = gdef ? { def: gdef, count: gdef.count } : null;
-    // Staggered, so a squad that spawns together does not throw together.
-    this.grenadeCooldown = Math.random() * (gdef ? gdef.ai.cooldown : 10);
+    // A grenade with no `ai` block is one the AI never throws — that is how an
+    // unbuilt type (smoke) rides in the pool without the simulation trying to
+    // use it. Missing it here crashed match setup the moment a Recon rolled one.
+    this.grenadeCooldown = Math.random() * ((gdef && gdef.ai && gdef.ai.cooldown) || 10);
   }
 
   spawnAt(x, z) {
@@ -360,13 +368,15 @@ export class Soldier {
     this.burstLeft = 0;
     // A respawn is a fresh kit — injector, frags and all.
     if (this.biofoam) {
-      this.biofoam.charges = this.biofoam.def.charges;
+      const b = this.biofoam.def;
+      this.biofoam.charges = (b.perClass && b.perClass[this.cls]) || b.count;
       this.biofoam.useTimer = 0;
       this.biofoam.healLeft = 0;
     }
     if (this.grenade) {
-      this.grenade.count = this.grenade.def.count;
-      this.grenadeCooldown = Math.random() * this.grenade.def.ai.cooldown;
+      const d = this.grenade.def;
+      this.grenade.count = d.count;
+      this.grenadeCooldown = Math.random() * ((d.ai && d.ai.cooldown) || 10);
     }
     if (this.mesh) {
       this.mesh.visible = !this.isPlayer;
@@ -594,7 +604,7 @@ export class Soldier {
       // the shorter-ranged answer to the same situation, and `_explode` only
       // damages the thrower's enemies, so there is no friendly-fire risk to
       // weigh — the AI never has to decide whether a throw is safe.
-      if (this.grenade && this.grenade.count > 0 && this.grenadeCooldown <= 0
+      if (this.grenade && this.grenade.def.ai && this.grenade.count > 0 && this.grenadeCooldown <= 0
           && dist >= this.grenade.def.ai.minRange && dist <= this.grenade.def.ai.maxRange
           && this._clusterSize(this.target) >= this.grenade.def.ai.cluster) {
         const def = this.grenade.def;

@@ -77,12 +77,14 @@ export class Hud {
   // Consumable gadget charges. Rebuilt only when the readout actually changes —
   // this runs every frame, and blowing away innerHTML each time would restart
   // the SVGs and thrash the layout for no reason.
-  setGadgets(gadgets, grenade) {
-    // Consumable gadgets carry a key number; the grenade rides the same row but
-    // is bound to G, so it is built from the same template with a different tag.
-    const shown = (gadgets || [])
-      .filter((g) => g && g.def.kind === 'consumable')
-      .map((g, i) => ({ def: g.def, n: g.charges, busy: g.useTimer > 0, tag: `key ${i + 3}` }));
+  setGadgets(biofoam, grenade) {
+    // The two universal consumables. Slot gadgets are deliberately absent —
+    // none of them are implemented, and a counter for something that does
+    // nothing is worse than no counter.
+    const shown = [];
+    if (biofoam) {
+      shown.push({ def: biofoam.def, n: biofoam.charges, busy: biofoam.useTimer > 0, tag: 'key X' });
+    }
     if (grenade) {
       shown.push({ def: grenade.def, n: grenade.count, busy: grenade.useTimer > 0, tag: 'key G' });
     }

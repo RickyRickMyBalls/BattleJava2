@@ -2,7 +2,7 @@
 // weapons (auto/burst/semi/pump/projectile/charge fire modes), freecam.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS, CLASSES, GADGETS, GRENADES, MELEE, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { CFG, WEAPONS, CLASSES, GADGETS, GRENADES, MELEE, BIOFOAM, FP_DEFAULT, ADS_DEFAULT } from './config.js';
 import { weaponSlotGadget } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
@@ -47,6 +47,18 @@ function mkGadgetState(key) {
     charges: def.charges || 0,
     useTimer: 0,     // >0 while the animation/lockout is playing
     cooldown: 0,     // >0 between charges
+  };
+}
+
+// Biofoam is not a gadget — every soldier carries it and nobody spends a slot
+// on it. Support's larger ration is the class's logistical identity, set in one
+// place (BIOFOAM.perClass) rather than as a class field.
+function mkBiofoamState(cls) {
+  return {
+    def: BIOFOAM,
+    charges: (BIOFOAM.perClass && BIOFOAM.perClass[cls]) || BIOFOAM.count,
+    useTimer: 0,
+    cooldown: 0,
     healLeft: 0,     // HP still owed by an injection that has landed
   };
 }
@@ -94,6 +106,7 @@ export class Player {
 
     this.weapons = [mkWeaponState('ar'), mkWeaponState('smg')];
     this.gadgets = [];      // one state per loadout.gadgets entry, same order
+    this.biofoam = null;    // universal, not a gadget — see mkBiofoamState
     this.grenade = null;    // { def, count, useTimer, cooldown, released }
     this.melee = null;      // { def, useTimer, cooldown, struck }
     this.swing = 0;         // 0..1 viewmodel dip, drives throw and bash motion
@@ -173,6 +186,7 @@ export class Player {
         if (e.code === 'Digit4') this.useGadget(1);
         if (e.code === 'KeyG') this.throwGrenade();
         if (e.code === 'KeyV') this.meleeAttack();
+        if (e.code === 'KeyX') this.useBiofoam();   // universal, not a slot
         if (e.code === 'KeyQ') this.switchWeapon(1 - this.active);
       }
     });
@@ -366,8 +380,13 @@ export class Player {
   // crate rather than being self-sufficient. Kept as a method because rack
   // pickups (setWeaponAt) build fresh weapon states that have to pay it too.
   _applyReservePenalty(w) {
-    const g = weaponSlotGadget(this.loadout);
-    if (g && g.reserveMult) w.reserve = Math.round(w.reserve * g.reserveMult);
+    // Either weapon slot's upgrade may carry a penalty; today only the webbing
+    // does, but checking both means a future primary-upgrading kit gets it for
+    // free rather than silently skipping the cost.
+    for (const which of ['primary', 'secondary']) {
+      const g = weaponSlotGadget(this.loadout, which);
+      if (g && g.reserveMult) w.reserve = Math.round(w.reserve * g.reserveMult);
+    }
     return w;
   }
 
@@ -376,6 +395,7 @@ export class Player {
     this.weapons = [mkWeaponState(loadout.primary), mkWeaponState(loadout.secondary)]
       .map((w) => this._applyReservePenalty(w));
     this.gadgets = (loadout.gadgets || []).map(mkGadgetState);
+    this.biofoam = mkBiofoamState(loadout.cls);
     const gdef = GRENADES[loadout.grenade];
     this.grenade = gdef
       ? { def: gdef, count: gdef.count, useTimer: 0, cooldown: 0, released: false }
@@ -450,7 +470,8 @@ export class Player {
   // locked out for this window — that lockout IS the cost of the gadget, and
   // without it biofoam would be a free full heal mid-fight.
   gadgetBusy() {
-    return this.gadgets.some((g) => g && g.useTimer > 0);
+    return this.gadgets.some((g) => g && g.useTimer > 0)
+      || !!(this.biofoam && this.biofoam.useTimer > 0);
   }
 
   // Any hands-busy action: injecting, throwing, or swinging. Firing, reloading
@@ -462,56 +483,74 @@ export class Player {
       || !!(this.melee && this.melee.useTimer > 0);
   }
 
+  // Slot gadgets. Nothing in the pools is implemented yet apart from the
+  // webbing, which is passive — the `built` guard is what keeps an unfinished
+  // gadget from half-working rather than obviously doing nothing.
   useGadget(i) {
     const g = this.gadgets[i];
     if (!g || this.freecam) return;
     const s = this.soldier;
     if (!s || !s.alive) return;
-    // Only consumables do anything on a keypress. weaponSlot gadgets (combat
-    // webbing) are passive — they were spent at the armoury, on the loadout.
-    if (g.def.kind !== 'consumable') return;
+    if (g.def.kind === 'weaponSlot') return;   // spent at the armoury, not in play
+    if (!g.def.built) { this.game.hud.message(`${g.def.name} — NOT IMPLEMENTED`, 1.5); return; }
     if (this.actionBusy() || g.cooldown > 0) return;
     if (g.charges <= 0) { this.game.hud.message(`${g.def.name} — EMPTY`, 1.5); return; }
+    g.charges--;
+    g.useTimer = g.def.useTime || 0;
+    this._cancelWeaponAction();
+  }
+
+  // Biofoam. Universal, on its own key, and the same shape as every other
+  // committed action: pay a lockout, and the heal lands after it.
+  useBiofoam() {
+    const b = this.biofoam;
+    if (!b || this.freecam) return;
+    const s = this.soldier;
+    if (!s || !s.alive) return;
+    if (this.actionBusy() || b.cooldown > 0) return;
+    if (b.charges <= 0) { this.game.hud.message('BIOFOAM — EMPTY', 1.5); return; }
     if (s.health >= CFG.soldier.health) {
-      this.game.hud.message(`${g.def.name} — NOT INJURED`, 1.5);
+      this.game.hud.message('BIOFOAM — NOT INJURED', 1.5);
       return;
     }
-    g.charges--;
-    g.useTimer = g.def.useTime;
-    // Cancel whatever the weapon was doing; you cannot inject and reload.
-    const w = this.weapon;
-    w.reloading = false;
-    w.burstLeft = 0;
-    w.chargeT = 0;
-    this.game.hud.setReloading(false);
-    this.game.hud.message(`${g.def.name} — ${g.charges} LEFT`, 1.5);
+    b.charges--;
+    b.useTimer = b.def.useTime;
+    this._cancelWeaponAction();
+    this.game.hud.message(`BIOFOAM — ${b.charges} LEFT`, 1.5);
   }
 
   _updateGadgets(dt) {
-    const s = this.soldier;
     for (const g of this.gadgets) {
       if (!g) continue;
       if (g.cooldown > 0) g.cooldown = Math.max(0, g.cooldown - dt);
       if (g.useTimer > 0) {
         g.useTimer -= dt;
-        // The injection lands at the END of the lockout, not the start — the
-        // commitment has to be paid before the reward arrives.
-        if (g.useTimer <= 0) {
-          g.useTimer = 0;
-          g.healLeft = g.def.heal || 0;
-          g.cooldown = g.def.cooldown || 0;
-        }
+        if (g.useTimer <= 0) { g.useTimer = 0; g.cooldown = g.def.cooldown || 0; }
       }
-      // Heal flows over time and does NOT lock you down — you are free to move
-      // and shoot while it works. Only the injection itself costs you tempo.
-      if (g.healLeft > 0 && s && s.alive) {
-        const step = Math.min(g.healLeft, (g.def.healRate || 0) * dt);
-        const room = CFG.soldier.health - s.health;
-        const applied = Math.min(step, Math.max(0, room));
-        s.health += applied;
-        g.healLeft -= step;
-        if (room <= 0) g.healLeft = 0;  // topped out; the rest is wasted
+    }
+
+    const b = this.biofoam;
+    const s = this.soldier;
+    if (!b) return;
+    if (b.cooldown > 0) b.cooldown = Math.max(0, b.cooldown - dt);
+    if (b.useTimer > 0) {
+      b.useTimer -= dt;
+      // The injection lands at the END of the lockout, not the start — the
+      // commitment has to be paid before the reward arrives.
+      if (b.useTimer <= 0) {
+        b.useTimer = 0;
+        b.healLeft = b.def.heal || 0;
+        b.cooldown = b.def.cooldown || 0;
       }
+    }
+    // Heal flows over time and does NOT lock you down — you are free to move
+    // and shoot while it works. Only the injection itself costs you tempo.
+    if (b.healLeft > 0 && s && s.alive) {
+      const step = Math.min(b.healLeft, (b.def.healRate || 0) * dt);
+      const room = CFG.soldier.health - s.health;
+      s.health += Math.min(step, Math.max(0, room));
+      b.healLeft -= step;
+      if (room <= 0) b.healLeft = 0;  // topped out; the rest is wasted
     }
   }
 
@@ -808,7 +847,7 @@ export class Player {
 
     const w = this.weapon;
     this.game.hud.setAmmo(w.mag, w.reserve);
-    this.game.hud.setGadgets(this.gadgets, this.grenade); // no-op unless changed
+    this.game.hud.setGadgets(this.biofoam, this.grenade); // no-op unless changed
     if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;
   }

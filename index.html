@@ -782,6 +782,13 @@
     }
     /* Back out of the picker. The slot label IS the affordance — it is already
        the only text anchoring that row. */
+    /* Most of the gadget roster is declared but not built yet. This marks it in
+       the info panel so a card that does nothing says so, rather than looking
+       identical to one that works. */
+    .ar-wip {
+      color: #ffb15e; font-weight: 600; letter-spacing: 1px;
+      font-size: 0.88em; margin-right: 4px;
+    }
     .ar-back { cursor: pointer; transition: color 0.12s; }
     .ar-back:hover { color: #dceaf5; }
     .ar-back i { font-style: normal; margin-right: 8px; color: var(--hud-cyan); }
