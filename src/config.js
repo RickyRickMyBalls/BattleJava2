@@ -149,7 +149,7 @@ export const CFG = {
     // negative are both fine. The real floor on this value is that the eye must
     // stay above the deck plane; go far enough negative and you are under it,
     // and a plane you are below simply is not there.
-    pitch: -2,
+    pitch: 0,
     pitchMin: -12,     // drag-to-orbit limits; below 0 you see the underside
     pitchMax: 32,
     pitchSpeed: 0.22,  // degrees per pixel dragged
@@ -157,7 +157,7 @@ export const CFG = {
                        // Tracks `.ar-info { width }` in index.html (356) plus a
                        // little slack — the camera dodges this band, so a panel
                        // wider than the number here overlaps the weapon.
-    aimBias: 0.13,     // aim below the gun's centre so deck fills the lower frame
+    aimBias: 0.23,     // aim below the gun's centre so deck fills the lower frame
     // Lens shift, exactly like Blender's Camera Data -> Shift Y. Slides the
     // frustum without moving the camera, so perspective and the gun's contact
     // with the deck are both untouched. Fraction of viewport height; POSITIVE
@@ -165,7 +165,7 @@ export const CFG = {
     // gun clear of the loadout panel, so 0 keeps the current framing.
     // Use this rather than `aimBias` to reframe vertically: aimBias drags the
     // camera down with the aim point and will put the eye under the deck.
-    shiftY: 0.1,
+    shiftY: 0.20,
     padX: 1.14,        // horizontal breathing room around the weapon's bounding box
     heightPad: 1.24,   // ...and vertical, which also makes room for the deck
     // How literally relative weapon sizes are shown.
@@ -493,12 +493,12 @@ export const CFG = {
     // field puts a hard bevel down either side of every glow line. A smear map
     // has the opposite problem and wants this ON — its gradients are broad and
     // soft, which is the only kind of relief that survives out here anyway.
-    deckNormal: 0.35,
+    deckNormal: 0,
     // Radius in texels that the height is blurred by BEFORE the gradient is
     // taken. 0 lets the map's film grain become normals, which reads as speckle
     // on the deck rather than as surface relief; the features worth catching
     // light (bolts, chamfers, groove edges) are all much wider than this.
-    deckNormalBlur: 2,
+    deckNormalBlur: 0,
 
     reflect: 0.2,      // mirrored-gun opacity at the contact line...
     reflectFade: 0.13, // ...falling to nothing this many metres below it
@@ -560,6 +560,31 @@ export const CFG = {
     // silhouette and the major panel breaks, which is the reference look.
     cardEdgeAngle: 24,
     cardLineColor: 0xa8c8de,
+    // ---- Hidden-line removal -----------------------------------------------
+    // Without this the bake draws EVERY edge of every mesh with nothing to
+    // occlude them: the far side of the gun and its internals show straight
+    // through, which is where the bits of weapon floating in mid-drawing came
+    // from. On, the solid model goes into the depth buffer first (colour writes
+    // off, so it stays invisible) and the lines depth-test against it.
+    cardHiddenLine: true,
+    // Polygon offset pushing that depth-only solid AWAY from the camera, so a
+    // line lying exactly ON the surface it came from still wins the depth test.
+    // Too low and the drawing stipples as lines z-fight with their own surface;
+    // too high and edges just behind a near surface start leaking through.
+    cardDepthBias: 1,
+    // ...and the matching push on the silhouette hull, which must be LARGER
+    // than cardDepthBias or a hull face landing on the same surface as the
+    // occluder wins the tie and floods the body solid. See the note by hullMat.
+    cardSilhouetteBias: 8,
+    // ---- Silhouette --------------------------------------------------------
+    // Outline width in NDC (roughly a fraction of half the frame height); 0 is
+    // off. This is the OTHER half of the floating-pieces problem and hidden-line
+    // removal cannot fix it: a smooth cylinder — barrel, scope tube, suppressor
+    // — has no crease anywhere along its length, so at any `cardEdgeAngle` it
+    // contributes only its two end caps and reads as a pair of rings hanging in
+    // space. An inverted-hull pass (back faces, expanded along the normal) draws
+    // the true contour of curved parts, which is what joins them up.
+    cardSilhouette: 0.0035,
     cardThumbW: 528,   // 2x the card's image box, and matched to its aspect so
     cardThumbH: 168,   // object-fit:contain fills the card instead of letterboxing
 

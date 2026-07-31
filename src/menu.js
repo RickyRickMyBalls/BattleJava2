@@ -1544,9 +1544,19 @@ export class LoadoutMenu {
   //
   // Not shaded renders — those read as photographs and fight the weapon on the
   // stand for attention. EdgesGeometry keeps only edges where two faces meet at
-  // more than `cardEdgeAngle`, which on hard-surface weapons means the silhouette
-  // and the major panel breaks: a technical drawing rather than a wireframe.
+  // more than `cardEdgeAngle`, which on hard-surface weapons means the major
+  // panel breaks: a technical drawing rather than a wireframe.
   // Beats hand-authored SVGs because it cannot drift when a gun is re-exported.
+  //
+  // Crease edges ALONE are not a drawing, though, and that is worth spelling
+  // out because it is not obvious from the picture:
+  //   - nothing occludes anything, so the far side of the gun and every
+  //     internal component draw straight through the body;
+  //   - a smooth surface has no creases at all, so a barrel or a scope tube
+  //     contributes nothing but its end caps.
+  // Together those two are why parts appeared to float. `cardHiddenLine` fixes
+  // the first with a depth-only pre-pass and `cardSilhouette` the second with an
+  // inverted hull — see the passes in the loop below.
   //
   // Runs once, inside prewarm, so the cost lands behind the loading bar.
   _bakeThumbnails() {
@@ -1581,6 +1591,69 @@ export class LoadoutMenu {
     const lineMat = new THREE.LineBasicMaterial({
       color: S.cardLineColor, transparent: true, opacity: 0.95,
       toneMapped: false, fog: false,
+      // The depth-only solid below owns the depth buffer for this drawing.
+      // Lines must TEST against it (that is the whole point) but must not WRITE
+      // to it, or a near line starts occluding the silhouette pass behind it.
+      depthWrite: false,
+    });
+    // The occluder. Renders nothing — colorWrite off — and exists purely to put
+    // the weapon's solid form into the depth buffer so the line passes have
+    // something to be hidden by. Polygon offset pushes it back a hair so a line
+    // sitting exactly on the surface it was derived from is not in a coin-flip
+    // depth tie with it.
+    // DoubleSide is load-bearing, not caution. These GLBs do not all wind the
+    // same way, and at FrontSide a reversed mesh is culled entirely — it writes
+    // NO depth, so nothing occludes anything and the hull below passes over the
+    // whole body. That is not a subtle artefact: the shotgun and the rocket
+    // baked as solid filled slugs while the BR came out perfect.
+    const depthMat = new THREE.MeshBasicMaterial({
+      colorWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: S.cardDepthBias,
+      polygonOffsetUnits: S.cardDepthBias,
+    });
+    // Inverted-hull silhouette: back faces only, each vertex pushed outward
+    // along its normal IN SCREEN SPACE. Screen space rather than world space is
+    // what keeps the outline an even weight — a world-space offset would come
+    // out thicker on the near end of a gun than the far end, which reads as a
+    // mistake rather than as a drawing.
+    //
+    // The x offset is divided by aspect because a given NDC step covers more
+    // pixels horizontally than vertically on a 3.1:1 frame; without it the
+    // outline is over three times heavier on the top and bottom than the sides.
+    // Pushed BACK in depth, harder than the occluder above is. Inside the
+    // body's silhouette that makes the hull lose the depth test no matter which
+    // way the mesh winds; outside it there is no depth to lose to, so the
+    // outline still draws. Cheaper and far more robust than trying to detect
+    // and normalise winding per mesh.
+    const hullMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      polygonOffset: true,
+      polygonOffsetFactor: S.cardSilhouetteBias,
+      polygonOffsetUnits: S.cardSilhouetteBias,
+      uniforms: {
+        uColor: { value: new THREE.Color(S.cardLineColor) },
+        uWidth: { value: S.cardSilhouette },
+        uAspect: { value: W / H },
+      },
+      vertexShader: `
+        uniform float uWidth, uAspect;
+        void main() {
+          vec4 clip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          vec2 nd = (projectionMatrix * vec4(normalize(normalMatrix * normal), 0.0)).xy;
+          // A normal pointing straight at the camera projects to nothing, and
+          // normalize() of a zero vector is NaN — which would throw the whole
+          // triangle off screen. Those verts are dead centre of a face and have
+          // no business moving anyway, so leave them where they are.
+          vec2 dir = length(nd) > 1e-6 ? normalize(nd) : vec2(0.0);
+          clip.x += dir.x * uWidth / uAspect * clip.w;
+          clip.y += dir.y * uWidth * clip.w;
+          gl_Position = clip;
+        }`,
+      fragmentShader: `
+        uniform vec3 uColor;
+        void main() { gl_FragColor = vec4(uColor, 1.0); }`,
     });
     const thresh = S.cardEdgeAngle;
 
@@ -1598,11 +1671,31 @@ export class LoadoutMenu {
         // first — adding children mid-traverse would walk into what we just made.
         const meshes = [];
         model.traverse((o) => { if (o.isMesh && o.geometry) meshes.push(o); });
+        // Three passes per mesh, pinned with renderOrder rather than left to
+        // three's own sort, because they are strictly sequential:
+        //   0  depth-only solid  — writes depth, draws nothing
+        //   1  silhouette hull   — the contour, occluded by anything in front
+        //   2  crease edges      — the panel lines, likewise occluded
+        // Geometry is SHARED with the source model here (only EdgesGeometry is
+        // freshly allocated) — see the disposal note below, which depends on it.
         const drawing = new THREE.Group();
         for (const mesh of meshes) {
+          if (S.cardHiddenLine) {
+            const solid = new THREE.Mesh(mesh.geometry, depthMat);
+            solid.applyMatrix4(mesh.matrixWorld);
+            solid.renderOrder = 0;
+            drawing.add(solid);
+          }
+          if (S.cardSilhouette > 0) {
+            const hull = new THREE.Mesh(mesh.geometry, hullMat);
+            hull.applyMatrix4(mesh.matrixWorld);
+            hull.renderOrder = 1;
+            drawing.add(hull);
+          }
           const eg = new THREE.EdgesGeometry(mesh.geometry, thresh);
           const seg = new THREE.LineSegments(eg, lineMat);
           seg.applyMatrix4(mesh.matrixWorld);
+          seg.renderOrder = 2;
           drawing.add(seg);
         }
         drawing.position.sub(centre); // centre in frame
@@ -1638,8 +1731,12 @@ export class LoadoutMenu {
         this.thumbs[key] = cv.toDataURL('image/png');
         // EdgesGeometry allocates a fresh buffer per mesh; the PNG is the only
         // thing we keep, so hand the GPU memory straight back.
+        //
+        // LineSegments ONLY. The depth and hull meshes above share geometry
+        // with the real weapon models — a blanket dispose here would free the
+        // buffers out from under every gun in the game, not just the card.
         bay.remove(drawing);
-        drawing.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+        drawing.traverse((o) => { if (o.isLineSegments && o.geometry) o.geometry.dispose(); });
       }
     } catch (e) {
       console.warn('thumbnail bake failed, cards fall back to SVG line art', e);
@@ -1647,6 +1744,8 @@ export class LoadoutMenu {
       this.renderer.setRenderTarget(prevTarget);
       this.renderer.setClearAlpha(prevAlpha);
       lineMat.dispose();
+      depthMat.dispose();
+      hullMat.dispose();
       this.scene.remove(bay);
       hide.forEach((o, i) => { o.visible = shown[i]; });
       rt.dispose();
