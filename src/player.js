@@ -62,6 +62,7 @@ export class Player {
     this.onGround = true;
     this.crouching = false;
     this.sprinting = false;
+    this.walking = false;   // Ctrl: drops under the run threshold into the walk set
     this.ads = false;
     // Third-person observation camera (O). Look and movement are unchanged —
     // only where the camera sits. Firing is suppressed while it is on, since
@@ -390,7 +391,8 @@ export class Player {
     if (!s.alive) return;
 
     // ---- Movement ----
-    this.sprinting = !!this.keys['ShiftLeft'] && !this.ads;
+    this.walking = !!this.keys['ControlLeft'];
+    this.sprinting = !!this.keys['ShiftLeft'] && !this.ads && !this.walking;
     this.crouching = !!this.keys['KeyC'];
     const targetEye = this.crouching ? P.crouchEye : P.eyeHeight;
     this.eye += (targetEye - this.eye) * Math.min(1, dt * 10);
@@ -403,6 +405,7 @@ export class Player {
     const moving = mx !== 0 || mz !== 0;
     let speed = P.speed;
     if (this.sprinting && mz > 0) speed *= P.sprintMult;
+    if (this.walking) speed *= P.walkMult;
     if (this.crouching) speed *= P.crouchMult;
 
     let wx = 0, wz = 0;
@@ -448,6 +451,9 @@ export class Player {
     s.speed2D = moving ? speed : 0;
     s.aiming = this.ads; // drives the body's aim pose; AI use `target` instead
     s.crouching = this.crouching;
+    // Only while the boost actually applies — `sprinting` stays true when you
+    // strafe with Shift down, but the speed bonus (and the clip) do not.
+    s.sprinting = this.sprinting && mz > 0;
     s.airborne = !this.onGround;
     // Direction is resolved against the body's own facing, not the camera's, so
     // the strafe clips stay correct however `s.yaw` is derived.

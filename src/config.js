@@ -48,6 +48,10 @@ export const CFG = {
     crouchEye: 1.15,
     speed: 6.4,
     sprintMult: 1.5,
+    // Hold to walk (Ctrl). Must land the player under the 4 m/s run threshold
+    // in soldier._locomotionAnim, or the walk clips are unreachable: 6.4 * 0.5
+    // = 3.2, which is also close to the AI's own 3.4 walk speed.
+    walkMult: 0.5,
     crouchMult: 0.55,
     respawnDelay: 5,
     // Third-person view (O). A debug/observation camera for watching the body
@@ -322,6 +326,9 @@ export const ASSET_PATHS = {
     // at ~1.03 s so the step cadence does not change when you strafe
     // (walking-backwards.glb is the same motion at 1.46 s — it breaks that).
     run: '/animations/run-forward.glb',
+    // Sprint (Shift): rifle carried low, the classic head-down run. Its own tier
+    // above `run`, so it only shows while the sprint boost is actually applying.
+    sprint: '/animations/rifle-down-run.glb',
     runBack: '/animations/run-backwards.glb',
     runLeft: '/animations/run-left.glb',
     runRight: '/animations/run-right.glb',
@@ -332,8 +339,12 @@ export const ASSET_PATHS = {
     // 0.63 s, stretched at playback to whatever the jumper's airtime works out
     // to, and clamped so the landing frame holds if the fall outlasts the clip.
     jump: '/animations/rifle-jump.glb',
-    // doubles as the crouch idle — it is literally a crouched rifle-aim pose
-    aim: '/animations/idle-crouching-aiming.glb',
+    // Standing rifle-aim: the pose for holding still with a target. Exported
+    // from a reduced Mixamo skeleton (42 bones — middle/ring/pinky fingers are
+    // absent), so those bones keep whatever the outgoing clip left them at.
+    aim: '/animations/Idle_rifle_aim/Idle_ridle_aim.glb',
+    // The crouch idle is its own pose now that `aim` stands up.
+    crouchIdle: '/animations/idle-crouching-aiming.glb',
     // Crouch locomotion, 4-way. These are re-exports with the mesh stripped
     // (~75 KB vs ~1.9 MB); several carry leftover actions, hence the explicit
     // clip names — see the loader note in assets.js.

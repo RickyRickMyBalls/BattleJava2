@@ -101,6 +101,7 @@ export class Soldier {
     this.moveF = 0;
     this.moveR = 0;
     this.crouching = false;     // player controller only; AI never crouch yet
+    this.sprinting = false;     // ditto — set only while the boost is applying
     this.airborne = false;      // ditto — AI have no jump
 
     this.target = null;         // enemy Soldier
@@ -255,10 +256,14 @@ export class Soldier {
     const moving = this.speed2D > 0.4;
     if (this.airborne) return 'jump';
     if (this.crouching) {
-      if (!moving) return 'aim'; // the crouch aim-idle doubles as the crouch idle
+      if (!moving) return 'crouchIdle';
       return this._dirAnim('crouchFwd', 'crouchBack', 'crouchLeft', 'crouchRight');
     }
     if (moving) {
+      // Sprint is a tier above run rather than a direction: the clip carries the
+      // rifle low, which only reads going forward, and that is the only case the
+      // controller flags — it drops the flag the moment the boost stops applying.
+      if (this.sprinting) return 'sprint';
       return this.speed2D > 4
         ? this._dirAnim('run', 'runBack', 'runLeft', 'runRight')
         : this._dirAnim('walk', 'walkBack', 'walkLeft', 'walkRight');
