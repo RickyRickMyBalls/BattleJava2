@@ -109,12 +109,30 @@ function retargetClip(clip, boneMap, srcHipsRest) {
     if (prop === 'position') {
       if (bone !== hips) continue;
       const src = track.values;
+      // Trust the rest pose only if it actually belongs to this animation. An
+      // export whose bind pose was authored at a different scale than its track
+      // (rest -15 against a track at -103) would otherwise scale the whole body
+      // by that error and produce a giant. Clips legitimately open anywhere from
+      // a crouch (~0.4x standing) to upright, so anything outside that band is a
+      // broken export, not a pose — fall back to normalizing the opening frame,
+      // which is right for the standing clips this tends to happen to.
+      let scale = ratio;
+      if (scale !== null) {
+        const opening = (src[sAx] * scale) / rest[cAx];
+        if (!(opening > 0.25 && opening < 1.5)) {
+          scale = Math.abs(src[sAx]) > 1e-4 ? rest[cAx] / src[sAx] : null;
+          console.warn(`[assets] "${clip.name}": bind pose disagrees with its own hips track `
+            + `(rest ${srcHipsRest[sAx].toFixed(1)} vs track ${src[sAx].toFixed(1)}, `
+            + `would stand ${opening.toFixed(1)}x too tall). Falling back to first-frame `
+            + `normalization — re-export this clip to get correct vertical motion.`);
+        }
+      }
       const values = new Float32Array(src.length);
       for (let i = 0; i < src.length; i += 3) {
         values[i] = rest[0];                  // lock laterally: no root motion drift
         values[i + 1] = rest[1];
         values[i + 2] = rest[2];
-        if (ratio !== null) values[i + cAx] = src[i + sAx] * ratio;
+        if (scale !== null) values[i + cAx] = src[i + sAx] * scale;
       }
       tracks.push(new THREE.VectorKeyframeTrack(`${bone.name}.position`, Array.from(track.times), Array.from(values)));
       continue;
