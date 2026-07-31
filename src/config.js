@@ -54,6 +54,13 @@ export const CFG = {
     walkMult: 0.5,
     crouchMult: 0.55,
     respawnDelay: 5,
+    // How long after a weapon swap before you may fire, in seconds. Was hardcoded
+    // at 0.4 in player.switchWeapon for every gun alike, which left the sidearm
+    // with no job — if drawing the Magnum costs the same as drawing a rifle, you
+    // may as well carry a rifle. Per-weapon `swapTime` overrides this, and that
+    // difference IS the pistol's reason to exist: an empty MA5 is a 2.3 s reload
+    // or a 0.2 s draw to something loaded.
+    swapTime: 0.4,
     // Third-person view (O). A debug/observation camera for watching the body
     // animate — firing is suppressed while it is on, so these are presentation
     // only. `dist` is the boom length behind the eye, `shoulder` offsets it to
@@ -636,8 +643,8 @@ export const CFG = {
     // match, lobby and deploy renderers are still linear, so the same rifle is
     // lit differently here than in your hands. That is deliberate.
     light: {
-      exposure: 1.1,          // ACES filmic tone-mapping exposure
-      env: 0.2,              // RoomEnvironment PMREM — the specular ambient
+      exposure: 1.2,          // ACES filmic tone-mapping exposure
+      env: 0.25,              // RoomEnvironment PMREM — the specular ambient
       envBlur: 0.25,          // lower = sharper reflections = crisper highlights
       hemi: 0.1,             // sky/ground diffuse ambient
       hemiSky: 0xdfeeff,
@@ -799,10 +806,68 @@ export const WEAPONS = {
     snd: { key: 'sniperShot', rate: 0.55, vol: 0.7 },
     ai: { aiMin: 60, range: 240, burst: [1, 1], interval: 1.5, pause: [6, 10], spread: 0.005 },
   },
+
+  // --- Sidearms ------------------------------------------------------------
+  // The default occupant of the second weapon slot. Every class starts with it
+  // and the ones that spend a gadget slot trade UP out of it (Assault's webbing,
+  // Engineer's launcher, Recon's long gun), so it has to be worth carrying on
+  // its own rather than being a consolation prize.
+  //
+  // Balanced deliberately BELOW the rifles on sustained output — 7 shots to
+  // clear 100 EHP at 330 rpm is ~1.05 s, a hair slower than the MA5 — and above
+  // them on one axis only: `swapTime`. Its niche is the dry-mag moment, not the
+  // stand-up fight.
+  magnum: {
+    // len matches the GLB's authored longest axis (0.26 m), so the model keeps
+    // the scale it was built at — an M6 is ~0.27 m, so it was already right.
+    name: 'M6 MAGNUM', model: '/UNSC/weapons/Magnum/Magnum_2.1.glb', len: 0.26,
+    icon: '/UNSC/weapons/Magnum/Pistol_icon.svg',
+    // UNTUNED — seeded from the M7's pose because it is the closest thing in the
+    // armoury by size, and a pistol is held nothing like an SMG. Wants a pass in
+    // /chartest.html: GRIP tab -> `grip`, VIEWMODEL tab -> `fp`, ADS tab -> `ads`.
+    grip: { pos: [-0.03, 0.28, 0.02], rot: [-1.57, -0.2, -1.5] },
+    fp: { pos: [0.17, 0.02, -0.38], rot: [0, 0, 0] },
+    ads: { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 14 },
+    mode: 'semi', rpm: 330, dmg: 15, mag: 12, reserve: 60, reload: 1.9,
+    swapTime: 0.2,          // the whole point of the weapon — see CFG.player.swapTime
+    spreadHip: 0.022, spreadAds: 0.006, adsFov: 50,
+    falloff: [18, 65, 0.35], range: 120,
+    tracer: { style: 'bolt', color: [1, 0.82, 0.5], len: 3, speed: 440, opacity: 0.45 },
+    snd: { key: 'pistolShot', rate: 1.0, vol: 0.5 },
+    ai: { aiMin: 0, range: 50, burst: [2, 3], interval: 0.18, pause: [0.5, 1.0], spread: 0.011 },
+  },
 };
 
-// Let a weapon def know its own key (used for held-weapon attachment)
-for (const [k, def] of Object.entries(WEAPONS)) def.key = k;
+// ---------------------------------------------------------------------------
+// Weapon tiering. The armoury is two tiers, and this is the one place that
+// decision lives:
+//
+//   STANDARD    any class may take one in the PRIMARY slot.
+//   SPECIALIST  never a primary. Reachable only by spending a gadget slot on
+//               the class that owns it (Recon -> sniper/dmr, Engineer ->
+//               rocket/laser), or by being a Spartan, who reaches them without
+//               paying. This is what stops "every class gets all primaries"
+//               from erasing Recon: if the sniper were a standard primary,
+//               Recon's gadget would be a downgrade and everyone would be a
+//               sniper.
+//   SIDEARM     the default second slot.
+//
+// Membership drives `def.slot` below, so a weapon's tier is stated once.
+// ---------------------------------------------------------------------------
+export const STANDARD_POOL = ['ar', 'br', 'smg', 'shotgun'];
+export const SPECIALIST_POOL = ['dmr', 'sniper', 'rocket', 'laser'];
+export const SIDEARM_POOL = ['magnum'];
+
+// Let a weapon def know its own key (used for held-weapon attachment) and its
+// tier. `swapTime` falls back to the player default so only weapons that mean
+// to be different carry the number.
+for (const [k, def] of Object.entries(WEAPONS)) {
+  def.key = k;
+  def.slot = SIDEARM_POOL.includes(k) ? 'sidearm'
+    : SPECIALIST_POOL.includes(k) ? 'specialist'
+      : 'primary';
+  if (def.swapTime === undefined) def.swapTime = CFG.player.swapTime;
+}
 
 // Default first-person viewmodel offset; per-weapon `fp` in the def overrides.
 export const FP_DEFAULT = { pos: [0.15, 0.07, -0.31], rot: [0, 0, 0] };
@@ -821,17 +886,66 @@ export const FP_DEFAULT = { pos: [0.15, 0.07, -0.31], rot: [0, 0, 0] };
 // than at the old hardcoded slide-to-centre, which suited nothing.
 export const ADS_DEFAULT = { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 };
 
+// LEGACY. The flat global primary list, still read by game.js (AI rolls) and
+// menu.js (armoury PRIMARY row). Superseded by per-class `primaries` below —
+// deliberately left at its old value so this config pass changes no behaviour;
+// it goes away when those two consumers migrate.
 export const PRIMARIES = ['ar', 'br'];
+
+// ---------------------------------------------------------------------------
+// Loadout schema. Every soldier, player or AI, carries exactly:
+//
+//   2 weapons  — `primary` + `secondary`
+//   2 gadgets  — one from the class's gadgetA pool, one from gadgetB
+//   1 grenade
+//   1 melee
+//
+// The second weapon slot is the interesting one. It holds the class sidearm by
+// default, and certain gadgets (kind: 'weaponSlot') OVERRIDE it with something
+// better — that is the single mechanic behind Assault's second rifle, and later
+// Engineer's launcher and Recon's long gun. So "2 weapons" is never violated;
+// what changes is what earned the right to sit in slot two.
+//
+// This shape is not read anywhere yet — player.js still builds its own two-slot
+// array from {cls, primary, secondary}. It lands here first so the migration has
+// something to migrate TO.
+// ---------------------------------------------------------------------------
+export const DEFAULT_LOADOUT = {
+  cls: 'assault',
+  primary: 'ar',
+  secondary: 'br',        // webbing is in the gadget list, so slot 2 is a rifle
+  gadgets: ['biofoam', 'webbing'],
+  grenade: 'frag',
+  melee: 'bash',
+};
 
 // `shield` overrides the default soldier shield; `model` picks the character
 // mesh for the class (blue team) — Spartans are the only class in MJOLNIR.
-// `gadgets` are visual loadout slots for now (implementations come later).
 // `jumpHeight` overrides CFG.soldier.jumpHeight for the class, in METRES — the
 // only jump number to touch. Takeoff velocity, airtime and the jump clip's
 // playback speed all follow from it. Note height goes with the SQUARE of
 // takeoff speed, so doubling the height is only 1.41x the velocity and airtime.
+//
+// New-shape fields: `primaries` / `sidearms` are weapon-key lists, `gadgetA` and
+// `gadgetB` are two SEPARATE pools rather than one list of four — that is what
+// stops a build taking two of the same kind of thing, and it gives each class a
+// slot for its identity (A) and a slot for its utility (B).
+//
+// `secondaries` / `gadgets` are the LEGACY fields. Assault carries both shapes
+// during the migration; the other four are untouched and move over class by
+// class once Assault proves the system end to end.
 export const CLASSES = {
-  assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine2', gadgets: ['frag', 'medkit'] },
+  assault: {
+    name: 'Assault', model: 'marine2',
+    primaries: ['ar', 'br', 'smg'],
+    sidearms: ['magnum'],
+    gadgetA: ['biofoam'],
+    gadgetB: ['webbing'],
+    grenades: ['frag'],
+    melee: 'bash',
+    // legacy shape — still what game.js/menu.js/deploy.js read today
+    secondaries: ['smg', 'shotgun'], gadgets: ['frag', 'medkit'],
+  },
   engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine3', gadgets: ['repair', 'mines'] },
   recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine', gadgets: ['sensor', 'frag'] },
   support: { name: 'Support', secondaries: ['shotgun'], model: 'marine', gadgets: ['ammo', 'medkit'] },
@@ -839,7 +953,43 @@ export const CLASSES = {
 };
 
 // Gadget registry: line-art slot icons (stroke uses currentColor).
+//
+// `kind` is what the code branches on, and there are only a few:
+//   consumable  — a charge you spend on yourself (biofoam)
+//   weaponSlot  — replaces the sidearm with a pick from `pool` (webbing)
+//   placeable   — a prop you put in the world (crates, turret, wall)
+//   passive     — always-on (overshield)
+// Entries without a `kind` are pre-migration stubs: icon art and nothing else.
 export const GADGETS = {
+  // --- Assault -------------------------------------------------------------
+  // Health does not regenerate (CFG.soldier: shield 45 does, health 55 does
+  // not), so restoring it is a real resource and this is the whole reason the
+  // class exists. The injection LOCKS you for `useTime` — that is the cost —
+  // and the heal then flows over `heal / healRate` seconds while you are free to
+  // move and shoot again. A snap-heal would make the commitment invisible.
+  biofoam: {
+    name: 'BIOFOAM', kind: 'consumable',
+    svg: '<rect x="9" y="7" width="6" height="10" rx="1"/><path d="M12 3v4M9.5 5h5M12 17v4"/>',
+    heal: 55,           // full health bar
+    healRate: 22,       // HP per second once the injection lands (~2.5 s to full)
+    useTime: 1.2,       // locked out of firing for this long
+    charges: 2,
+    cooldown: 1.0,      // between charges
+  },
+  // Trades the sidearm for a second weapon out of the class's own primary pool.
+  // Costs no new machinery — player.weapons is already a 2-array of arbitrary
+  // weapon keys — so the expensive part of this gadget is the balancing, not the
+  // building. `reserveMult` is that balance: two long guns means less spare ammo
+  // for each, which is legible, and it makes the webbing build genuinely want
+  // Support's ammo crate instead of being self-sufficient.
+  webbing: {
+    name: 'COMBAT WEBBING', kind: 'weaponSlot',
+    svg: '<path d="M7.5 4l4.5 4 4.5-4"/><path d="M7.5 4 6 6v14h12V6l-1.5-2"/><path d="M12 8v12"/>',
+    pool: 'primaries',  // which CLASSES[cls] list the second slot may draw from
+    reserveMult: 0.6,   // applied to BOTH weapons' reserve ammo
+  },
+
+  // --- Pre-migration stubs (other classes) ---------------------------------
   frag: { name: 'M9 FRAG', svg: '<circle cx="12" cy="14" r="6"/><rect x="10" y="4" width="4" height="3.4"/><circle cx="16.4" cy="5" r="1.8"/>' },
   medkit: { name: 'MED KIT', svg: '<rect x="4" y="6" width="16" height="13" rx="2"/><path d="M12 9.5v6M9 12.5h6"/>' },
   repair: { name: 'REPAIR TOOL', svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>' },
@@ -847,6 +997,47 @@ export const GADGETS = {
   sensor: { name: 'MOTION SENSOR', svg: '<circle cx="12" cy="13" r="2"/><path d="M7.5 13a4.5 4.5 0 0 1 9 0M4.5 13a7.5 7.5 0 0 1 15 0"/>' },
   ammo: { name: 'AMMO PACK', svg: '<rect x="6" y="9" width="3" height="9"/><rect x="10.5" y="6.5" width="3" height="11.5"/><rect x="15" y="9" width="3" height="9"/>' },
   shield: { name: 'OVERSHIELD', svg: '<path d="M12 3.5l7.5 2.8V12c0 4.6-3.2 7.4-7.5 8.5C7.7 19.4 4.5 16.6 4.5 12V6.3z"/>' },
+};
+
+// ---------------------------------------------------------------------------
+// Grenades. Universal slot — every class carries one type, chosen from its
+// `grenades` list. A thrown frag is the rocket's projectile with gravity and a
+// fuse on it, so combat.js's existing explode path does the damage work.
+//
+// `dmg`/`splash` are deliberately near the rocket's (120 / 5.5): a frag that
+// does not threaten a grouped squad is not worth a slot.
+// ---------------------------------------------------------------------------
+export const GRENADES = {
+  frag: {
+    name: 'M9 FRAG', model: '/UNSC/weapons/Gernade/Frag.glb',
+    dmg: 110, splash: 5.5,
+    fuse: 3.2,          // seconds from throw to detonation, cooked or not
+    throwSpeed: 18,     // m/s at release
+    bounce: 0.35,       // restitution off floors and walls
+    count: 2,           // carried per spawn
+    cooldown: 1.0,      // between throws
+    useTime: 0.6,       // wind-up before release; needs a throw animation
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Melee. Also a universal slot. `bash` is the butt-stroke everyone has — no
+// model, no held state, just an animation and a short forward sweep, which is
+// why it is the cheapest of the four universal slots to ship.
+//
+// 60 damage against 100 EHP is the Halo two-hit: the first strike takes the
+// 45 shield and bites 15 into health, the second finishes. Against someone
+// already stripped it is one hit.
+// ---------------------------------------------------------------------------
+export const MELEE = {
+  bash: {
+    name: 'RIFLE BASH',
+    dmg: 60,
+    range: 2.2,         // metres from the eye
+    arc: 0.7,           // radians of forgiveness either side of the crosshair
+    useTime: 0.45,      // locked out of firing
+    cooldown: 0.9,
+  },
 };
 
 export const GAME_TYPES = {
@@ -936,6 +1127,10 @@ export const ASSET_PATHS = {
     dmrShot: '/UNSC/weapons/DMR/DMR_shot.wav',
     sniperShot: '/UNSC/weapons/sniper/Sniper_shot.wav',
     rocketShot: '/UNSC/weapons/rocket-launcher/Rocket-Launcher_shot.wav',
+    // The Magnum model ships without audio of its own; these come from the
+    // neighbouring `pistol/` folder, which is the same weapon's sound set.
+    pistolShot: '/UNSC/weapons/pistol/Pistol_shot1.mp3',
+    pistolReload: '/UNSC/weapons/pistol/Pistol_reload.mp3',
     reload: '/UNSC/weapons/assault rifle/audio/assault-rifle-reload-1.mp3',
     empty: '/UNSC/weapons/pistol/empty_sound.mp3',
   },
