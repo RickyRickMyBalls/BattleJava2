@@ -804,12 +804,16 @@ export class LoadoutMenu {
       sh.uniforms.uMirrorY = { value: this.floorY };
       sh.uniforms.uMirrorFade = { value: S.reflectFade };
       sh.uniforms.uJitter = { value: jitter };
+      sh.uniforms.uBlurMin = { value: S.reflectBlurMin };
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>',
-          '#include <common>\nvarying float vMirY;\nuniform vec2 uJitter;\nuniform float uMirrorY;')
+          '#include <common>\nvarying float vMirY;\nuniform vec2 uJitter;\nuniform float uMirrorY, uBlurMin;')
         .replace('#include <project_vertex>',
           '#include <project_vertex>\nvMirY = (modelMatrix * vec4(transformed, 1.0)).y;\n' +
-          'gl_Position.xy += uJitter * max(0.0, uMirrorY - vMirY) * gl_Position.w;');
+          // uBlurMin keeps a little spread even AT the contact line. Without it
+          // the taps collapse to a point there and the reflection is perfectly
+          // sharp exactly where it meets the deck, which no real surface does.
+          'gl_Position.xy += uJitter * (uBlurMin + max(0.0, uMirrorY - vMirY)) * gl_Position.w;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>',
           '#include <common>\nvarying float vMirY;\nuniform float uMirrorY, uMirrorFade;')
@@ -837,10 +841,21 @@ export class LoadoutMenu {
     const taps = Math.max(1, Math.round(S.reflectBlurTaps));
     const group = new THREE.Group();
     for (let i = 0; i < taps; i++) {
-      const t = taps === 1 ? 0 : (i / (taps - 1)) * 2 - 1; // -1 .. 1
-      // mostly vertical: a floor reflection spreads along the surface, which at
-      // this camera is very nearly straight up the screen
-      const jitter = new THREE.Vector2(t * S.reflectBlur * 0.22, t * S.reflectBlur);
+      // Taps are spread over a 2D ELLIPSE, not along a line. This is the whole
+      // difference between "rough surface" and "offset copy": convolving with a
+      // line kernel is directional blur — the same operation as motion blur —
+      // and no amount of tuning its length stops it reading as a displaced
+      // image. Roughness spreads in both axes at once.
+      //
+      // Golden-angle (Vogel) placement, because at these tap counts a ring or a
+      // grid leaves visible structure while this stays evenly packed. The
+      // ellipse is taller than wide (reflectBlurAspect) since a floor reflection
+      // genuinely does smear more along the view than across it.
+      const r = taps === 1 ? 0 : Math.sqrt((i + 0.5) / taps);
+      const a = i * 2.399963; // golden angle in radians
+      const jitter = new THREE.Vector2(
+        Math.cos(a) * r * S.reflectBlur * S.reflectBlurAspect,
+        Math.sin(a) * r * S.reflectBlur);
       const m = src.clone(true);
       m.traverse((o) => {
         if (!o.isMesh) return;

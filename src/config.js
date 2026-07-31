@@ -312,7 +312,7 @@ export const CFG = {
     // This one is not seamless as authored (~23/255 mismatch left to right) and
     // its panel pitch is not a whole fraction of its width, so it cannot simply
     // be cropped square. `deckSeamBlend` fixes it at load — see _makeSeamless.
-    deckUrl: '/textures/5ff69bb8-9eac-4840-9eaf-ea05eef860ba.png',
+    deckUrl: '/textures/deck_plates.png',
     deckSeamBlend: 0.10, // border band mirror-blended to make the map tile
     deckTile: 1.0,       // metres per repeat — puts its plates at roughly 24 cm
     deckDetail: 0.85,    // how hard the map modulates the deck, 0 = flat colour
@@ -343,8 +343,8 @@ export const CFG = {
     specFront: 0.9,
     glossVar: 0.9,         // how far the deck map breaks up the polish
 
-    reflect: 0.85,    // mirrored-gun opacity at the contact line...
-    reflectFade: 0.2, // ...falling to nothing this many metres below it
+    reflect: 0.2,      // mirrored-gun opacity at the contact line...
+    reflectFade: 0.13, // ...falling to nothing this many metres below it
     // Blur on the mirrored weapon, with no render target involved: the copy is
     // drawn `reflectBlurTaps` times, each offset in SCREEN space by an amount
     // proportional to how far below the mirror line that vertex sits.
@@ -354,12 +354,21 @@ export const CFG = {
     // would blur the contact line too and visibly unstick the weapon from the
     // deck. Offsets are mostly vertical because that is the direction a floor
     // reflection actually spreads on screen.
-    // Tap count is a smoothness knob, not a strength one: at 5 the copies sit
-    // ~14 px apart at the deepest point and read as discrete ghosts rather than
-    // a blur. Raise this (or lower reflectBlur) if you see banding — the cost is
-    // only draw calls of geometry that is already resident.
-    reflectBlurTaps: 9,
-    reflectBlur: 0.25, // NDC offset per metre of depth below the mirror line
+    // Tap count is a SMOOTHNESS knob, not a strength one: too few and the
+    // copies read as discrete ghosts instead of a blur. A 2D kernel needs more
+    // of them than a 1D one did to cover the same area. Cost is only draw calls
+    // of geometry that is already resident.
+    reflectBlurTaps: 12,
+    reflectBlur: 0.1,       // kernel radius, NDC per metre of depth. The size
+                             // of the blur — raise to make the deck rougher.
+    reflectBlurAspect: 1, // kernel width / height. 1 = round, lower = the
+                             // vertical stretch a floor reflection really has.
+                             // Do NOT take this to 0: that collapses the kernel
+                             // back to a line and it reads as an offset copy
+                             // again rather than as a rough surface.
+    reflectBlurMin: 0.03,    // spread still present AT the contact line, in the
+                             // same units as depth. 0 makes the reflection
+                             // perfectly sharp where it touches the deck.
     shadowAlpha: 0.55,
     shadowSize: 1024,
 
