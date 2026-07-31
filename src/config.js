@@ -67,6 +67,13 @@ export const CFG = {
       minDist: 0.8,
       skin: 0.25,          // keep the camera off the wall it collided with
       lerp: 12,            // boom ease, per second
+      // Aiming does not zoom. A narrowed fov on a camera parked behind the
+      // player reads as a telescope pointed at his back, so the camera moves
+      // instead: tighter boom, further over the shoulder, closing the view on
+      // the weapon's line. Blended at the weapon's own `ads.speed`, so a sniper
+      // still comes up slower than an SMG. `sens` replaces the look-speed
+      // slowdown that first person gets for free from the fov change.
+      ads: { dist: 1.5, shoulder: 1.0, lift: 0.2, sens: 0.75 },
     },
   },
 

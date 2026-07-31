@@ -72,6 +72,7 @@ export class Player {
     // shots originate at the camera and would spawn behind the player.
     this.thirdPerson = false;
     this.tpDist = 0; // eased boom length, so wall collisions do not snap
+    this.tpAds = 0;  // 0..1 blend from the hip boom to the over-shoulder one
     this.lookSens = HIP_SENS; // recomputed per frame from the current zoom
     this.eye = P.eyeHeight;
 
@@ -164,9 +165,7 @@ export class Player {
       if (!this.locked) { this.requestLock(); return; }
       if (this.freecam) return;
       if (e.button === 0) this.firing = true;
-      // ADS on a boom camera is its own piece of work — until then it would
-      // zoom the fov with no viewmodel to bring up.
-      if (e.button === 2 && !this.thirdPerson) this.ads = true;
+      if (e.button === 2) this.ads = true;
     });
     this._on(document, 'mouseup', (e) => {
       if (e.button === 0) this.firing = false;
@@ -501,14 +500,17 @@ export class Player {
     const ads = this.weapon.def.ads || ADS_DEFAULT;
     const k = Math.min(1, dt * (ads.speed || ADS_DEFAULT.speed));
 
-    const targetFov = aim ? this.weapon.def.adsFov : HIP_FOV;
+    // Third person aims by moving the camera, not by zooming — see the boom.
+    const targetFov = (aim && !this.thirdPerson) ? this.weapon.def.adsFov : HIP_FOV;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * k;
       this.camera.updateProjectionMatrix();
     }
     // Look speed follows the zoom, so `sens` is a per-weapon feel nudge and 1.0
     // is already right at every magnification — no hand-picked ADS constant.
+    // With no zoom to follow, third-person ADS needs that slowdown stated.
     this.lookSens = HIP_SENS * (aim ? (ads.sens ?? 1) : 1) *
+      (this.thirdPerson ? 1 + (P.thirdPerson.ads.sens - 1) * this.tpAds : 1) *
       Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) / TAN_HIP;
 
     // ---- Viewmodel pose/bob/recoil ----
@@ -689,18 +691,28 @@ export class Player {
   // they do in first person — only the eye point moves.
   _applyBoom(dt) {
     const TP = P.thirdPerson;
+    // Aiming slides the whole rig over the shoulder rather than zooming. The
+    // weapon owns the rate, the same one the first-person pose uses.
+    const adsDef = this.weapon.def.ads || ADS_DEFAULT;
+    const target = this.ads ? 1 : 0;
+    this.tpAds += (target - this.tpAds) * Math.min(1, dt * (adsDef.speed || ADS_DEFAULT.speed));
+    const a = this.tpAds;
+    const dist = TP.dist + (TP.ads.dist - TP.dist) * a;
+    const shoulder = TP.shoulder + (TP.ads.shoulder - TP.shoulder) * a;
+    const lift = TP.lift + (TP.ads.lift - TP.lift) * a;
+
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const fx = -sy * cp, fy = sp, fz = -cy * cp;   // camera forward
     const rx = cy, rz = -sy;                       // camera right
-    const px = this.pos.x + rx * TP.shoulder;
-    const py = this.pos.y + this.eye + TP.lift;
-    const pz = this.pos.z + rz * TP.shoulder;
+    const px = this.pos.x + rx * shoulder;
+    const py = this.pos.y + this.eye + lift;
+    const pz = this.pos.z + rz * shoulder;
 
-    let want = TP.dist;
+    let want = dist;
     const col = this.game.world.collision;
     if (col) {
-      const hit = col.rayDistance(px, py, pz, -fx, -fy, -fz, TP.dist + TP.skin);
+      const hit = col.rayDistance(px, py, pz, -fx, -fy, -fz, dist + TP.skin);
       if (hit !== null) want = Math.max(TP.minDist, hit - TP.skin);
     }
     // Pull in the instant something is in the way, ease back out once it is

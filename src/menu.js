@@ -109,8 +109,9 @@ export class LoadoutMenu {
     this.scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.add(new THREE.HemisphereLight(0xdfeeff, 0x394450, 0.9));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    this.scene.environmentIntensity = 0.2;
+    this.scene.add(new THREE.HemisphereLight(0xdfeeff, 0x394450, 0.3));
+    const key = new THREE.DirectionalLight(0xffffff, 1.0);
     key.position.set(2, 3, 4);
     this.scene.add(key);
     const rim = new THREE.DirectionalLight(0x7fd4ff, 1.2);
@@ -137,14 +138,32 @@ export class LoadoutMenu {
       this.zoom = Math.max(0.55, Math.min(2, this.zoom * (e.deltaY > 0 ? 1.1 : 0.9)));
       this._frameCamera();
     }, { passive: false });
+
+    // The canvas is CSS-stretched to fill the viewer, so a drawing buffer that
+    // disagrees with the box shows up as a horizontally smeared gun. Track the
+    // element itself — this covers window resizes and the first layout pass.
+    this._resizeObs = new ResizeObserver(() => this._resizeViewer());
+    this._resizeObs.observe(this.el.viewer);
   }
 
   _frameCamera() {
     // Fixed framing for every weapon (sized to the longest gun in the arsenal)
     // so relative weapon sizes are visible — an SMG should look small.
     const maxLen = Math.max(...Object.values(WEAPONS).map((d) => d.len));
-    this.camera.position.set(0, 0.02, (maxLen * 0.72 + 0.12) * this.zoom);
-    this.camera.lookAt(0, 0, 0);
+    const spanX = maxLen * 0.91 + 0.15; // world width the frame should cover
+    const spanY = maxLen * 0.42;        // ...and the height, with headroom
+    // The viewer is full-bleed and the info panel floats over its left edge, so
+    // only the band to the right of that panel is usable. Frame the gun into
+    // that band, then slide the camera left so it sits centred in it.
+    const blocked = Math.min(0.55, (348 + window.innerWidth * 0.04) / (this.el.viewer.clientWidth || 1));
+    // Fit BOTH axes and take the further distance. Width alone leaves the gun
+    // clipped top/bottom on a short ultrawide viewer; height alone blows it up
+    // past the edges on a narrow one.
+    const t = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+    const dist = Math.max(spanX / (t * this.camera.aspect * (1 - blocked)), spanY / t) * this.zoom;
+    const x = -t * dist * this.camera.aspect * blocked * 0.5;
+    this.camera.position.set(x, 0.02, dist);
+    this.camera.lookAt(x, 0, 0);
   }
 
   _showModel(key) {
@@ -175,11 +194,13 @@ export class LoadoutMenu {
   }
 
   _resizeViewer() {
-    const w = this.el.viewer.clientWidth || 640;
-    const h = this.el.viewer.clientHeight || 320;
+    const w = this.el.viewer.clientWidth;
+    const h = this.el.viewer.clientHeight;
+    if (!w || !h) return; // hidden — the observer fires again once it lays out
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this._frameCamera(); // framing depends on aspect
   }
 
   // ---------------------------------------------------------------- UI --

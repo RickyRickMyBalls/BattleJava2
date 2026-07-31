@@ -484,7 +484,9 @@
         /* cold uplight from the deck */
         linear-gradient(0deg, rgba(24, 46, 66, 0.55) 0%, transparent 30%),
         linear-gradient(180deg, #04070c 0%, #0a1522 55%, #04070c 100%);
-      pointer-events: auto; padding: 18px 4vw;
+      /* No top/side padding: the weapon viewer is full-bleed and the header
+         and info panel float over it. Only the bottom chrome is inset. */
+      pointer-events: auto; padding: 0 0 18px;
     }
     /* hangar light shafts, drifting very slowly */
     #armory::before {
@@ -511,11 +513,19 @@
       mask-image: radial-gradient(ellipse 70% 60% at 60% 40%, rgba(0,0,0,0.8), transparent 80%);
       -webkit-mask-image: radial-gradient(ellipse 70% 60% at 60% 40%, rgba(0,0,0,0.8), transparent 80%);
     }
-    .ar-head { display: flex; align-items: baseline; gap: 18px; border-bottom: 1px solid var(--hud-cyan-dim); padding-bottom: 10px; }
+    .ar-head {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 3; pointer-events: none;
+      display: flex; align-items: baseline; gap: 18px;
+      border-bottom: 1px solid var(--hud-cyan-dim); padding: 18px 4vw 10px;
+    }
     .ar-title { font-size: 22px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
     .ar-sub { font-size: 12px; letter-spacing: 3px; color: var(--hud-cyan); }
-    .ar-main { display: flex; flex: 1; min-height: 0; gap: 24px; padding: 14px 0 6px; }
-    .ar-info { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+    .ar-main { position: relative; flex: 1; min-height: 0; }
+    .ar-info {
+      position: absolute; z-index: 2; left: 4vw; top: 78px; width: 320px;
+      display: flex; flex-direction: column; gap: 10px;
+      pointer-events: none; /* drag-to-spin works across the whole viewer */
+    }
     .ar-wpn-name { font-size: 30px; font-weight: 600; letter-spacing: 2px; color: #eef7ff; line-height: 1.1; }
     .ar-tags { display: flex; gap: 6px; flex-wrap: wrap; }
     .ar-tags span { font-size: 10px; letter-spacing: 2px; color: var(--hud-cyan); border: 1px solid var(--hud-cyan-dim); padding: 3px 8px; }
@@ -527,24 +537,25 @@
     .ar-bar label { font-size: 9px; letter-spacing: 2px; color: #6e93a8; display: block; margin-bottom: 2px; }
     .ar-track { height: 5px; background: #13232f; }
     .ar-track > div { height: 100%; background: linear-gradient(90deg, #2b7bb8, #7fd4ff); }
-    .ar-viewer { flex: 1; position: relative; min-width: 0; }
-    /* display-stand line under the weapon */
+    .ar-viewer { position: absolute; inset: 0; }
+    /* display-stand line under the weapon — spans the band left over to the
+       right of the floating info panel, which is where the gun is framed */
     .ar-viewer::after {
-      content: ''; position: absolute; left: 12%; right: 12%; top: 72%; height: 1px;
+      content: ''; position: absolute; left: calc(4vw + 348px); right: 4vw; top: 72%; height: 1px;
       background: linear-gradient(90deg, transparent, rgba(127, 212, 255, 0.35) 30%, rgba(127, 212, 255, 0.35) 70%, transparent);
       box-shadow: 0 0 18px 2px rgba(127, 212, 255, 0.12);
       pointer-events: none;
     }
     .ar-viewer canvas { width: 100% !important; height: 100% !important; display: block; cursor: grab; }
     .ar-viewer canvas:active { cursor: grabbing; }
-    .ar-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hud-cyan-dim); }
+    .ar-tabs { display: flex; gap: 4px; padding: 0 4vw; border-bottom: 1px solid var(--hud-cyan-dim); }
     .ar-tabs button {
       cursor: pointer; background: rgba(10,22,34,0.8); color: #7c96a8; border: 1px solid var(--hud-cyan-dim);
       border-bottom: none; padding: 10px 26px; font-size: 12px; letter-spacing: 3px;
     }
     .ar-tabs button:hover { color: var(--hud-cyan); }
     .ar-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
-    .ar-cards { display: flex; gap: 40px; padding: 14px 0; }
+    .ar-cards { display: flex; gap: 40px; padding: 14px 4vw; }
     .ar-slot-label { font-size: 10px; letter-spacing: 3px; color: #6e93a8; margin-bottom: 6px; }
     .ar-row { display: flex; gap: 10px; }
     .ar-card {
@@ -558,7 +569,7 @@
     .ar-card.sel img, .ar-card:hover img { opacity: 1; }
     .ar-card-name { font-size: 10px; letter-spacing: 1px; color: #9ab4c4; margin-top: 4px; text-align: center; }
     .ar-card.sel .ar-card-name { color: var(--hud-cyan); }
-    .ar-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--hud-cyan-dim); padding-top: 12px; }
+    .ar-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--hud-cyan-dim); padding: 12px 4vw 0; }
     .ar-summary { font-size: 12px; letter-spacing: 2px; color: #8fa9ba; }
     #arDeploy {
       cursor: pointer; background: rgba(127,212,255,0.12); color: var(--hud-cyan); border: 1px solid var(--hud-cyan);
