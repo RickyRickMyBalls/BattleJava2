@@ -113,6 +113,20 @@
     #ammo .res { font-size: 15px; color: #6e93a8; }
     #ammo .wpn { font-size: 10px; letter-spacing: 2px; color: #6e93a8; text-transform: uppercase; }
     #ammo .reloading { color: #ffb15e; font-size: 12px; display: none; }
+    /* Gadget charges, under the ammo. Only consumables appear — a passive like
+       combat webbing has no count to show and no key to press. */
+    #ammo .gadgets { display: flex; gap: 10px; justify-content: flex-end; margin-top: 7px; }
+    #ammo .gad {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px; letter-spacing: 1px; color: #6e93a8;
+    }
+    #ammo .gad svg { width: 15px; height: 15px; }
+    #ammo .gad .n { color: #9fc4d8; font-weight: 600; }
+    /* Spent, or locked out mid-injection — dimmed rather than hidden, so the
+       slot does not jump around while you are looking at it. */
+    #ammo .gad.empty { opacity: 0.35; }
+    #ammo .gad.busy { color: var(--hud-cyan); }
+    #ammo .gad.busy .n { color: var(--hud-cyan); }
 
     /* ---- Crosshair / hitmarker ---- */
     #crosshair {
@@ -852,6 +866,7 @@
       <div class="wpn" id="wpnName">MA5 ASSAULT RIFLE</div>
       <div><span class="mag" id="ammoMag">32</span> <span class="res" id="ammoRes">| 288</span></div>
       <div class="reloading" id="reloadingTxt">RELOADING…</div>
+      <div class="gadgets" id="hudGadgets"></div>
     </div>
 
     <div id="crosshair">

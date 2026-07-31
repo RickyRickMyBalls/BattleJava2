@@ -2,7 +2,8 @@
 // weapons (auto/burst/semi/pump/projectile/charge fire modes), freecam.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS, CLASSES, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { CFG, WEAPONS, CLASSES, GADGETS, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { weaponSlotGadget } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { findMuzzle } from './soldier.js';
@@ -32,6 +33,21 @@ function mkWeaponState(key) {
     reloadTimer: 0,
     burstLeft: 0,
     chargeT: 0,
+  };
+}
+
+// Runtime state for one equipped gadget. Passive kinds (weaponSlot) get a state
+// object too so the slot indices stay aligned with loadout.gadgets — pressing
+// their key simply does nothing.
+function mkGadgetState(key) {
+  const def = GADGETS[key];
+  if (!def) return null;
+  return {
+    key, def,
+    charges: def.charges || 0,
+    useTimer: 0,     // >0 while the animation/lockout is playing
+    cooldown: 0,     // >0 between charges
+    healLeft: 0,     // HP still owed by an injection that has landed
   };
 }
 
@@ -77,6 +93,7 @@ export class Player {
     this.eye = P.eyeHeight;
 
     this.weapons = [mkWeaponState('ar'), mkWeaponState('smg')];
+    this.gadgets = [];      // one state per loadout.gadgets entry, same order
     this.active = 0;
     this.switchTimer = 0;
     this.fireTimer = 0;
@@ -145,8 +162,12 @@ export class Player {
       if (e.code === 'KeyP') this.game.togglePause();
       if (e.code === 'KeyT') this.game.cycleTimeScale();
       if (!this.freecam) {
+        // Number keys follow the loadout's slot order: 1-2 weapons, 3-4 gadgets.
+        // Grenade and melee get their own keys when those slots are implemented.
         if (e.code === 'Digit1') this.switchWeapon(0);
         if (e.code === 'Digit2') this.switchWeapon(1);
+        if (e.code === 'Digit3') this.useGadget(0);
+        if (e.code === 'Digit4') this.useGadget(1);
         if (e.code === 'KeyQ') this.switchWeapon(1 - this.active);
       }
     });
@@ -335,8 +356,21 @@ export class Player {
     s.ensureGun(this.weapon.key);
   }
 
+  // Combat webbing's cost. Carrying a second long gun instead of a sidearm means
+  // less spare ammo for BOTH of them — the reason the build wants Support's ammo
+  // crate rather than being self-sufficient. Kept as a method because rack
+  // pickups (setWeaponAt) build fresh weapon states that have to pay it too.
+  _applyReservePenalty(w) {
+    const g = weaponSlotGadget(this.loadout);
+    if (g && g.reserveMult) w.reserve = Math.round(w.reserve * g.reserveMult);
+    return w;
+  }
+
   applyLoadout(loadout) {
-    this.weapons = [mkWeaponState(loadout.primary), mkWeaponState(loadout.secondary)];
+    this.loadout = loadout;
+    this.weapons = [mkWeaponState(loadout.primary), mkWeaponState(loadout.secondary)]
+      .map((w) => this._applyReservePenalty(w));
+    this.gadgets = (loadout.gadgets || []).map(mkGadgetState);
     this.active = 0;
     this.fireTimer = 0;
     this._mountGun();
@@ -361,7 +395,7 @@ export class Player {
   // pass wants soldier.setLoadout + _initWeaponMount here.
   setWeaponAt(i, key) {
     if (!WEAPONS[key] || !this.weapons[i]) return;
-    this.weapons[i] = mkWeaponState(key);
+    this.weapons[i] = this._applyReservePenalty(mkWeaponState(key));
     this.fireTimer = Math.max(this.fireTimer, 0.3);
     this.recoil = Math.min(1, this.recoil + 0.5);
     if (i === this.active) this._mountGun();
@@ -369,13 +403,19 @@ export class Player {
 
   switchWeapon(i) {
     if (i === this.active || !this.weapons[i]) return;
+    if (this.gadgetBusy()) return;          // mid-injection, both hands occupied
     const w = this.weapon;
     w.reloading = false;
     w.burstLeft = 0;
     w.chargeT = 0;
     this.game.hud.setReloading(false);
     this.active = i;
-    this.fireTimer = Math.max(this.fireTimer, 0.4);
+    // The cost is drawing the weapon you are switching TO, so it comes off that
+    // weapon's def. This was a flat 0.4 for everything, which left the Magnum
+    // with no reason to exist — the whole point of a sidearm is that reaching
+    // for it beats reloading (0.2 s versus the MA5's 2.3 s).
+    const draw = this.weapons[i].def.swapTime || P.swapTime;
+    this.fireTimer = Math.max(this.fireTimer, draw);
     this.recoil = Math.min(1, this.recoil + 0.5); // little raise animation
     this._mountGun();
   }
@@ -394,8 +434,70 @@ export class Player {
     this.viewmodel.visible = !this.freecam && !this.thirdPerson;
   }
 
+  // ------------------------------------------------------------ Gadgets --
+  // True while a gadget is mid-use. Firing, reloading and swapping are all
+  // locked out for this window — that lockout IS the cost of the gadget, and
+  // without it biofoam would be a free full heal mid-fight.
+  gadgetBusy() {
+    return this.gadgets.some((g) => g && g.useTimer > 0);
+  }
+
+  useGadget(i) {
+    const g = this.gadgets[i];
+    if (!g || this.freecam) return;
+    const s = this.soldier;
+    if (!s || !s.alive) return;
+    // Only consumables do anything on a keypress. weaponSlot gadgets (combat
+    // webbing) are passive — they were spent at the armoury, on the loadout.
+    if (g.def.kind !== 'consumable') return;
+    if (this.gadgetBusy() || g.cooldown > 0) return;
+    if (g.charges <= 0) { this.game.hud.message(`${g.def.name} — EMPTY`, 1.5); return; }
+    if (s.health >= CFG.soldier.health) {
+      this.game.hud.message(`${g.def.name} — NOT INJURED`, 1.5);
+      return;
+    }
+    g.charges--;
+    g.useTimer = g.def.useTime;
+    // Cancel whatever the weapon was doing; you cannot inject and reload.
+    const w = this.weapon;
+    w.reloading = false;
+    w.burstLeft = 0;
+    w.chargeT = 0;
+    this.game.hud.setReloading(false);
+    this.game.hud.message(`${g.def.name} — ${g.charges} LEFT`, 1.5);
+  }
+
+  _updateGadgets(dt) {
+    const s = this.soldier;
+    for (const g of this.gadgets) {
+      if (!g) continue;
+      if (g.cooldown > 0) g.cooldown = Math.max(0, g.cooldown - dt);
+      if (g.useTimer > 0) {
+        g.useTimer -= dt;
+        // The injection lands at the END of the lockout, not the start — the
+        // commitment has to be paid before the reward arrives.
+        if (g.useTimer <= 0) {
+          g.useTimer = 0;
+          g.healLeft = g.def.heal || 0;
+          g.cooldown = g.def.cooldown || 0;
+        }
+      }
+      // Heal flows over time and does NOT lock you down — you are free to move
+      // and shoot while it works. Only the injection itself costs you tempo.
+      if (g.healLeft > 0 && s && s.alive) {
+        const step = Math.min(g.healLeft, (g.def.healRate || 0) * dt);
+        const room = CFG.soldier.health - s.health;
+        const applied = Math.min(step, Math.max(0, room));
+        s.health += applied;
+        g.healLeft -= step;
+        if (room <= 0) g.healLeft = 0;  // topped out; the rest is wasted
+      }
+    }
+  }
+
   startReload() {
     const w = this.weapon;
+    if (this.gadgetBusy()) return;
     if (w.reloading || w.mag >= w.def.mag || w.reserve <= 0) return;
     w.reloading = true;
     w.reloadTimer = w.def.reload;
@@ -534,10 +636,12 @@ export class Player {
     this.flash.material.opacity = Math.max(0, this.flash.material.opacity - dt * 22);
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 110);
 
+    this._updateGadgets(dt);
     this._updateWeapon(dt, moving, speed);
 
     const w = this.weapon;
     this.game.hud.setAmmo(w.mag, w.reserve);
+    this.game.hud.setGadgets(this.gadgets);            // no-op unless changed
     if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;
   }
@@ -545,6 +649,14 @@ export class Player {
   _updateWeapon(dt, moving, speed) {
     const w = this.weapon;
     const def = w.def;
+
+    // Both hands are busy with the injector. Bleed the fire timer down so the
+    // gun is ready the instant the lockout ends rather than adding a second
+    // delay on top of it.
+    if (this.gadgetBusy()) {
+      this.fireTimer -= dt;
+      return;
+    }
 
     // Reload
     if (w.reloading) {

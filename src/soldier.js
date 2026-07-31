@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
-import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
+import { CFG, TEAM, WEAPONS, CLASSES, GADGETS } from './config.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
 
 const S = CFG.soldier;
@@ -328,6 +328,20 @@ export class Soldier {
     this.currentAnim = key;
   }
 
+  // Equip the gadget slots. Only the ones with AI behaviour behind them are
+  // tracked — the rest are loadout data the sim has nothing to do with yet.
+  setGadgets(keys) {
+    this.gadgetKeys = keys || [];
+    this.biofoam = null;
+    for (const k of this.gadgetKeys) {
+      const def = GADGETS[k];
+      if (def && def.kind === 'consumable') {
+        this.biofoam = { def, charges: def.charges, useTimer: 0, healLeft: 0 };
+        break;
+      }
+    }
+  }
+
   spawnAt(x, z) {
     this.pos.set(x, this.game.world.heightAt(x, z), z);
     this.vel.set(0, 0, 0);
@@ -336,6 +350,12 @@ export class Soldier {
     this.health = S.health;
     this.target = null;
     this.burstLeft = 0;
+    // A respawn is a fresh kit, injector included.
+    if (this.biofoam) {
+      this.biofoam.charges = this.biofoam.def.charges;
+      this.biofoam.useTimer = 0;
+      this.biofoam.healLeft = 0;
+    }
     if (this.mesh) {
       this.mesh.visible = !this.isPlayer;
       this.playAnim('idle', 0);
@@ -410,11 +430,45 @@ export class Soldier {
     }
 
     if (!this.isPlayer) {
+      this._updateBiofoam(dt);
       this._think(dt);
       this._move(dt);
       this._fire(dt);
     }
     this._updateAnim(dt);
+  }
+
+  // AI biofoam. Without this the gadget effectively does not exist in the sim:
+  // 31 of the 32 Assaults on a side are AI, so a player-only heal would not
+  // move a single ticket.
+  //
+  // The AI uses it the way a player should — out of contact, hurt, and paying
+  // the lockout. `shieldTimer` doubles as time-since-damage (it is what gates
+  // shield regen), so it is already the "am I being shot at" signal.
+  _updateBiofoam(dt) {
+    const g = this.biofoam;
+    if (!g) return;
+    if (g.healLeft > 0) {
+      const step = Math.min(g.healLeft, g.def.healRate * dt);
+      this.health = Math.min(S.health, this.health + step);
+      g.healLeft -= step;
+    }
+    if (g.useTimer > 0) {
+      g.useTimer -= dt;
+      if (g.useTimer <= 0) { g.useTimer = 0; g.healLeft = g.def.heal; }
+      return;
+    }
+    if (g.charges <= 0 || g.healLeft > 0) return;
+    // Hurt enough to be worth a charge, and not currently under fire. Both
+    // thresholds are on the gadget def — see the note there on why the calm
+    // window is its own number and not CFG.soldier.shieldRegenDelay.
+    if (this.health > S.health * (g.def.aiUseBelow ?? 0.7)) return;
+    if (this.shieldTimer < (g.def.aiCalmTime ?? 2.0)) return;
+    g.charges--;
+    g.useTimer = g.def.useTime;
+    // Committed: the injection costs the same tempo it costs a player.
+    this.fireTimer = Math.max(this.fireTimer, g.def.useTime);
+    this.burstLeft = 0;
   }
 
   _think(dt) {

@@ -22,6 +22,7 @@ export class Hud {
       ammoMag: document.getElementById('ammoMag'),
       ammoRes: document.getElementById('ammoRes'),
       reloadingTxt: document.getElementById('reloadingTxt'),
+      gadgets: document.getElementById('hudGadgets'),
       hitmarker: document.getElementById('hitmarker'),
       damageVignette: document.getElementById('damageVignette'),
       crosshair: document.getElementById('crosshair'),
@@ -72,6 +73,23 @@ export class Hud {
     this.el.ammoRes.textContent = `| ${res}`;
   }
   setReloading(on) { this.el.reloadingTxt.style.display = on ? 'block' : 'none'; }
+
+  // Consumable gadget charges. Rebuilt only when the readout actually changes —
+  // this runs every frame, and blowing away innerHTML each time would restart
+  // the SVGs and thrash the layout for no reason.
+  setGadgets(gadgets) {
+    const shown = (gadgets || []).filter((g) => g && g.def.kind === 'consumable');
+    const sig = shown.map((g) => `${g.key}:${g.charges}:${g.useTimer > 0 ? 1 : 0}`).join('|');
+    if (sig === this._gadgetSig) return;
+    this._gadgetSig = sig;
+    this.el.gadgets.innerHTML = shown.map((g, i) => {
+      const cls = g.useTimer > 0 ? 'busy' : (g.charges <= 0 ? 'empty' : '');
+      return `<div class="gad ${cls}" title="${g.def.name} — key ${i + 3}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${g.def.svg || ''}</svg>
+        <span class="n">${g.charges}</span>
+      </div>`;
+    }).join('');
+  }
 
   setVitals(shield, health, maxShield = CFG.soldier.shield) {
     this.el.shieldbar.firstElementChild.style.width = `${Math.max(0, (shield / maxShield) * 100)}%`;

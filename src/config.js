@@ -975,6 +975,19 @@ export const GADGETS = {
     useTime: 1.2,       // locked out of firing for this long
     charges: 2,
     cooldown: 1.0,      // between charges
+    // --- AI use policy -----------------------------------------------------
+    // When an AI decides it is worth a charge. These were originally the health
+    // threshold below and CFG.soldier.shieldRegenDelay, and that pairing made
+    // the gadget nearly inert: sampling 120 s of a live 32v32, carriers were
+    // hurt below 80% in 97 alive-samples, and of those exactly ONE had gone
+    // 4.5 s without being hit. 71 had gone 2-4.5 s. A hurt soldier in this game
+    // either dies or gets a short lull — it does not get five quiet seconds.
+    //
+    // So `aiCalmTime` is its own number rather than borrowed from shield regen:
+    // the two are answering different questions ("have my shields had time to
+    // come back" vs "am I being shot at right now").
+    aiUseBelow: 0.7,    // fraction of max health under which a charge is worth it
+    aiCalmTime: 2.0,    // seconds since last damage before injecting
   },
   // Trades the sidearm for a second weapon out of the class's own primary pool.
   // Costs no new machinery — player.weapons is already a 2-array of arbitrary
