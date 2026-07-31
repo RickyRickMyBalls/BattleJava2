@@ -153,7 +153,10 @@ export const CFG = {
     pitchMin: -12,     // drag-to-orbit limits; below 0 you see the underside
     pitchMax: 32,
     pitchSpeed: 0.22,  // degrees per pixel dragged
-    infoBand: 348,     // px of viewer width the floating info panel covers
+    infoBand: 384,     // px of viewer width the floating info panel covers.
+                       // Tracks `.ar-info { width }` in index.html (356) plus a
+                       // little slack — the camera dodges this band, so a panel
+                       // wider than the number here overlaps the weapon.
     aimBias: 0.13,     // aim below the gun's centre so deck fills the lower frame
     // Lens shift, exactly like Blender's Camera Data -> Shift Y. Slides the
     // frustum without moving the camera, so perspective and the gun's contact

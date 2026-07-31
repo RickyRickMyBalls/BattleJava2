@@ -505,22 +505,38 @@
        so the deck has to actually extend down there for the blur to have
        anything to work with. */
     .ar-main { position: absolute; inset: 0; }
+    /* 356px is also the stat bars' track length — the bars ARE the panel width,
+       so this number and armoryStage.infoBand move together (the camera dodges
+       the panel by infoBand, see menu.js _frameCamera). */
     .ar-info {
-      position: absolute; z-index: 2; left: 4vw; top: 78px; width: 320px;
+      position: absolute; z-index: 2; left: 4vw; top: 78px; width: 356px;
       display: flex; flex-direction: column; gap: 10px;
       pointer-events: none; /* drag-to-spin works across the whole viewer */
     }
-    .ar-wpn-name { font-size: 30px; font-weight: 600; letter-spacing: 2px; color: #eef7ff; line-height: 1.1; }
-    .ar-tags { display: flex; gap: 6px; flex-wrap: wrap; }
-    .ar-tags span { font-size: 10px; letter-spacing: 2px; color: var(--hud-cyan); border: 1px solid var(--hud-cyan-dim); padding: 3px 8px; }
+    /* Light and large, not small and bold. At weight 600 the name was the
+       heaviest thing on screen and pulled focus off the weapon itself. */
+    .ar-wpn-name { font-size: 36px; font-weight: 400; letter-spacing: 1px; color: #eef7ff; line-height: 1.1; }
+    /* Breadcrumb, not chips. Bordered cyan chips read as interactive controls
+       and stacked a second boxed element right under the title; a dim path line
+       carries the same words without competing. */
+    .ar-crumb { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+    .ar-crumb i { font-style: normal; color: var(--hud-cyan); font-size: 13px; line-height: 1; }
+    .ar-crumb span { font-size: 10px; letter-spacing: 2px; color: #7f97a8; }
+    .ar-crumb span + span::before { content: '|'; color: #3c5261; margin-right: 9px; }
     .ar-desc { font-size: 13px; color: #8fa9ba; line-height: 1.5; min-height: 40px; }
-    .ar-nums { display: flex; gap: 22px; margin-top: 4px; }
-    .ar-num span { font-size: 26px; font-weight: 600; color: #7fd4ff; }
-    .ar-num label { display: block; font-size: 9px; letter-spacing: 2px; color: #6e93a8; }
-    .ar-bars { display: flex; flex-direction: column; gap: 7px; margin-top: 6px; }
-    .ar-bar label { font-size: 9px; letter-spacing: 2px; color: #6e93a8; display: block; margin-bottom: 2px; }
-    .ar-track { height: 5px; background: #13232f; }
-    .ar-track > div { height: 100%; background: linear-gradient(90deg, #2b7bb8, #7fd4ff); }
+    .ar-nums { display: flex; gap: 34px; margin-top: 4px; }
+    /* White, not cyan. Cyan is the SELECTION colour everywhere else in this
+       screen; spending it on static readouts left nothing to distinguish the
+       thing you picked from the thing you are reading. */
+    .ar-num span { font-size: 34px; font-weight: 500; color: #e8f0f6; line-height: 1; }
+    .ar-num label { display: block; font-size: 9px; letter-spacing: 2px; color: #6e93a8; margin-top: 6px; }
+    .ar-bars { display: flex; flex-direction: column; gap: 16px; margin-top: 10px; }
+    .ar-bar label { font-size: 9px; letter-spacing: 2px; color: #6e93a8; display: block; margin-bottom: 6px; }
+    /* Hairlines. A 5px gradient track reads as a health bar — a piece of live
+       game state — where these are static spec. Thin and flat reads as a spec
+       sheet, and the gap above carries the separation the height used to. */
+    .ar-track { height: 2px; background: #16262f; }
+    .ar-track > div { height: 100%; background: #5cb4e6; }
     /* No CSS stand line here any more: the weapon rests on a real deck rendered
        in the 3D scene (menu.js _buildStage), which the camera pitch makes
        visible. A flat overlay line fought with it. */
@@ -552,11 +568,20 @@
        backdrop-filter on the panel would blur its own children's backdrop too.
        No mask fade here — the border-top above hides the blur's edge, which is
        what gives the crisp shelf the reference has. */
+    /* The tint has to stay well under 1.0 or the blur is doing nothing. At the
+       old 0.86-0.92 the panel was effectively opaque: a flat black slab with a
+       hard edge, and the 20px backdrop-filter behind it was invisible work. The
+       reference reads as GLASS — the deck, its light streaks and the tail of the
+       weapon's reflection all stay legible through it, just defocused.
+       Denser toward the bottom so the footer text keeps its contrast. */
     .ar-panel::before {
       content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none;
-      backdrop-filter: blur(20px) saturate(0.85);
-      -webkit-backdrop-filter: blur(20px) saturate(0.85);
-      background: linear-gradient(180deg, rgba(6,11,18,0.86) 0, rgba(6,11,18,0.92) 100%);
+      backdrop-filter: blur(28px) saturate(0.9);
+      -webkit-backdrop-filter: blur(28px) saturate(0.9);
+      background: linear-gradient(180deg,
+        rgba(6,11,18,0.44) 50%,
+        rgba(6,11,18,0.64) 75%,
+        rgba(6,11,18,0.72) 100%);
     }
     .ar-cards, .ar-foot { position: relative; z-index: 1; }
     /* Even, generous tabs like the reference — sized to a common width rather
@@ -564,17 +589,28 @@
     .ar-tabs { display: flex; gap: 5px; padding: 14px 4vw 0; }
     /* Light chips, not dark ones: they read as controls sitting on top of the
        scene rather than holes punched through it. */
+    /* Unselected tabs sit BELOW the panel in value, not above it. At 0.06 fill
+       with #9db3c2 text they were nearly as bright as the selected one, so the
+       row read as five equal buttons and the selection had to be hunted for. */
     .ar-tabs button {
-      cursor: pointer; background: rgba(255,255,255,0.06); color: #9db3c2;
-      border: 1px solid rgba(255,255,255,0.13); border-bottom-color: transparent;
+      position: relative;
+      cursor: pointer; background: rgba(255,255,255,0.04); color: #7a8a96;
+      border: 1px solid rgba(255,255,255,0.10); border-bottom-color: transparent;
       min-width: 172px; padding: 13px 20px; font-size: 12px; letter-spacing: 4px;
       transition: background 0.12s, color 0.12s;
     }
-    .ar-tabs button:hover { background: rgba(255,255,255,0.12); color: #dceaf5; }
+    .ar-tabs button:hover { background: rgba(255,255,255,0.10); color: #dceaf5; }
     .ar-tabs button.sel {
       background: rgba(255,255,255,0.16); color: #fff; font-weight: 500;
       border-color: rgba(255,255,255,0.24);
       box-shadow: inset 0 -2px 0 var(--hud-cyan);
+    }
+    /* Cyan tick ABOVE the selected tab as well as the inset underline. The
+       underline alone sits on the panel edge and gets lost against it; the tick
+       is out in the open scene where nothing else is. */
+    .ar-tabs button.sel::before {
+      content: ''; position: absolute; left: 50%; top: -5px;
+      width: 28px; height: 2px; margin-left: -14px; background: var(--hud-cyan);
     }
     /* No border-top here any more — .ar-panel owns the shelf edge now. */
     /* min-width:0 all the way down, or flex items refuse to shrink below their
@@ -596,17 +632,36 @@
     /* 330 is the target, but it SHRINKS rather than overflowing: Spartan carries
        four class weapons, so that row is six cards wide and does not fit at full
        size. object-fit:contain scales the art down with it. */
+    /* Big art, deliberately. Shrinking these to ~76px was tried and reverted:
+       it took .ar-bottom from 420 to 346 but bought the weapon nothing, because
+       _frameCamera takes the MAX of the width-fit and height-fit distances and
+       width is what binds at any normal aspect — the gun just re-centred 37px
+       lower into the freed band. Owner's call is that the cards read better
+       large; padX is the knob if the weapon ever needs to grow. */
     .ar-card {
+      position: relative;
       cursor: pointer; flex: 0 1 330px; min-width: 0;
       background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.10);
       padding: 12px 12px 10px; transition: border-color 0.12s, background 0.12s;
     }
     .ar-card:hover { border-color: rgba(127,212,255,0.55); background: rgba(255,255,255,0.075); }
+    /* Border and a soft halo, no fill wash. The old rgba(58,160,255,0.12) plate
+       plus a double shadow made the selected card the most saturated thing on
+       screen — brighter than the weapon it was selecting. */
     .ar-card.sel {
-      border-color: var(--hud-cyan); background: rgba(58,160,255,0.12);
-      box-shadow: 0 0 12px rgba(127,212,255,0.15) inset, 0 0 20px rgba(127,212,255,0.3);
+      border-color: var(--hud-cyan); background: rgba(58,160,255,0.05);
+      box-shadow: 0 0 16px rgba(127,212,255,0.16);
     }
     .ar-card.viewing { outline: 1px solid rgba(127,212,255,0.4); }
+    /* Decorative only: the corner tick the reference puts on class-weapon
+       cards. Nothing behind it yet — it becomes the attachment affordance if
+       weapon unlocks ever land. */
+    #arSecondaries .ar-card::after {
+      content: ''; position: absolute; left: 10px; bottom: 9px;
+      border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-bottom: 6px solid rgba(255,255,255,0.20);
+    }
+    #arSecondaries .ar-card.sel::after { border-bottom-color: var(--hud-cyan-dim); }
     .ar-card img { width: 100%; height: 150px; object-fit: contain; display: block; }
     /* Both card sources are line work now, so both dim by opacity alone — a
        brightness filter on 1px strokes just eats them. */
@@ -620,11 +675,15 @@
     .ar-card.sel .ar-card-name { color: var(--hud-cyan); }
     .ar-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.09); padding: 14px 4vw 0; margin-top: 14px; }
     .ar-summary { font-size: 12px; letter-spacing: 2px; color: #8fa9ba; }
+    /* Outlined and wide rather than small and filled. A filled cyan chip is the
+       same treatment the selected weapon card carries, so the commit action and
+       the current selection looked like the same kind of thing. */
     #arDeploy {
-      cursor: pointer; background: rgba(127,212,255,0.12); color: var(--hud-cyan); border: 1px solid var(--hud-cyan);
-      padding: 12px 60px; font-size: 15px; letter-spacing: 5px; text-transform: uppercase;
+      cursor: pointer; background: none; color: #d6ecfa; border: 1px solid rgba(120,180,220,0.5);
+      min-width: 320px; padding: 14px 40px; font-size: 15px; letter-spacing: 5px; text-transform: uppercase;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
     }
-    #arDeploy:hover { background: rgba(127,212,255,0.3); }
+    #arDeploy:hover { background: rgba(127,212,255,0.12); border-color: var(--hud-cyan); color: var(--hud-cyan); }
   </style>
 </head>
 <body>

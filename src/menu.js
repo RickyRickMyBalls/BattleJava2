@@ -154,11 +154,11 @@ export class LoadoutMenu {
       <div class="ar-main">
         <div class="ar-info">
           <div class="ar-wpn-name" id="arWpnName"></div>
-          <div class="ar-tags" id="arTags"></div>
+          <div class="ar-crumb" id="arCrumb"></div>
           <div class="ar-desc" id="arDesc"></div>
           <div class="ar-nums">
-            <div class="ar-num"><span id="arDmg"></span><label>DMG</label></div>
-            <div class="ar-num"><span id="arRof"></span><label>ROF</label></div>
+            <div class="ar-num"><span id="arDmg"></span><label>DAMAGE</label></div>
+            <div class="ar-num"><span id="arRof"></span><label>RPM</label></div>
             <div class="ar-num"><span id="arMag"></span><label>MAG</label></div>
           </div>
           <div class="ar-bars" id="arBars"></div>
@@ -189,7 +189,7 @@ export class LoadoutMenu {
       overlay: ov,
       className: ov.querySelector('#arClassName'),
       wpnName: ov.querySelector('#arWpnName'),
-      tags: ov.querySelector('#arTags'),
+      crumb: ov.querySelector('#arCrumb'),
       desc: ov.querySelector('#arDesc'),
       dmg: ov.querySelector('#arDmg'),
       rof: ov.querySelector('#arRof'),
@@ -1206,6 +1206,44 @@ export class LoadoutMenu {
     return block;
   }
 
+  // Live tuning for the loadout panel's glass. Same deal as tuneHaze: this is a
+  // look knob, so it has to be scrubbable against a real weapon and then survive
+  // back into index.html by hand — hence the paste-ready block on the way out.
+  //
+  //   FC.menu.tunePanel({ top: 0.3, bot: 0.6 })  // more of the deck through it
+  //   FC.menu.tunePanel({ blur: 40 })            // softer defocus
+  //   FC.menu.tunePanel({ top: 0.9, bot: 0.95 }) // back to the old opaque slab
+  //   FC.menu.tunePanel()                        // print current, change nothing
+  //
+  // The one number that actually decides whether this reads as glass is the
+  // alpha: past ~0.8 the blur behind it is invisible work no matter how large.
+  tunePanel(v = {}) {
+    const p = this._panelTune || (this._panelTune = {
+      top: 0.44, mid: 0.64, bot: 0.72, midStop: 55, blur: 28, sat: 0.9,
+    });
+    Object.assign(p, v);
+    const filter = `blur(${p.blur}px) saturate(${p.sat})`;
+    const bg = `linear-gradient(180deg,\n        rgba(6,11,18,${p.top}) 0,\n`
+             + `        rgba(6,11,18,${p.mid}) ${p.midStop}%,\n`
+             + `        rgba(6,11,18,${p.bot}) 100%)`;
+    if (!this._panelStyle) {
+      this._panelStyle = document.createElement('style');
+      document.head.appendChild(this._panelStyle);
+    }
+    this._panelStyle.textContent = `.ar-panel::before {
+      backdrop-filter: ${filter};
+      -webkit-backdrop-filter: ${filter};
+      background: ${bg};
+    }`;
+    const block = `.ar-panel::before {\n`
+      + `      content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none;\n`
+      + `      backdrop-filter: ${filter};\n`
+      + `      -webkit-backdrop-filter: ${filter};\n`
+      + `      background: ${bg};\n    }`;
+    console.log(block);
+    return block;
+  }
+
   async _loadDeckGlb() {
     if (!S.deckGlb) return;
     this._deckHaze = [];
@@ -1376,7 +1414,7 @@ export class LoadoutMenu {
     this.visible = true;
     this.game.menuOpen = true;
     this.el.overlay.style.display = 'block';
-    this.el.deploy.textContent = mode === 'deploy' ? 'DEPLOY' : 'APPLY';
+    this.el.deploy.textContent = mode === 'deploy' ? 'DEPLOY' : 'APPLY LOADOUT';
     this._showModel(this.loadout.primary);
     this.refresh();
     requestAnimationFrame(() => this._resizeViewer());
@@ -1437,17 +1475,23 @@ export class LoadoutMenu {
     // info panel for the viewed weapon
     const def = WEAPONS[this.viewKey];
     this.el.wpnName.textContent = def.name;
+    // Breadcrumb rather than bordered chips: at chip weight this line competed
+    // with the weapon name directly above it. Same information, read as a path.
     const slotTag = PRIMARIES.includes(this.viewKey) ? 'PRIMARY' : 'CLASS WEAPON';
-    this.el.tags.innerHTML = [MODE_TAGS[def.mode], slotTag].map((t) => `<span>${t}</span>`).join('');
+    const crumb = [`${CLASSES[lo.cls].name.toUpperCase()} WEAPON`, slotTag, MODE_TAGS[def.mode]];
+    this.el.crumb.innerHTML = `<i>&lsaquo;</i>` + crumb.map((t) => `<span>${t}</span>`).join('');
     this.el.desc.textContent = DESCRIPTIONS[this.viewKey] || '';
     this.el.dmg.textContent = def.pellets ? `${def.dmg}×${def.pellets}` : def.dmg;
     this.el.rof.textContent = def.mode === 'charge' ? '—' : def.rpm;
     this.el.mag.textContent = def.mag;
 
+    // HANDLING is hipfire spread under a friendlier name — how controllable the
+    // weapon is unaimed, which is what the word means to a player. Keeping it
+    // keyed to spreadHip is what stops it duplicating MOBILITY, which is length.
     const bars = [
-      ['PRECISION', 1 - norm(def.spreadAds, 0.001, 0.02)],
-      ['HIPFIRE', 1 - norm(def.spreadHip, 0.004, 0.045)],
+      ['ACCURACY', 1 - norm(def.spreadAds, 0.001, 0.02)],
       ['RANGE', norm(def.falloff[1], 40, 820)],
+      ['HANDLING', 1 - norm(def.spreadHip, 0.004, 0.045)],
       ['MOBILITY', 1 - norm(def.len, 0.55, 1.4)],
     ];
     this.el.bars.innerHTML = bars.map(([label, v]) =>
@@ -1455,7 +1499,7 @@ export class LoadoutMenu {
     ).join('');
 
     this.el.summary.textContent =
-      `${CLASSES[lo.cls].name.toUpperCase()} — ${WEAPONS[lo.primary].name} + ${WEAPONS[lo.secondary].name}`;
+      `${CLASSES[lo.cls].name.toUpperCase()} — ${WEAPONS[lo.primary].name} | ${WEAPONS[lo.secondary].name}`;
 
     // A class with three secondaries makes the panel taller than one with a
     // single card, and the framing reads that height — so re-aim after the rows
