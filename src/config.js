@@ -312,6 +312,50 @@ export const CFG = {
     // moire. Mipmaps plus anisotropic filtering are the hardware answer to
     // exactly that, and a shader function cannot have them.
     //
+    // ---- authored GLB deck --------------------------------------------------
+    // Set this and the whole procedural deck below stands down: the shader quad
+    // is still BUILT (everything from _placeStage to the thumbnail bake holds a
+    // reference to it) but switched off, so setting this back to null restores
+    // the old deck with no other edit. The GLB owns its own material — albedo,
+    // emissive, roughness, specular — so it is authored in Blender and nothing
+    // here needs re-tuning to follow it.
+    //
+    // floor_gun.glb is a 20 x 20 m plane at Y=0 with floor_1 wired as baseColor
+    // AND emissive (strength 2) AND specular colour, roughness 0.29. Note its
+    // metallicFactor is absent, which in glTF means 1.0 — a fully metallic deck
+    // with a near-black albedo has almost no diffuse, so what you see is the
+    // environment reflection plus the emissive. That is a Blender-side call.
+    deckGlb: '/Maps/floor_gun.glb',
+    deckGlbScale: 1,
+    // ---- deck-only haze -----------------------------------------------------
+    // The GLB deck's own fog, patched into its material and nothing else's. The
+    // scene fog cannot do this job: the weapon shares the scene, it sits 0.6-1.3 m
+    // from the eye, and any fog pulled in close enough to fade the deck starts
+    // eating the back of the rifle. That is why `fogFar` is out at 16.
+    //
+    // EXPONENTIAL, not linear like THREE.Fog, and measured from the CAMERA — the
+    // same form the procedural deck used before the GLB replaced it. Exponential
+    // matters for more than the falloff shape: it never fully arrives, so there
+    // is no far plane to tune and the 20 m deck's own EDGE is hazed out of
+    // existence at every pitch instead of being something to keep off screen.
+    //
+    // Applied after three's fog chunk, so it catches the emissive grid too and
+    // fogged lines drop back under `bloomThreshold` and stop glowing — which is
+    // most of what makes distance read as distance here.
+    //
+    // Per metre, and the old 0.26 is no guide: that was tuned for a deck meant to
+    // reach the horizon. At 0.9 the deck is 78% gone by 2 m and done by 3 m.
+    deckHaze: 0.9,
+    deckHazeStart: 0.3,  // metres of clear deck before it starts
+    deckHazeColor: null, // null = follow `fogColor`, so the deck and the weapon
+                         // recede into the same horizon
+
+    // Metres per texture repeat, the same convention as `deckTile`. null = leave
+    // the GLB's own UVs exactly as authored, which is the right setting once the
+    // tiling is done in Blender. As exported the UVs run 0..1 across the full
+    // 20 m plane, so the grid lands on 4 m centres; 2.5 here puts it back on the
+    // 0.5 m pitch the stage was built around.
+    deckGlbTile: 2.5,
     // `deckUrl` null = a seamless one is generated into a canvas at startup, so
     // this works with no asset. Point it at a real authored map and that wins.
     //

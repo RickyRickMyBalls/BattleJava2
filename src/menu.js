@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -566,6 +567,19 @@ export class LoadoutMenu {
   // and any crossing the top or bottom edge are drawn again wrapped).
   _deckTexture() {
     let tex;
+    // The GLB deck brings its own maps and the shader quad is switched off, so
+    // there is nothing here worth 1.5M pixels of CPU packing at boot. The
+    // material still needs a valid sampler, hence the 1x1.
+    if (S.deckGlb) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 1;
+      const g = cv.getContext('2d');
+      g.fillStyle = '#808080';
+      g.fillRect(0, 0, 1, 1);
+      tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = THREE.NoColorSpace;
+      return tex;
+    }
     if (S.deckUrl) {
       // Loaded by hand rather than through TextureLoader: the bitmap has to be
       // processed on a canvas before the GPU sees it, both to make it tile and
@@ -1027,9 +1041,155 @@ export class LoadoutMenu {
 
   _placeStage() {
     this.floor.position.y = this.floorY;
+    if (this.deckGlb) this.deckGlb.position.y = this.floorY;
     this.shadowPlane.position.y = this.floorY + 0.002;
     this.mirror.position.y = this.floorY * 2;
     for (const sh of this._mirrorShaders) sh.uniforms.uMirrorY.value = this.floorY;
+  }
+
+  // The deck as an authored GLB. Everything the stage needs from a deck — the
+  // plate surface, the lit grid, roughness, how it takes the environment — comes
+  // out of the file's own material, so this is a load-and-place with no shading
+  // decisions left on this side. Tuning moves to Blender.
+  //
+  // Loaded inside prewarm() rather than the constructor for two reasons: prewarm
+  // is awaited at boot, so the cost lands behind the loading bar instead of the
+  // deck popping in a frame late, and it runs before _bakeThumbnails, which has
+  // to be able to switch the deck off while it bakes the cards.
+  //
+  // A failure here is not fatal — the procedural deck is still fully built and
+  // simply stays visible, which is also exactly what happens with deckGlb null.
+  // The deck's own fog, and ONLY the deck's. Scene fog cannot be used for this:
+  // the weapon shares the scene and sits 0.6-1.3 m from the eye, so fog pulled in
+  // close enough to fade the deck starts eating the back of the rifle — which is
+  // why `fogFar` sits out at 16 and why the procedural deck carried its own haze
+  // term before the GLB replaced it. This puts that term back.
+  //
+  // Exponential and measured from the camera, so it never fully arrives: there is
+  // no far plane to keep in sync, and the deck plane's own EDGE hazes out of
+  // existence at any pitch rather than being something to keep off screen.
+  //
+  // Spliced in AFTER three's fog chunk on purpose. That is the last thing to
+  // touch gl_FragColor, so the haze catches the emissive grid as well as the
+  // surface — fogged lines fall back under `bloomThreshold` and stop glowing,
+  // which is most of what actually reads as distance here. It also means the mix
+  // happens in the same space the scene fog's does, hence the same
+  // LinearSRGBColorSpace treatment on the colour.
+  // Patched even at deckHaze 0 — the uniform makes it a no-op (exp(0) = 1), and
+  // that keeps `tuneHaze` able to bring it back up live. Costs one mix per
+  // fragment on a single plane, which is not worth a config-time branch.
+  _hazeMaterial(mat) {
+    if (!mat) return;
+    const color = new THREE.Color().setHex(
+      S.deckHazeColor == null ? S.fogColor : S.deckHazeColor, THREE.LinearSRGBColorSpace);
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uDeckHaze = { value: S.deckHaze };
+      sh.uniforms.uDeckHazeStart = { value: S.deckHazeStart };
+      sh.uniforms.uDeckHazeColor = { value: color };
+      // Kept so the numbers stay pokeable at runtime — this is a look knob and
+      // it will want scrubbing against a real weapon on the stand.
+      this._deckHaze.push(sh.uniforms);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform float uDeckHaze, uDeckHazeStart;
+          uniform vec3 uDeckHazeColor;`)
+        // vViewPosition is the fragment-to-camera vector, declared unconditionally
+        // by the physical material — so camera distance costs nothing extra here.
+        .replace('#include <fog_fragment>', `#include <fog_fragment>
+          {
+            float hazeD = length(vViewPosition);
+            float haze = 1.0 - exp(-max(hazeD - uDeckHazeStart, 0.0) * uDeckHaze);
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, uDeckHazeColor, haze);
+          }`);
+    };
+    // Without this three would hand the deck a cached program compiled from the
+    // UNPATCHED source if anything else in the scene shares its material key.
+    mat.customProgramCacheKey = () => 'deckHaze';
+    mat.needsUpdate = true;
+  }
+
+  // Live tuning for the two knobs that fight over this look: the deck's own haze
+  // and the scene fog. Changes land on the next frame — no reload, no re-export.
+  //
+  //   FC.menu.tuneHaze({ haze: 0.35, start: 0.8 })  // gentler, starting later
+  //   FC.menu.tuneHaze({ haze: 0 })                 // deck haze off, to A/B
+  //   FC.menu.tuneHaze({ fogNear: 2, fogFar: 7 })   // the other lever (hits the gun too)
+  //   FC.menu.tuneHaze()                            // print, ready to paste into config
+  //
+  // Printing a paste-ready block rather than just mutating is the point: this is
+  // a look knob, so the numbers have to survive back into config by hand.
+  tuneHaze(v = {}) {
+    for (const u of this._deckHaze || []) {
+      if (v.haze !== undefined) u.uDeckHaze.value = v.haze;
+      if (v.start !== undefined) u.uDeckHazeStart.value = v.start;
+      if (v.color !== undefined) u.uDeckHazeColor.value.setHex(v.color, THREE.LinearSRGBColorSpace);
+    }
+    const fog = this.scene.fog;
+    if (fog) {
+      if (v.fogNear !== undefined) fog.near = v.fogNear;
+      if (v.fogFar !== undefined) fog.far = v.fogFar;
+    }
+    const u0 = (this._deckHaze || [])[0];
+    // Read back in the SAME space it was written in, or the hex that comes out is
+    // not the hex that goes into config.
+    const hex = (c) => `0x${c.getHex(THREE.LinearSRGBColorSpace).toString(16).padStart(6, '0')}`;
+    const block = [
+      u0 ? `deckHaze: ${u0.uDeckHaze.value},` : 'deck haze: not patched (deckGlb off?)',
+      u0 ? `deckHazeStart: ${u0.uDeckHazeStart.value},` : '',
+      u0 ? `deckHazeColor: ${hex(u0.uDeckHazeColor.value)},` : '',
+      fog ? `fogNear: ${fog.near},` : '',
+      fog ? `fogFar: ${fog.far},` : '',
+    ].filter(Boolean).join('\n');
+    console.log(block);
+    return block;
+  }
+
+  async _loadDeckGlb() {
+    if (!S.deckGlb) return;
+    this._deckHaze = [];
+    let gltf;
+    try {
+      gltf = await new GLTFLoader().loadAsync(S.deckGlb);
+    } catch (e) {
+      console.warn(`deck GLB failed to load: ${S.deckGlb}`, e);
+      return;
+    }
+    const deck = gltf.scene;
+    deck.scale.setScalar(S.deckGlbScale);
+    deck.updateMatrixWorld(true);
+    // Measured off the geometry rather than assumed, so deckGlbTile keeps
+    // meaning "metres per repeat" if the plane is ever resized or re-exported.
+    const box = new THREE.Box3().setFromObject(deck);
+    const span = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) || 1;
+    const aniso = this.renderer.capabilities.getMaxAnisotropy();
+    deck.traverse((o) => {
+      if (!o.isMesh) return;
+      o.receiveShadow = true;
+      // Same slot the shader quad held, so the shadow catcher and the mirrored
+      // weapon still land on top of it in the order they were written for.
+      o.renderOrder = 1;
+      for (const mat of (Array.isArray(o.material) ? o.material : [o.material])) {
+        // Every map has to be re-tiled TOGETHER — the emissive grid, the albedo
+        // it sits on and the specular tint are the same image, and tiling one
+        // without the others slides the glow off the plates it belongs to.
+        for (const slot of ['map', 'emissiveMap', 'specularColorMap', 'normalMap',
+                            'roughnessMap', 'metalnessMap', 'aoMap']) {
+          const t = mat[slot];
+          if (!t) continue;
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          // The deck is seen at a grazing angle from ~5 cm up, which is the worst
+          // case there is for minification — see the note on deckUrl.
+          t.anisotropy = aniso;
+          if (S.deckGlbTile) t.repeat.setScalar(span / S.deckGlbTile);
+          t.needsUpdate = true;
+        }
+        this._hazeMaterial(mat);
+      }
+    });
+    this.deckGlb = deck;
+    this.scene.add(deck);
+    this.floor.visible = false; // the procedural deck stands down
+    this._placeStage();
   }
 
   _frameCamera() {
@@ -1249,6 +1409,9 @@ export class LoadoutMenu {
   // main context — every weapon texture uploads again the first time the
   // armory draws it. Do that behind the loading bar instead.
   async prewarm() {
+    // Before the assets guard: the deck is stage furniture and should be there
+    // even on the path where there are no weapons to warm.
+    await this._loadDeckGlb();
     const assets = this.game.assets; // `game` is the session before a match exists
     if (!assets) return;
     this._frameCamera();
@@ -1295,7 +1458,8 @@ export class LoadoutMenu {
     // Stage furniture off: the card wants the weapon alone on transparency.
     // The backdrop belongs in this list — it is opaque and full-screen, so
     // leaving it visible bakes the sky into every card.
-    const hide = [this.backdrop, this.floor, this.shadowPlane, this.mirror, this.holder];
+    const hide = [this.backdrop, this.floor, this.shadowPlane, this.mirror, this.holder,
+                  this.deckGlb].filter(Boolean);
     const shown = hide.map((o) => o.visible);
     for (const o of hide) o.visible = false;
     const prevTarget = this.renderer.getRenderTarget();
