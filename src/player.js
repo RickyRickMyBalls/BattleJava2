@@ -323,6 +323,8 @@ export class Player {
     this._mountGun();
     const s = this.soldier;
     if (s) {
+      // setLoadout resolves the class jump height; takeoff speed and hang time
+      // come off the soldier, so the controller has no jump numbers of its own.
       s.setLoadout(loadout.cls, loadout.primary, loadout.secondary);
       // body model follows the class (marine vs spartan); Covenant is always the Elite
       const charKey = this.game.playerTeam === 1 ? 'elite' : CLASSES[loadout.cls].model;
@@ -420,11 +422,11 @@ export class Player {
     let ground = col ? col.groundAt(this.pos.x, this.pos.y, this.pos.z) : null;
     if (ground === null) ground = this.game.world.heightAt(this.pos.x, this.pos.z);
     if (this.onGround && this.keys['Space']) {
-      this.velY = P.jumpVel;
+      this.velY = s.jumpVel; // height, and everything from it, lives on the soldier
       this.onGround = false;
     }
     if (!this.onGround || this.pos.y > ground + 0.01) {
-      this.velY -= P.gravity * dt;
+      this.velY -= CFG.gravity * dt;
       this.pos.y += this.velY * dt;
       if (this.pos.y <= ground) { this.pos.y = ground; this.velY = 0; this.onGround = true; }
     } else {

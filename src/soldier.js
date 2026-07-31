@@ -124,6 +124,10 @@ export class Soldier {
     this.secondary = WEAPONS[secondary];
     this.activeWeapon = this.primary;
     this.maxShield = (CLASSES[cls] && CLASSES[cls].shield) || S.shield;
+    // How high this soldier jumps, in metres. Everything else about the jump —
+    // takeoff speed, hang time, how fast the jump clip plays — is derived from
+    // this one number, so it is the only thing to tune. MJOLNIR clears 3 m.
+    this.jumpHeight = (CLASSES[cls] && CLASSES[cls].jumpHeight) || S.jumpHeight;
     // targeting reach = the longest gun carried (capped so recon isn't omniscient)
     this.engageRange = Math.min(320, Math.max(this.primary.ai.range, this.secondary.ai.range));
     this.maxRange = Math.max(this.primary.ai.range, this.secondary.ai.range);
@@ -211,6 +215,12 @@ export class Soldier {
     }
   }
 
+  // Takeoff speed that reaches `jumpHeight` under the world's gravity, and the
+  // hang time that follows from it. Derived rather than tuned so height stays
+  // the single knob — see CFG.soldier.jumpHeight.
+  get jumpVel() { return Math.sqrt(2 * CFG.gravity * this.jumpHeight); }
+  get jumpAirtime() { return 2 * this.jumpVel / CFG.gravity; }
+
   // Project a world-space velocity onto the body's own frame. The mesh faces
   // local +Z, so with `mesh.rotation.y = yaw` its forward is (sin, cos) — the
   // same convention `muzzlePos` uses. Y-up and right-handed means a +Z-facing
@@ -268,6 +278,14 @@ export class Soldier {
     if (key === 'jump' || key.startsWith('death')) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
+    }
+    // Stretch the jump over the actual airtime so the landing frame arrives as
+    // the feet do. A taller jump hangs longer, so this cannot be a constant —
+    // a Spartan's doubled height is 1.41x the airtime, not 2x.
+    if (key === 'jump') {
+      next.setEffectiveTimeScale(this.jumpAirtime > 0.05
+        ? next.getClip().duration / this.jumpAirtime
+        : 1);
     }
     next.fadeIn(fade).play();
     if (prev) prev.fadeOut(fade);

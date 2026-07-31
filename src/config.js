@@ -25,6 +25,7 @@ export const CFG = {
   bleedInterval: 3,      // seconds between bleed applications
   captureRate: 14,       // capture points/sec per net attacker (progress 0..100)
   headshotMult: 1.6,
+  gravity: 18,           // world constant: anything that falls, and every jump
 
   soldier: {
     shield: 45,
@@ -33,6 +34,12 @@ export const CFG = {
     shieldRegenRate: 12,
     runSpeed: 6.2,
     walkSpeed: 3.4,
+    // Jump is authored as a HEIGHT IN METRES — the single number to tune. Every
+    // other jump quantity is derived from it and CFG.gravity: takeoff velocity
+    // is sqrt(2*g*h), airtime is 2*v/g, and the jump clip is stretched to span
+    // that airtime. Per-class overrides live on CLASSES; this is the default,
+    // and it applies to every soldier, AI included.
+    jumpHeight: 1.17,
     respawnDelay: 6,
   },
 
@@ -42,8 +49,6 @@ export const CFG = {
     speed: 6.4,
     sprintMult: 1.5,
     crouchMult: 0.55,
-    jumpVel: 6.5,
-    gravity: 18,
     respawnDelay: 5,
     // Third-person view (O). A debug/observation camera for watching the body
     // animate — firing is suppressed while it is on, so these are presentation
@@ -262,12 +267,16 @@ export const PRIMARIES = ['ar', 'br'];
 // `shield` overrides the default soldier shield; `model` picks the character
 // mesh for the class (blue team) — Spartans are the only class in MJOLNIR.
 // `gadgets` are visual loadout slots for now (implementations come later).
+// `jumpHeight` overrides CFG.soldier.jumpHeight for the class, in METRES — the
+// only jump number to touch. Takeoff velocity, airtime and the jump clip's
+// playback speed all follow from it. Note height goes with the SQUARE of
+// takeoff speed, so doubling the height is only 1.41x the velocity and airtime.
 export const CLASSES = {
   assault: { name: 'Assault', secondaries: ['smg', 'shotgun'], model: 'marine', gadgets: ['frag', 'medkit'] },
   engineer: { name: 'Engineer', secondaries: ['rocket', 'laser'], model: 'marine', gadgets: ['repair', 'mines'] },
   recon: { name: 'Recon', secondaries: ['sniper', 'dmr'], model: 'marine', gadgets: ['sensor', 'frag'] },
   support: { name: 'Support', secondaries: ['shotgun'], model: 'marine', gadgets: ['ammo', 'medkit'] },
-  spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70, gadgets: ['frag', 'shield'] },
+  spartan: { name: 'Spartan', secondaries: ['shotgun', 'sniper', 'rocket', 'laser'], model: 'spartan', shield: 70, jumpHeight: 3, gadgets: ['frag', 'shield'] },
 };
 
 // Gadget registry: line-art slot icons (stroke uses currentColor).
@@ -320,8 +329,8 @@ export const ASSET_PATHS = {
     walkBack: '/animations/walk-backward.glb',
     walkLeft: '/animations/walk-left.glb',
     walkRight: '/animations/walk-right.glb',
-    // 0.63 s, against a 0.72 s player airtime (jumpVel 6.5 / gravity 18) — close
-    // enough to run as a clamped one-shot that lands about when the player does.
+    // 0.63 s, stretched at playback to whatever the jumper's airtime works out
+    // to, and clamped so the landing frame holds if the fall outlasts the clip.
     jump: '/animations/rifle-jump.glb',
     // doubles as the crouch idle — it is literally a crouched rifle-aim pose
     aim: '/animations/idle-crouching-aiming.glb',
