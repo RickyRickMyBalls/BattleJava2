@@ -183,6 +183,33 @@ def _prism_mesh(name, rings, zs, cap_bottom=True, cap_top=True):
     return me
 
 
+def prism_xz(name, pts, y0, y1, mats=None, group='Shell', bev=0.010, segs=2):
+    """Extrude a closed profile drawn in the XZ plane along Y.
+
+    For anything authored face-on to the camera: portal frames, the U-shaped
+    surround of an opening, corner fill wedges. Profiles may be concave — a
+    frame is just a rectangle that walks back in through its own opening — so
+    normals are recalculated rather than assumed from winding.
+    """
+    n = len(pts)
+    verts = [(p[0], y0, p[1]) for p in pts] + [(p[0], y1, p[1]) for p in pts]
+    faces = [tuple(range(n)), tuple(range(n, 2 * n))[::-1]]
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, j, j + n, i + n))
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], faces)
+    me.update()
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(me)
+    bm.free()
+    ob = _obj(name, me, group, mats)
+    bevel(ob, bev, segs, angle=25.0)
+    return ob
+
+
 def prism(name, pts, z0, z1, mats=None, group='Shell', bev=0.010, segs=2):
     """Extrude a closed XY profile between two heights."""
     ob = _obj(name, _prism_mesh(name, [pts, pts], [z0, z1]), group, mats)
@@ -471,6 +498,81 @@ def add_grooves(m, sx, sy, width=0.016, depth=0.5, on_wall=False,
     nt.links.new(tot.outputs['Value'], bump.inputs['Height'])
     bump.inputs['Strength'].default_value = bump_strength
     bump.inputs['Distance'].default_value = 0.06
+    return m
+
+
+def add_seam_glow(m, sx, sy, width=0.018, color=(0.34, 0.70, 1.0), strength=7.0,
+                  keep=0.52, node_boost=1.5):
+    """Light the tile seams, on a SUBSET of the lines.
+
+    Same wrap-per-tile arithmetic add_grooves() uses, at the same pitch, so the
+    emission lands inside the grooves rather than beside them — a lit recessed
+    channel rather than a painted stripe.
+
+    Every seam glowing reads as a lightmap test; the reference has gaps. So each
+    line is hashed by its own index and switched on or off, which keeps a line
+    consistent along its whole length instead of flickering per pixel. Crossings
+    get an extra kick, which is what makes the bright nodes at intersections.
+    """
+    nt = m.node_tree
+    bsdf = nt.nodes['Principled BSDF']
+    geos = [n for n in nt.nodes if n.bl_idname == 'ShaderNodeNewGeometry']
+    geo = geos[0] if geos else N(nt, 'ShaderNodeNewGeometry', -2400, 900)
+    sep = N(nt, 'ShaderNodeSeparateXYZ', -2100, 1100)
+    L(nt, geo, 'Position', sep, 'Vector')
+
+    lit = []
+    for k, (axis, s) in enumerate((('X', sx), ('Y', sy))):
+        row = 1300 - k * 420
+        wrap = math_n(nt, 'WRAP', -1900, row, b=0.0)
+        wrap.inputs[2].default_value = s
+        L(nt, sep, axis, wrap, 0)
+        inv = math_n(nt, 'SUBTRACT', -1750, row, a=s)
+        L(nt, wrap, 'Value', inv, 1)
+        dmin = math_n(nt, 'MINIMUM', -1600, row)
+        L(nt, wrap, 'Value', dmin, 0)
+        L(nt, inv, 'Value', dmin, 1)
+        mr = N(nt, 'ShaderNodeMapRange', -1450, row)
+        mr.inputs['From Min'].default_value = 0.0
+        mr.inputs['From Max'].default_value = width
+        mr.inputs['To Min'].default_value = 1.0
+        mr.inputs['To Max'].default_value = 0.0
+        mr.clamp = True
+        L(nt, dmin, 'Value', mr, 'Value')
+
+        # which line am I on — hashed per index so a line is on for its length
+        div = math_n(nt, 'DIVIDE', -1900, row - 200, b=s)
+        L(nt, sep, axis, div, 0)
+        idx = math_n(nt, 'ROUND', -1750, row - 200)
+        L(nt, div, 'Value', idx, 0)
+        comb = N(nt, 'ShaderNodeCombineXYZ', -1600, row - 200)
+        L(nt, idx, 'Value', comb, 'XY'[k])
+        wn = N(nt, 'ShaderNodeTexWhiteNoise', -1450, row - 200)
+        L(nt, comb, 'Vector', wn, 'Vector')
+        gate = math_n(nt, 'GREATER_THAN', -1300, row - 200, b=keep)
+        L(nt, wn, 'Value', gate, 0)
+
+        on = math_n(nt, 'MULTIPLY', -1100, row)
+        L(nt, mr, 'Result', on, 0)
+        L(nt, gate, 'Value', on, 1)
+        lit.append(on)
+
+    glow = math_n(nt, 'MAXIMUM', -900, 1200)
+    L(nt, lit[0], 'Value', glow, 0)
+    L(nt, lit[1], 'Value', glow, 1)
+    cross = math_n(nt, 'MULTIPLY', -900, 1020)
+    L(nt, lit[0], 'Value', cross, 0)
+    L(nt, lit[1], 'Value', cross, 1)
+    cross_b = math_n(nt, 'MULTIPLY', -750, 1020, b=node_boost)
+    L(nt, cross, 'Value', cross_b, 0)
+    tot = math_n(nt, 'ADD', -600, 1120)
+    L(nt, glow, 'Value', tot, 0)
+    L(nt, cross_b, 'Value', tot, 1)
+    amt = math_n(nt, 'MULTIPLY', -450, 1120, b=strength)
+    L(nt, tot, 'Value', amt, 0)
+
+    bsdf.inputs['Emission Color'].default_value = (*color, 1)
+    L(nt, amt, 'Value', bsdf, 'Emission Strength')
     return m
 
 
