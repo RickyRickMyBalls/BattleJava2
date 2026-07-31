@@ -73,6 +73,18 @@ export const CFG = {
   // Walking around the lobby stage (TAB). Movement itself is deliberately NOT
   // tuned here — roam reuses the real Player, so it reads CFG.player.speed,
   // eyeHeight and the rest. These are only the transition and presentation.
+  // The hangar preview character. He holds a relaxed rifle idle and glances
+  // around now and then, rather than sighting down the weapon the whole time
+  // the player is picking a loadout.
+  lobbyIdle: {
+    // Seconds of calm idle between glances. The lookaround clip is itself ~10 s,
+    // so these want to be comfortably longer than it or he spends half his time
+    // looking around rather than occasionally.
+    lookEveryMin: 16,
+    lookEveryMax: 34,
+    fade: 0.6,             // crossfade; both poses are near-identical at the
+  },                       // hips, so a quick cut reads as a twitch
+
   lobbyRoam: {
     enterTime: 1.0,        // seconds: camera flight from the lobby pose into first person
     exitTime: 0.7,         // and back out

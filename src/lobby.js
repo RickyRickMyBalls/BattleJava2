@@ -5,10 +5,12 @@
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
+import { CFG, MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
 import { makeWeaponMount, setHeldWeapon } from './soldier.js';
 import { LobbyRoam } from './lobbyroam.js';
 import { prewarm, weaponClones, characterClones } from './assets.js';
+
+const LOBBY_IDLE = CFG.lobbyIdle;
 
 // Emissive "hangar screen" texture: dark panel with battle-glow band + scanlines
 function makeScreenTexture() {
@@ -363,9 +365,17 @@ export class Lobby {
     this.scene.add(this.charGroup);
 
     this.mixer = new THREE.AnimationMixer(mesh);
-    // the aim pose presents the weapon properly (idle tucks it into the body)
-    const clip = character.clips.aim || character.clips.idle;
-    if (clip) this.mixer.clipAction(clip).play();
+    // A relaxed rifle idle, with the lookaround drifting in occasionally (see
+    // _tickIdle). `aim` used to be the pick here because the old generic idle
+    // was an unarmed pose that tucked the weapon into the body — the rifle
+    // idles present it properly without sighting down it the whole time.
+    const clip = character.clips.idle || character.clips.aim;
+    this.idleAct = clip ? this.mixer.clipAction(clip) : null;
+    this.lookAct = character.clips.idleLook ? this.mixer.clipAction(character.clips.idleLook) : null;
+    if (this.idleAct) this.idleAct.play();
+    this.looking = false;
+    this._lookIn = LOBBY_IDLE.lookEveryMin
+      + Math.random() * (LOBBY_IDLE.lookEveryMax - LOBBY_IDLE.lookEveryMin);
 
     const holder = makeWeaponMount(mesh);
     if (holder) setHeldWeapon(holder, lo.primary, assets.weaponModels);
@@ -401,12 +411,27 @@ export class Lobby {
       });
       return m;
     };
+    // Sample every pose he can settle into, not just the opening one — the
+    // lookaround shifts his weight, and grounding against the calm idle alone
+    // would let it dip a heel through the floor.
     let minY = Infinity;
-    if (clip) {
-      for (let i = 0; i < 12; i++) {
-        this.mixer.setTime((i / 12) * clip.duration);
-        minY = Math.min(minY, measure());
+    const poses = [];
+    if (this.idleAct) poses.push(this.idleAct);
+    if (this.lookAct) poses.push(this.lookAct);
+    if (poses.length) {
+      for (const act of poses) {
+        for (const other of poses) other.setEffectiveWeight(other === act ? 1 : 0);
+        act.play();
+        for (let i = 0; i < 12; i++) {
+          this.mixer.setTime((i / 12) * act.getClip().duration);
+          minY = Math.min(minY, measure());
+        }
       }
+      // Restore full base weight on both. fadeIn multiplies its 0->1 ramp by
+      // the action's base weight, so leaving the lookaround zeroed here would
+      // let it switch in and never actually reach the skeleton.
+      for (const act of poses) act.setEffectiveWeight(1);
+      if (this.lookAct) this.lookAct.stop();
       this.mixer.setTime(0);
     } else {
       minY = measure();
@@ -489,9 +514,37 @@ export class Lobby {
     }
   }
 
+  // Drift between the two rifle idles so the hangar character has some life in
+  // him: the calm idle holds, and the lookaround runs once through every
+  // lookEvery seconds or so before handing back.
+  _tickIdle(dt) {
+    if (!this.idleAct || !this.lookAct) return;
+    this._lookIn -= dt;
+    if (this._lookIn > 0) return;
+    const fade = LOBBY_IDLE.fade;
+    const from = this.looking ? this.lookAct : this.idleAct;
+    const to = this.looking ? this.idleAct : this.lookAct;
+    to.reset();
+    to.setEffectiveWeight(1); // base weight the fade ramp is scaled against
+    to.fadeIn(fade).play();
+    from.fadeOut(fade);
+    if (this.looking) {
+      // back to calm: wait out a random stretch before glancing around again
+      this._lookIn = LOBBY_IDLE.lookEveryMin
+        + Math.random() * (LOBBY_IDLE.lookEveryMax - LOBBY_IDLE.lookEveryMin);
+    } else {
+      // hold the lookaround for one full pass, less the fade back in
+      this._lookIn = to.getClip().duration - fade;
+    }
+    this.looking = !this.looking;
+  }
+
   update(dt) {
     if (!this.active) return;
-    if (this.mixer) this.mixer.update(dt);
+    if (this.mixer) {
+      this.mixer.update(dt);
+      this._tickIdle(dt);
+    }
     if (this.dust) {
       const pos = this.dust.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
