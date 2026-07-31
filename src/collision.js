@@ -79,16 +79,26 @@ export class MapCollision {
     }
   }
 
-  // Does a straight segment cross a wall shell? (For future LOS use.)
-  segmentBlocked(ax, ay, az, bx, by, bz) {
-    if (!this.wallBvh) return false;
-    _ray.origin.set(ax, ay, az);
-    _ray.direction.set(bx - ax, by - ay, bz - az);
+  // Distance to the first wall shell along a ray, or null if nothing within
+  // `maxDist`. `dir` need not be normalized. The third-person boom uses this to
+  // stop short of whatever is behind the player.
+  rayDistance(ox, oy, oz, dx, dy, dz, maxDist) {
+    if (!this.wallBvh) return null;
+    _ray.origin.set(ox, oy, oz);
+    _ray.direction.set(dx, dy, dz);
     const len = _ray.direction.length();
-    if (len < 1e-6) return false;
+    if (len < 1e-6) return null;
     _ray.direction.divideScalar(len);
     const hit = this.wallBvh.raycastFirst(_ray, THREE.DoubleSide);
-    return !!hit && hit.distance < len;
+    return hit && hit.distance <= maxDist ? hit.distance : null;
+  }
+
+  // Does a straight segment cross a wall shell? (For future LOS use.)
+  segmentBlocked(ax, ay, az, bx, by, bz) {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-6) return false;
+    return this.rayDistance(ax, ay, az, dx, dy, dz, len) !== null;
   }
 }
 

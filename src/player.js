@@ -63,6 +63,11 @@ export class Player {
     this.crouching = false;
     this.sprinting = false;
     this.ads = false;
+    // Third-person observation camera (O). Look and movement are unchanged —
+    // only where the camera sits. Firing is suppressed while it is on, since
+    // shots originate at the camera and would spawn behind the player.
+    this.thirdPerson = false;
+    this.tpDist = 0; // eased boom length, so wall collisions do not snap
     this.lookSens = HIP_SENS; // recomputed per frame from the current zoom
     this.eye = P.eyeHeight;
 
@@ -131,6 +136,7 @@ export class Player {
       if (e.code === 'KeyR' && !this.freecam) this.startReload();
       if (e.code === 'KeyM') document.exitPointerLock();
       if (e.code === 'KeyF') this.game.toggleFreecam();
+      if (e.code === 'KeyO' && !this.freecam) this.setThirdPerson(!this.thirdPerson);
       if (e.code === 'KeyP') this.game.togglePause();
       if (e.code === 'KeyT') this.game.cycleTimeScale();
       if (!this.freecam) {
@@ -152,7 +158,9 @@ export class Player {
     this._on(this.dom, 'mousedown', (e) => {
       if (this.game.menuOpen) return;
       if (!this.locked) { this.requestLock(); return; }
-      if (this.freecam) return;
+      // Shots spawn at the camera, which in third person sits metres behind the
+      // player — so the observation camera does not shoot, same as freecam.
+      if (this.freecam || this.thirdPerson) return;
       if (e.button === 0) this.firing = true;
       if (e.button === 2) this.ads = true;
     });
@@ -187,6 +195,7 @@ export class Player {
   }
 
   setFreecam(on) {
+    if (on) this.setThirdPerson(false); // one camera mode at a time
     this.freecam = on;
     this.firing = false;
     this.ads = false;
@@ -196,14 +205,35 @@ export class Player {
       this.fcPos.copy(this.camera.position);
       this.fcYaw = this.yaw;
       this.fcPitch = this.pitch;
-      if (s.mesh && s.alive) {
-        s.mesh.visible = true;
-        s.playAnim('idle', 0);
-      }
+      if (s.mesh && s.alive) s.playAnim('idle', 0);
       this.requestLock();
-    } else {
-      if (s.mesh) s.mesh.visible = false;
     }
+    this.syncBodyVisibility();
+  }
+
+  // Third person is a camera mode, not a game mode: the controller, the body
+  // and `s.yaw` all behave exactly as in first person.
+  setThirdPerson(on) {
+    if (this.thirdPerson === on) return;
+    this.thirdPerson = on;
+    this.firing = false;
+    this.ads = false;              // ADS drives fov/sens for a gun we are not showing
+    this.viewmodel.visible = !on;
+    if (on) this.tpDist = 0;       // ease the boom out from the head
+    this.syncBodyVisibility();
+    this.game.hud.setCrosshairVisible(!on);
+    this.game.hud.setModeTag(on ? 'THIRD PERSON — O TO EXIT' : null);
+  }
+
+  // The single writer for the player body's visibility. It used to be assigned
+  // from six places (spawn, death, respawn, freecam, match setup), which meant
+  // any new viewer had to win a race against all of them — `spawnAt` resetting
+  // it to hidden was the standing example. Deriving it once per frame from the
+  // modes that actually want a body removes that class of bug.
+  syncBodyVisibility() {
+    const s = this.soldier;
+    if (!s || !s.mesh) return;
+    s.mesh.visible = s.alive && (this.freecam || this.thirdPerson);
   }
 
   _buildViewmodel() {
@@ -337,10 +367,10 @@ export class Player {
     this.yaw = Math.atan2(-x, -z) + Math.PI;
     const s = this.soldier;
     s.spawnAt(x, z);
-    if (s.mesh) s.mesh.visible = false;
+    this.syncBodyVisibility();
     // the deploy dive restores map styling while we're still "dead", which
     // leaves the viewmodel hidden — spawning always brings the gun back
-    this.viewmodel.visible = !this.freecam;
+    this.viewmodel.visible = !this.freecam && !this.thirdPerson;
   }
 
   startReload() {
@@ -416,6 +446,7 @@ export class Player {
     s.speed2D = moving ? speed : 0;
     s.aiming = this.ads; // drives the body's aim pose; AI use `target` instead
     s.crouching = this.crouching;
+    s.airborne = !this.onGround;
     // Direction is resolved against the body's own facing, not the camera's, so
     // the strafe clips stay correct however `s.yaw` is derived.
     s.setMoveDir(wx, wz, moving ? 1 : 0);
@@ -423,6 +454,8 @@ export class Player {
     // ---- Camera ----
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    if (this.thirdPerson) this._applyBoom(dt);
+    this.syncBodyVisibility();
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon
     // owns it — a sniper comes up slower than an SMG. Tuned in /chartest.html.
@@ -590,6 +623,39 @@ export class Player {
     // Soldiers are the cullable bulk — 64 of them, all with frustum culling
     // disabled, so the scope has to reject them itself.
     this.scopeDisplay.render(renderer, scene, this.camera, this.game.allSoldiers);
+  }
+
+  // Pull the camera back onto a boom behind the eye. The rotation set by
+  // `update` is left alone, so aiming, movement and `s.yaw` behave exactly as
+  // they do in first person — only the eye point moves.
+  _applyBoom(dt) {
+    const TP = P.thirdPerson;
+    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const fx = -sy * cp, fy = sp, fz = -cy * cp;   // camera forward
+    const rx = cy, rz = -sy;                       // camera right
+    const px = this.pos.x + rx * TP.shoulder;
+    const py = this.pos.y + this.eye + TP.lift;
+    const pz = this.pos.z + rz * TP.shoulder;
+
+    let want = TP.dist;
+    const col = this.game.world.collision;
+    if (col) {
+      const hit = col.rayDistance(px, py, pz, -fx, -fy, -fz, TP.dist + TP.skin);
+      if (hit !== null) want = Math.max(TP.minDist, hit - TP.skin);
+    }
+    // Pull in the instant something is in the way, ease back out once it is
+    // clear: easing inward would let the camera sit inside the wall meanwhile.
+    if (want < this.tpDist) this.tpDist = want;
+    else this.tpDist += (want - this.tpDist) * Math.min(1, dt * TP.lerp);
+
+    const cx = px - fx * this.tpDist;
+    const cz = pz - fz * this.tpDist;
+    let cyy = py - fy * this.tpDist;
+    // Wall shells only exist on authored maps; the heightfield catches the rest.
+    const floor = this.game.world.heightAt(cx, cz) + 0.35;
+    if (cyy < floor) cyy = floor;
+    this.camera.position.set(cx, cyy, cz);
   }
 
   updateFreecam(dt) {

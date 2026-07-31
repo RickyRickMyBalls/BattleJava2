@@ -162,6 +162,12 @@ export class Hud {
     this.el.ticketsRed.textContent = Math.max(0, Math.ceil(red));
   }
 
+  // The crosshair marks where the shot goes, so it has no business being up in
+  // a view that cannot shoot (third person).
+  setCrosshairVisible(on) {
+    if (this.el.crosshair) this.el.crosshair.style.display = on ? '' : 'none';
+  }
+
   // Toggle between map-hub chrome and first-person chrome.
   setMode(mode) {
     const fps = mode === 'fps';

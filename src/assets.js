@@ -64,13 +64,41 @@ function normalizeCharacter(scene, targetHeight) {
   return wrapper;
 }
 
+// Which component of a hips translation carries height. Both the characters and
+// the Mixamo clips come out of Blender with the armature rotated (Z-up source
+// into a Y-up glTF), so the hips' local height axis is -Z — local Y moves the
+// hips sideways and does nothing vertically. The other two components are small
+// lateral offsets, so the dominant one is the leg length: finding it by
+// magnitude gets the right axis without hardcoding the export convention.
+function hipsHeightAxis(v) {
+  const ax = Math.abs(v[0]), ay = Math.abs(v[1]), az = Math.abs(v[2]);
+  if (ax >= ay && ax >= az) return 0;
+  return ay >= az ? 1 : 2;
+}
+
 // Retarget one Mixamo clip onto a character skeleton:
 //  - rename tracks to the character's bone names
-//  - keep rotations; keep position only for hips, rescaled and locked to rest X/Z
+//  - keep rotations; keep position only for hips, rescaled and locked laterally
 //  - drop scale tracks entirely (this is what fixes "animation resizes the character")
-function retargetClip(clip, boneMap) {
+//
+// `srcHipsRest` is the source rig's rest hips translation, captured at load. The
+// scale factor has to come from that rather than from the clip's own first
+// frame: normalizing per clip pins every clip's opening pose to the character's
+// standing hip height, which silently cancels any clip that does not start
+// standing — crouches never lower, deaths never reach the floor.
+function retargetClip(clip, boneMap, srcHipsRest) {
   const tracks = [];
   const hips = boneMap.get('hips');
+  const rest = hips ? [hips.position.x, hips.position.y, hips.position.z] : null;
+  const cAx = rest ? hipsHeightAxis(rest) : 1;
+  const sAx = srcHipsRest ? hipsHeightAxis(srcHipsRest) : cAx;
+  // Source units vary per clip, so this converts the source rig's hip height
+  // into the character's own units while preserving how far each frame deviates
+  // from rest. Null when the rest pose is unknown — then the hips stay planted,
+  // which is what the old per-clip normalization effectively did anyway.
+  const ratio = (rest && srcHipsRest && Math.abs(srcHipsRest[sAx]) > 1e-4)
+    ? rest[cAx] / srcHipsRest[sAx]
+    : null;
   for (const track of clip.tracks) {
     const dot = track.name.lastIndexOf('.');
     const nodeName = track.name.slice(0, dot);
@@ -81,13 +109,12 @@ function retargetClip(clip, boneMap) {
     if (prop === 'position') {
       if (bone !== hips) continue;
       const src = track.values;
-      const firstY = Math.abs(src[1]) > 1e-4 ? src[1] : 1;
-      const ratio = hips.position.y / firstY;
       const values = new Float32Array(src.length);
       for (let i = 0; i < src.length; i += 3) {
-        values[i] = hips.position.x;          // lock X/Z: no root motion drift
-        values[i + 1] = src[i + 1] * ratio;   // keep vertical motion, rescaled
-        values[i + 2] = hips.position.z;
+        values[i] = rest[0];                  // lock laterally: no root motion drift
+        values[i + 1] = rest[1];
+        values[i + 2] = rest[2];
+        if (ratio !== null) values[i + cAx] = src[i + sAx] * ratio;
       }
       tracks.push(new THREE.VectorKeyframeTrack(`${bone.name}.position`, Array.from(track.times), Array.from(values)));
       continue;
@@ -149,7 +176,7 @@ export function characterClones(assets) {
 
 
 export async function loadAssets(onProgress) {
-  const out = { characters: {}, clips: {}, audio: {}, weaponModels: {} };
+  const out = { characters: {}, clips: {}, clipHipsRest: {}, audio: {}, weaponModels: {} };
   const jobs = [];
   let done = 0;
   const total =
@@ -196,11 +223,34 @@ export async function loadAssets(onProgress) {
   }
 
   // Animations ------------------------------------------------------------
-  for (const [key, url] of Object.entries(ASSET_PATHS.animations)) {
+  // An entry is either a plain URL or `{ url, clip }`. The named form exists
+  // because a Blender glTF export carries every action still loaded in the
+  // .blend, not just the one the file is named after — so animations[0] can
+  // easily be the wrong motion (strafe-left files that open on the backpedal).
+  // Naming the clip makes the pick explicit instead of order-dependent.
+  for (const [key, entry] of Object.entries(ASSET_PATHS.animations)) {
+    const url = typeof entry === 'string' ? entry : entry.url;
+    const want = typeof entry === 'string' ? null : entry.clip;
     jobs.push(loadGLB(url).then((gltf) => {
-      const clip = gltf.animations && gltf.animations[0];
+      const clips = (gltf.animations) || [];
+      let clip = clips[0];
+      if (want) {
+        const named = clips.find((c) => c.name === want);
+        if (named) clip = named;
+        else console.warn(`[assets] clip "${want}" not in ${url} — has [${clips.map((c) => c.name).join(', ')}], falling back to first`);
+      }
       if (clip) out.clips[key] = clip;
       else console.warn(`No animation found in ${url}`);
+      // The source rig's rest hips translation — the reference the hips track is
+      // scaled against. It lives in the GLB's node hierarchy, which is otherwise
+      // thrown away here since only the clip is kept.
+      if (gltf.scene) {
+        gltf.scene.traverse((o) => {
+          if (!out.clipHipsRest[key] && canonicalBoneName(o.name || '') === 'hips') {
+            out.clipHipsRest[key] = [o.position.x, o.position.y, o.position.z];
+          }
+        });
+      }
       tick(key);
     }).catch((e) => { console.warn(`Failed animation ${url}`, e); tick(key); }));
   }
@@ -218,7 +268,7 @@ export async function loadAssets(onProgress) {
     const ch = out.characters[charKey];
     ch.clips = {};
     for (const [animKey, clip] of Object.entries(out.clips)) {
-      const rc = retargetClip(clip, ch.boneMap);
+      const rc = retargetClip(clip, ch.boneMap, out.clipHipsRest[animKey]);
       if (rc.tracks.length >= 8) ch.clips[animKey] = rc;
       else console.warn(`Retarget produced only ${rc.tracks.length} tracks for ${charKey}/${animKey} — skeleton mismatch?`);
     }

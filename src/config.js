@@ -45,6 +45,20 @@ export const CFG = {
     jumpVel: 6.5,
     gravity: 18,
     respawnDelay: 5,
+    // Third-person view (O). A debug/observation camera for watching the body
+    // animate — firing is suppressed while it is on, so these are presentation
+    // only. `dist` is the boom length behind the eye, `shoulder` offsets it to
+    // the right so the body does not sit dead centre, `lift` raises the pivot,
+    // and `minDist` is how close the boom may be pulled in when a wall is in
+    // the way before the camera would end up inside the character.
+    thirdPerson: {
+      dist: 3.2,
+      shoulder: 0.75,
+      lift: 0.15,
+      minDist: 0.8,
+      skin: 0.25,          // keep the camera off the wall it collided with
+      lerp: 12,            // boom ease, per second
+    },
   },
 
   // Walking around the lobby stage (TAB). Movement itself is deliberately NOT
@@ -295,9 +309,20 @@ export const ASSET_PATHS = {
   },
   animations: {
     idle: '/animations/idle.glb',
+    // Standing locomotion, 4-way per speed tier. The walk set is cycle-matched
+    // at ~1.03 s so the step cadence does not change when you strafe
+    // (walking-backwards.glb is the same motion at 1.46 s — it breaks that).
     run: '/animations/run-forward.glb',
     runBack: '/animations/run-backwards.glb',
+    runLeft: '/animations/run-left.glb',
+    runRight: '/animations/run-right.glb',
     walk: '/animations/walk-forward-in-place.glb',
+    walkBack: '/animations/walk-backward.glb',
+    walkLeft: '/animations/walk-left.glb',
+    walkRight: '/animations/walk-right.glb',
+    // 0.63 s, against a 0.72 s player airtime (jumpVel 6.5 / gravity 18) — close
+    // enough to run as a clamped one-shot that lands about when the player does.
+    jump: '/animations/rifle-jump.glb',
     // doubles as the crouch idle — it is literally a crouched rifle-aim pose
     aim: '/animations/idle-crouching-aiming.glb',
     // Crouch locomotion, 4-way. These are re-exports with the mesh stripped

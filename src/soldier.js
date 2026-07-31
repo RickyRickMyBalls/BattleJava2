@@ -94,6 +94,15 @@ export class Soldier {
     this.hasWaypoint = false;
     this.formationOffset = new THREE.Vector3();
 
+    // Local-space move direction in the soldier's own frame: +F is where the
+    // body is facing, +R is its right. `speed2D` alone cannot tell a strafe
+    // from a charge, which is why every direction used to play the forward
+    // cycle. Both movers (AI `_move`, the player controller) write these.
+    this.moveF = 0;
+    this.moveR = 0;
+    this.crouching = false;     // player controller only; AI never crouch yet
+    this.airborne = false;      // ditto — AI have no jump
+
     this.target = null;         // enemy Soldier
     this.thinkTimer = Math.random() * AI.thinkInterval;
     this.burstLeft = 0;
@@ -202,13 +211,61 @@ export class Soldier {
     }
   }
 
+  // Project a world-space velocity onto the body's own frame. The mesh faces
+  // local +Z, so with `mesh.rotation.y = yaw` its forward is (sin, cos) — the
+  // same convention `muzzlePos` uses. Y-up and right-handed means a +Z-facing
+  // model's right is local -X, so its world right is (-cos, sin).
+  setMoveDir(wx, wz, speed) {
+    if (speed > 1e-3) {
+      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
+      this.moveF = (wx * sin + wz * cos) / speed;
+      this.moveR = (wz * sin - wx * cos) / speed;
+    } else {
+      this.moveF = 0;
+      this.moveR = 0;
+    }
+  }
+
+  // Pick the dominant movement axis and name the matching clip out of a 4-way
+  // set. `moveF`/`moveR` are unit-length in the body's own frame, so a diagonal
+  // resolves to whichever axis leads; the tie goes to forward/back.
+  _dirAnim(fwd, back, left, right) {
+    return Math.abs(this.moveF) >= Math.abs(this.moveR)
+      ? (this.moveF >= 0 ? fwd : back)
+      : (this.moveR >= 0 ? right : left);
+  }
+
+  // Which locomotion clip the current stance, speed and direction call for.
+  //
+  // Movement outranks the aim pose: `aim` is a stationary kneel, so letting a
+  // target hold it while the soldier is walking left everyone sliding along in
+  // a crouch. It is the pose for standing still with a target, not for moving
+  // with one.
+  _locomotionAnim() {
+    const moving = this.speed2D > 0.4;
+    if (this.airborne) return 'jump';
+    if (this.crouching) {
+      if (!moving) return 'aim'; // the crouch aim-idle doubles as the crouch idle
+      return this._dirAnim('crouchFwd', 'crouchBack', 'crouchLeft', 'crouchRight');
+    }
+    if (moving) {
+      return this.speed2D > 4
+        ? this._dirAnim('run', 'runBack', 'runLeft', 'runRight')
+        : this._dirAnim('walk', 'walkBack', 'walkLeft', 'walkRight');
+    }
+    if (this.target || this.aiming) return 'aim';
+    return 'idle';
+  }
+
   playAnim(key, fade = 0.18) {
     if (!this.actions || this.currentAnim === key) return;
     const next = this.actions[key];
     if (!next) return;
     const prev = this.actions[this.currentAnim];
     next.reset();
-    if (key.startsWith('death')) {
+    // One-shots: a death holds its final pose, and the jump holds its landing
+    // frame if the fall outlasts the 0.63 s clip rather than looping the leap.
+    if (key === 'jump' || key.startsWith('death')) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
     }
@@ -377,6 +434,7 @@ export class Soldier {
     }
 
     this.speed2D = desired.length();
+    this.setMoveDir(desired.x, desired.z, this.speed2D);
     this.pos.x += desired.x * dt;
     this.pos.z += desired.z * dt;
     this.game.world.collideCircle(this.pos, 0.6);
@@ -476,12 +534,7 @@ export class Soldier {
     // first person, but wrong the moment freecam or any third-person view shows
     // it. `aiming` is set by the player controller only; AI have no such flag,
     // so their behaviour is unchanged.
-    if (this.alive) {
-      if (this.target || this.aiming) this.playAnim('aim');
-      else if (this.speed2D > 4) this.playAnim('run');
-      else if (this.speed2D > 0.4) this.playAnim('walk');
-      else this.playAnim('idle');
-    }
+    if (this.alive) this.playAnim(this._locomotionAnim());
     if (this.activeWeapon && this.heldKey !== this.activeWeapon.key) {
       this._setHeldWeapon(this.activeWeapon.key);
     }
