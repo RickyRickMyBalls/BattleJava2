@@ -49,6 +49,7 @@
       <button data-mode="back" class="sel">BACK</button>
       <button data-mode="grip">GRIP</button>
       <button data-mode="fp">VIEWMODEL</button>
+      <button data-mode="ads">ADS</button>
     </div>
     <div class="btns" id="animBtns">
       <button data-anim="idle" class="sel">IDLE</button>
@@ -66,6 +67,15 @@
     <div id="fpMode" style="display:none">
       <div class="btns" id="fpWpnBtns"></div>
       <div id="fpSection"></div>
+    </div>
+    <div id="adsMode" style="display:none">
+      <div class="btns" id="adsWpnBtns"></div>
+      <div class="btns">
+        <button id="adsLockBtn" class="sel">ADS LOCK</button>
+        <button id="adsSnapBtn" title="centre the scope screen on the crosshair">SNAP SIGHT</button>
+        <button id="adsResetBtn">RESET</button>
+      </div>
+      <div id="adsSection"></div>
     </div>
     <textarea id="out" readonly></textarea>
     <div class="hint" id="hint">values update live · paste block into soldier.js BACK</div>

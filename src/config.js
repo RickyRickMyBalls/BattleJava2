@@ -221,6 +221,18 @@ for (const [k, def] of Object.entries(WEAPONS)) def.key = k;
 // Default first-person viewmodel offset; per-weapon `fp` in the def overrides.
 export const FP_DEFAULT = { pos: [0.15, 0.07, -0.31], rot: [0, 0, 0] };
 
+// Aim-down-sights pose. `fp` positions the gun inside the viewmodel holder;
+// this positions the HOLDER itself (same space as the hip base 0.28,-0.24,-0.55
+// in player.js) — that is the transform that puts a weapon's optic on the
+// crosshair, and it has to be per weapon because every sight sits somewhere
+// different on its model. Tuned in /chartest.html ADS tab.
+//
+//   scale — counteracts the viewmodel blowing up at a narrow adsFov (the gun
+//           shares the main camera, so 22° magnifies it ~3.4x)
+//   sens  — multiplier on top of automatic zoom-proportional sensitivity
+//   speed — how fast the gun comes up; lerp rate, so bigger is snappier
+export const ADS_DEFAULT = { pos: [0, -0.305, -0.55], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 };
+
 export const PRIMARIES = ['ar', 'br'];
 
 // `shield` overrides the default soldier shield; `model` picks the character

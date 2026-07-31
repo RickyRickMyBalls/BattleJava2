@@ -8,7 +8,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { loadAssets } from './assets.js';
 import { makeWeaponMount, makeBackMount, setHeldWeapon, BACK, GRIP } from './soldier.js';
-import { WEAPONS, FP_DEFAULT } from './config.js';
+import { WEAPONS, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 
 const app = document.getElementById('app');
 const loadmsg = document.getElementById('loadmsg');
@@ -36,6 +37,65 @@ const ground = new THREE.Mesh(
 scene.add(ground);
 scene.add(new THREE.GridHelper(14, 28, 0x3a5566, 0x24303c));
 
+// ---- alignment targets (fp / ads modes) ---------------------------------
+// Sight alignment is a yes/no question, not a guess: bullseyes sit dead ahead
+// at eye height, so with pitch 0 the crosshair is exactly on centre and any
+// offset in the tuned pose shows up as the sight sitting off the bull.
+//
+// The lane is offset to +X because the characters stand at x = -1.7/0/+1.7 and
+// the middle one blocks a lane down x = 0. The fp camera starts on the lane;
+// turning left puts the line-up back in frame for a life-size reference.
+const LANE_X = 3.4;
+const targets = new THREE.Group();
+targets.visible = false;
+scene.add(targets);
+
+function makeLabel(text) {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#7fd4ff';
+  ctx.font = 'bold 40px Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 64, 32);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+}
+
+function makeBullseye(dist, r, xOff = 0) {
+  const g = new THREE.Group();
+  g.position.set(LANE_X + xOff, 1.7, dist);
+  g.rotation.y = Math.PI; // CircleGeometry faces +Z; the shooter is at -Z
+  const flat = (geo, color, z) => {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+    m.position.z = z;
+    g.add(m);
+    return m;
+  };
+  flat(new THREE.CircleGeometry(r, 48), 0x0e1a24, 0);
+  for (let i = 3; i >= 1; i--) {
+    flat(new THREE.RingGeometry(r * i * 0.25 - r * 0.012, r * i * 0.25, 48), 0x7fd4ff, 0.001 * i);
+  }
+  flat(new THREE.CircleGeometry(r * 0.06, 16), 0xff5a4d, 0.005);
+  // hairlines: judging "is the post centred" reads better against a cross
+  const th = r * 0.008;
+  flat(new THREE.PlaneGeometry(r * 2, th), 0x7fd4ff, 0.004);
+  flat(new THREE.PlaneGeometry(th, r * 2), 0x7fd4ff, 0.004);
+  const label = makeLabel(`${dist}m`);
+  label.scale.set(r * 0.9, r * 0.45, 1);
+  label.position.set(0, r * 1.25, 0);
+  g.add(label);
+  targets.add(g);
+}
+
+// Near bull sits exactly on the lane — pitch 0 and yaw straight ahead puts the
+// crosshair on its pip, so it is the alignment reference. The far one is swung
+// off axis because a target directly behind another is simply hidden by it.
+makeBullseye(30, 0.9);
+makeBullseye(100, 2.6, 6);
+
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 200);
 camera.position.set(0, 1.7, -4.2); // start behind the line-up: backs face -Z
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -59,8 +119,10 @@ const SETUP = [
 ];
 
 const chars = [];
-let mode = 'back'; // 'back' | 'grip' | 'fp' — fp renders through the first-person camera
-let fpUpdate = null; // set by buildPanel: per-frame move/shoot logic for fp mode
+let mode = 'back'; // 'back' | 'grip' | 'fp' | 'ads' — the last two render through the first-person camera
+const isFpMode = (m) => m === 'fp' || m === 'ads';
+let fpUpdate = null; // set by buildPanel: per-frame move/shoot logic for fp/ads modes
+let fpPreRender = null; // set by buildPanel: scope-screen pass, runs before the main render
 const BOOT_ID = Date.now();
 window.__ctGet = () => ({ mode, BOOT_ID });
 window.__ctSet = (m) => { mode = m; };
@@ -81,6 +143,7 @@ function playAnim(key) {
 }
 
 const f = (n) => (Math.round(n * 100) / 100).toString();
+const f3 = (n) => (Math.round(n * 1000) / 1000).toString();
 
 function dumpValues() {
   const lines = Object.entries(BACK).map(([k, v]) =>
@@ -131,6 +194,33 @@ function dumpFp() {
     return `  ${k}: fp: { pos: [${g.pos.map(f).join(', ')}], rot: [${g.rot.map(f).join(', ')}] },`;
   });
   document.getElementById('out').value = `// first-person offset -> paste into each def in config.js WEAPONS\n${lines.join('\n')}`;
+}
+
+function ensureAds(key) {
+  const def = WEAPONS[key];
+  // idempotent: keep object identity so live input bindings stay valid
+  if (!def.ads || !def.ads.pos || !def.ads.rot) {
+    const a = def.ads || {};
+    def.ads = {
+      pos: [...(a.pos || ADS_DEFAULT.pos)],
+      rot: [...(a.rot || ADS_DEFAULT.rot)],
+      scale: a.scale ?? ADS_DEFAULT.scale,
+      sens: a.sens ?? ADS_DEFAULT.sens,
+      speed: a.speed ?? ADS_DEFAULT.speed,
+    };
+  }
+  return def.ads;
+}
+
+function dumpAds() {
+  const lines = Object.keys(WEAPONS).map((k) => {
+    const a = WEAPONS[k].ads;
+    if (!a) return `  ${k}: (default)`;
+    return `  ${k}: ads: { pos: [${a.pos.map(f3).join(', ')}], rot: [${a.rot.map(f3).join(', ')}]` +
+      `, scale: ${f(a.scale)}, sens: ${f(a.sens)}, speed: ${f(a.speed)} }, adsFov: ${f(WEAPONS[k].adsFov)},`;
+  });
+  document.getElementById('out').value =
+    `// ADS pose -> paste into each def in config.js WEAPONS\n${lines.join('\n')}`;
 }
 
 function buildPanel(assets) {
@@ -226,9 +316,13 @@ function buildPanel(assets) {
   // camera -> viewmodel group at (0.28,-0.24,-0.55) -> gunHolder yaw-PI ->
   // fp mount -> gun. Values transfer 1:1 into config `fp`.
   let fpKey = 'ar';
-  const fpCam = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.08, 200);
-  fpCam.position.set(0, 1.7, -3.4); // stands behind the line-up, faces them
+  const fpCam = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.08, 400);
+  fpCam.position.set(LANE_X, 1.7, -3.4); // on the target lane, line-up off to the left
   fpCam.rotation.y = Math.PI;
+  // Same split as the game: the viewmodel lives on its own layer so a scope
+  // camera cannot see the gun it is bolted to. Enabling it here also keeps the
+  // fp gun out of the orbit camera's view in BACK/GRIP modes.
+  fpCam.layers.enable(VIEWMODEL_LAYER);
   scene.add(fpCam);
   window.__fpCam = fpCam;
   resizeCams.push(fpCam);
@@ -241,6 +335,7 @@ function buildPanel(assets) {
   const fpMount = new THREE.Group();
   fpHolder.add(fpMount);
   let fpGun = null;
+  let fpScope = null;
 
   function fpApply() {
     const fp = ensureFp(fpKey);
@@ -250,11 +345,23 @@ function buildPanel(assets) {
 
   function fpHold(key) {
     fpKey = key;
+    if (fpScope) { fpScope.dispose(); fpScope = null; }
     if (fpGun) fpGun.removeFromParent();
     fpGun = assets.weaponModels[key].clone(true);
     fpMount.add(fpGun);
     fpApply();
+    // live scope glass, exactly as player.js mounts it — tuning the sniper or
+    // the laser without the real magnified feed is guesswork
+    fpScope = createScopeDisplay(fpGun, WEAPONS[key]);
+    tagViewmodelLayer(fpViewmodel); // the gun that just joined is still on layer 0
+    const snap = document.getElementById('adsSnapBtn');
+    snap.disabled = !fpScope;
+    snap.title = fpScope
+      ? 'centre the scope screen on the crosshair'
+      : 'no scope screen on this weapon — align its iron sights by hand';
   }
+
+  fpPreRender = (cam) => { if (fpScope) fpScope.render(renderer, scene, cam); };
 
   const fpSection = document.getElementById('fpSection');
   function buildFpInputs() {
@@ -287,19 +394,111 @@ function buildPanel(assets) {
     fpSection.appendChild(fs);
   }
 
-  const fpWpnBtns = document.getElementById('fpWpnBtns');
-  for (const key of Object.keys(WEAPONS)) {
-    const b = document.createElement('button');
-    b.textContent = key.toUpperCase();
-    if (key === fpKey) b.classList.add('sel');
-    b.onclick = () => {
-      fpWpnBtns.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b));
-      fpHold(key);
-      buildFpInputs();
-      dumpFp();
-    };
-    fpWpnBtns.appendChild(b);
+  // VIEWMODEL and ADS tune the same mounted gun from the same camera — one
+  // selection, two button rows kept in sync.
+  const wpnRows = ['fpWpnBtns', 'adsWpnBtns'].map((id) => document.getElementById(id));
+  function selectWeapon(key) {
+    fpHold(key);
+    for (const row of wpnRows) {
+      row.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.dataset.key === key));
+    }
+    buildFpInputs();
+    buildAdsInputs();
+    if (mode === 'ads') dumpAds(); else dumpFp();
   }
+  for (const row of wpnRows) {
+    for (const key of Object.keys(WEAPONS)) {
+      const b = document.createElement('button');
+      b.textContent = key.toUpperCase();
+      b.dataset.key = key;
+      if (key === fpKey) b.classList.add('sel');
+      b.onclick = () => selectWeapon(key);
+      row.appendChild(b);
+    }
+  }
+
+  // ---- ADS tab -----------------------------------------------------------
+  // Same rig, aimed. `fp` puts the gun in the holder; `ads` moves the HOLDER,
+  // which is the transform that lands a sight on the crosshair. The pose is
+  // held by default (ADS LOCK) because tuning means clicking into the panel,
+  // which drops pointer lock and would otherwise release the aim.
+  let adsLock = true;
+  const adsOn = () => mode === 'ads' && (adsLock || ctl.adsHeld);
+
+  const adsSection = document.getElementById('adsSection');
+  function buildAdsInputs() {
+    adsSection.innerHTML = '';
+    const a = ensureAds(fpKey);
+    const def = WEAPONS[fpKey];
+    const fs = document.createElement('fieldset');
+    fs.innerHTML = `<legend>${def.name}</legend>`;
+    const fields = [
+      ['pos x', a.pos, 0, 0.005], ['pos y', a.pos, 1, 0.005], ['pos z', a.pos, 2, 0.005],
+      ['rot x', a.rot, 0, 0.01], ['rot y', a.rot, 1, 0.01], ['rot z', a.rot, 2, 0.01],
+      ['fov', def, 'adsFov', 1],
+      ['scale', a, 'scale', 0.02],
+      ['sens', a, 'sens', 0.05],
+      ['speed', a, 'speed', 0.5],
+    ];
+    for (const [label, obj, idx, step] of fields) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = step;
+      input.value = obj[idx];
+      input.oninput = () => {
+        obj[idx] = Number(input.value) || 0;
+        dumpAds(); // the pose is applied per frame from the same objects
+      };
+      const lab = document.createElement('label');
+      lab.textContent = label;
+      row.appendChild(lab);
+      row.appendChild(input);
+      fs.appendChild(row);
+    }
+    adsSection.appendChild(fs);
+  }
+
+  const adsLockBtn = document.getElementById('adsLockBtn');
+  adsLockBtn.onclick = () => {
+    adsLock = !adsLock;
+    adsLockBtn.classList.toggle('sel', adsLock);
+    adsLockBtn.textContent = adsLock ? 'ADS LOCK' : 'HIP (RMB AIMS)';
+  };
+
+  // One Newton step: the holder is a direct child of the camera, so shifting it
+  // by minus the screen's camera-space x/y puts the glass on the crosshair.
+  // Press again after a rot/scale edit to re-converge.
+  //
+  // Aim at the GEOMETRY's centre, not the mesh origin — the screens are authored
+  // as part of the weapon and keep its origin, which sits well below the glass.
+  const _snap = new THREE.Vector3();
+  document.getElementById('adsSnapBtn').onclick = () => {
+    if (!fpScope) return;
+    const a = ensureAds(fpKey);
+    fpCam.updateMatrixWorld(true);
+    fpScope.screen.updateWorldMatrix(true, false);
+    fpScope.screen.geometry.computeBoundingBox();
+    const p = fpScope.screen.geometry.boundingBox.getCenter(_snap)
+      .applyMatrix4(fpScope.screen.matrixWorld);
+    fpCam.worldToLocal(p);
+    a.pos[0] = Math.round((fpViewmodel.position.x - p.x) * 1000) / 1000;
+    a.pos[1] = Math.round((fpViewmodel.position.y - p.y) * 1000) / 1000;
+    buildAdsInputs();
+    dumpAds();
+  };
+
+  document.getElementById('adsResetBtn').onclick = () => {
+    const a = ensureAds(fpKey);
+    a.pos = [...ADS_DEFAULT.pos];
+    a.rot = [...ADS_DEFAULT.rot];
+    a.scale = ADS_DEFAULT.scale;
+    a.sens = ADS_DEFAULT.sens;
+    a.speed = ADS_DEFAULT.speed;
+    buildAdsInputs();
+    dumpAds();
+  };
 
   // ---- move & shoot in viewmodel mode ------------------------------------
   const cross = document.createElement('div');
@@ -338,22 +537,39 @@ function buildPanel(assets) {
   const trLife = new Float32Array(TR);
   let trHead = 0;
 
-  const ctl = { yaw: Math.PI, pitch: 0, keys: new Set(), firing: false, fireTimer: 0, recoil: 0 };
+  const ctl = {
+    yaw: Math.PI, pitch: 0, keys: new Set(), firing: false, fireTimer: 0, recoil: 0,
+    adsHeld: false, sens: 0.0022,
+  };
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (mode !== 'fp') return;
+    if (!isFpMode(mode)) return;
     if (document.pointerLockElement !== renderer.domElement) { renderer.domElement.requestPointerLock(); return; }
     if (e.button === 0) ctl.firing = true;
+    if (e.button === 2) ctl.adsHeld = true;
   });
-  window.addEventListener('mouseup', () => { ctl.firing = false; });
+  renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 2) ctl.adsHeld = false; else ctl.firing = false;
+  });
   window.addEventListener('mousemove', (e) => {
-    if (mode !== 'fp' || document.pointerLockElement !== renderer.domElement) return;
-    ctl.yaw -= e.movementX * 0.0022;
-    ctl.pitch = Math.max(-1.4, Math.min(1.4, ctl.pitch - e.movementY * 0.0022));
+    if (!isFpMode(mode) || document.pointerLockElement !== renderer.domElement) return;
+    ctl.yaw -= e.movementX * ctl.sens;
+    ctl.pitch = Math.max(-1.4, Math.min(1.4, ctl.pitch - e.movementY * ctl.sens));
   });
   window.addEventListener('keydown', (e) => ctl.keys.add(e.code));
   window.addEventListener('keyup', (e) => ctl.keys.delete(e.code));
 
   const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _from = new THREE.Vector3(), _dir = new THREE.Vector3();
+
+  // Hip reference pose — the same numbers player.js hardcodes for the holder.
+  const HIP_POS = [0.28, -0.24, -0.55];
+  const HIP_FOV = 75;
+  const TAN_HIP = Math.tan(THREE.MathUtils.degToRad(HIP_FOV) / 2);
+  const vmBase = new THREE.Vector3().fromArray(HIP_POS); // lerped, recoil-free
+  const vmRot = { x: 0, y: 0, z: 0 };
+  const _tgt = new THREE.Vector3();
+  let vmScale = 1;
+
   fpUpdate = (dt) => {
     fpCam.rotation.set(ctl.pitch, ctl.yaw, 0, 'YXZ');
     // WASD relative to yaw, walking height locked
@@ -392,8 +608,36 @@ function buildPanel(assets) {
       trGeo.attributes.position.needsUpdate = true;
     }
     flashMat.opacity = Math.max(0, flashMat.opacity - dt * 22);
-    fpViewmodel.position.z = -0.55 + ctl.recoil * 0.06;
-    fpViewmodel.rotation.x = ctl.recoil * 0.12;
+
+    // ---- hip / ADS pose ----------------------------------------------------
+    // Everything the aimed state changes, lerped from one rate so the whole
+    // gun arrives together. Recoil stays additive on top, as in player.js.
+    const a = ensureAds(fpKey);
+    const on = adsOn();
+    const k = Math.min(1, dt * (a.speed || ADS_DEFAULT.speed));
+    _tgt.fromArray(on ? a.pos : HIP_POS);
+    vmBase.lerp(_tgt, k);
+    fpViewmodel.position.copy(vmBase);
+    fpViewmodel.position.z += ctl.recoil * 0.06;
+    const tr = on ? a.rot : ADS_DEFAULT.rot;
+    vmRot.x += (tr[0] - vmRot.x) * k;
+    vmRot.y += (tr[1] - vmRot.y) * k;
+    vmRot.z += (tr[2] - vmRot.z) * k;
+    fpViewmodel.rotation.set(vmRot.x + ctl.recoil * 0.12, vmRot.y, vmRot.z);
+    vmScale += ((on ? (a.scale ?? 1) : 1) - vmScale) * k;
+    fpViewmodel.scale.setScalar(vmScale);
+
+    const tgtFov = on ? (def.adsFov || 55) : HIP_FOV;
+    if (Math.abs(fpCam.fov - tgtFov) > 0.01) {
+      fpCam.fov += (tgtFov - fpCam.fov) * k;
+      fpCam.updateProjectionMatrix();
+    }
+    // Look speed scales with the zoom, so `sens` is a feel nudge and 1.0 is
+    // already right at every magnification. This is the rule player.js should
+    // adopt in place of its single 0.0011.
+    ctl.sens = 0.0022 * (a.sens ?? 1) *
+      Math.tan(THREE.MathUtils.degToRad(fpCam.fov) / 2) / TAN_HIP;
+
     for (let i = 0; i < TR; i++) {
       if (trLife[i] > 0) {
         trLife[i] -= dt;
@@ -412,15 +656,23 @@ function buildPanel(assets) {
       document.getElementById('backMode').style.display = mode === 'back' ? 'block' : 'none';
       document.getElementById('gripMode').style.display = mode === 'grip' ? 'block' : 'none';
       document.getElementById('fpMode').style.display = mode === 'fp' ? 'block' : 'none';
-      controls.enabled = mode !== 'fp';
-      cross.style.display = mode === 'fp' ? 'block' : 'none';
-      if (mode !== 'fp' && document.pointerLockElement) document.exitPointerLock();
+      document.getElementById('adsMode').style.display = mode === 'ads' ? 'block' : 'none';
+      controls.enabled = !isFpMode(mode);
+      cross.style.display = isFpMode(mode) ? 'block' : 'none';
+      targets.visible = isFpMode(mode);
+      if (!isFpMode(mode) && document.pointerLockElement) document.exitPointerLock();
       document.getElementById('hint').textContent =
         mode === 'grip' ? 'values update live · paste grip lines into config.js WEAPONS'
         : mode === 'fp' ? 'first-person view · paste fp lines into config.js WEAPONS'
+        : mode === 'ads' ? 'aimed · RMB aims when LOCK is off · paste ads lines into config.js WEAPONS'
         : 'values update live · paste block into soldier.js BACK';
       if (mode === 'grip') { holdEverywhere(gripKey); buildGripInputs(); dumpGrips(); }
-      else if (mode === 'fp') { fpHold(fpKey); buildFpInputs(); dumpFp(); }
+      else if (isFpMode(mode)) {
+        fpHold(fpKey);
+        buildFpInputs();
+        buildAdsInputs();
+        if (mode === 'ads') dumpAds(); else dumpFp();
+      }
       else dumpValues();
     };
   }
@@ -486,9 +738,10 @@ async function boot() {
   const frame = (dt) => {
     for (const c of chars) c.mixer.update(dt);
     if (controls.enabled) controls.update();
-    if (mode === 'fp' && fpUpdate) fpUpdate(dt);
-    const cam = mode === 'fp' && window.__fpCam ? window.__fpCam : camera;
+    if (isFpMode(mode) && fpUpdate) fpUpdate(dt);
+    const cam = isFpMode(mode) && window.__fpCam ? window.__fpCam : camera;
     window.__ctDebug = { mode, usingFp: cam !== camera };
+    if (isFpMode(mode) && fpPreRender) fpPreRender(cam); // scope glass, before the main pass
     renderer.render(scene, cam);
   };
   window.__ctFrame = frame; // manual step for headless debugging (rAF halts when the tab isn't composited)
