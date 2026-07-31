@@ -167,6 +167,19 @@ export class Soldier {
     if (this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
   }
 
+  // Make a model available for `key` if this soldier never spawned carrying it.
+  // Both guns are normally cloned once up front precisely so nothing clones
+  // mid-fight; this is the runtime-loadout escape hatch (armory apply, or the
+  // firing range's rack pickups), and it clones at most once per new weapon.
+  ensureGun(key) {
+    if (!this.weaponHolder || !key || this.guns[key]) return;
+    const src = this.game.assets.weaponModels[key];
+    if (!src) return;
+    const gun = src.clone(true);
+    restoreBakedDisplays(gun);
+    this.guns[key] = gun;
+  }
+
   _setHeldWeapon(key) {
     if (!this.weaponHolder || this.heldKey === key) return;
     this.heldKey = key;
@@ -457,8 +470,14 @@ export class Soldier {
     const step = this.animAccum;
     this.animAccum = 0;
 
-    if (this.alive && !this.isPlayer) {
-      if (this.target) this.playAnim('aim');
+    // The player's body animates from the same state as everyone else's: the
+    // controller writes pos/yaw/speed2D onto it each frame. It was excluded
+    // here, which left it frozen in the idle set at setCharacter — invisible in
+    // first person, but wrong the moment freecam or any third-person view shows
+    // it. `aiming` is set by the player controller only; AI have no such flag,
+    // so their behaviour is unchanged.
+    if (this.alive) {
+      if (this.target || this.aiming) this.playAnim('aim');
       else if (this.speed2D > 4) this.playAnim('run');
       else if (this.speed2D > 0.4) this.playAnim('walk');
       else this.playAnim('idle');

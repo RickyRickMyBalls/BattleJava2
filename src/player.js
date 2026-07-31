@@ -256,6 +256,20 @@ export class Player {
       this.ammoDisplay = null;
     }
     this.game.hud.setWeaponName(this.weapon.def.name);
+    this._syncBodyWeapons();
+  }
+
+  // Keep the third-person body carrying what the viewmodel shows. Hooked into
+  // _mountGun because every path that changes weapons goes through it —
+  // applyLoadout, switchWeapon and setWeaponAt alike. Hidden in first person,
+  // but freecam and any future third-person view read it, and a rack pickup can
+  // hand over a weapon the soldier never spawned with.
+  _syncBodyWeapons() {
+    const s = this.soldier;
+    if (!s || !s.setLoadout) return;
+    s.setLoadout(s.cls, this.weapons[0].key, this.weapons[1].key);
+    s.activeWeapon = this.weapon.def; // setLoadout assumes primary; we may be on the secondary
+    s.ensureGun(this.weapon.key);
   }
 
   applyLoadout(loadout) {
@@ -380,6 +394,7 @@ export class Player {
     s.pos.copy(this.pos);
     s.yaw = this.yaw;
     s.speed2D = moving ? speed : 0;
+    s.aiming = this.ads; // drives the body's aim pose; AI use `target` instead
 
     // ---- Camera ----
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
