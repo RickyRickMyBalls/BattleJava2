@@ -455,6 +455,9 @@ export class Player {
     // strafe with Shift down, but the speed bonus (and the clip) do not.
     s.sprinting = this.sprinting && mz > 0;
     s.airborne = !this.onGround;
+    // `w` is declared further down in this scope, so read through the getter.
+    s.reloading = this.weapon.reloading;
+    s.reloadTime = this.weapon.def.reload;
     // Direction is resolved against the body's own facing, not the camera's, so
     // the strafe clips stay correct however `s.yaw` is derived.
     s.setMoveDir(wx, wz, moving ? 1 : 0);

@@ -102,6 +102,12 @@ export class Soldier {
     this.moveR = 0;
     this.crouching = false;     // player controller only; AI never crouch yet
     this.sprinting = false;     // ditto — set only while the boost is applying
+    // Which of the two rifle idles this soldier settles into. Fixed per soldier
+    // rather than rolled per transition, so nobody switches idle style every
+    // time they stop walking.
+    this.idleAnim = Math.random() < 0.5 ? 'idle' : 'idleLook';
+    this.reloading = false;     // ditto — mirrors the controller's weapon state
+    this.reloadTime = 0;        // carried weapon's reload duration, for the stretch
     this.airborne = false;      // ditto — AI have no jump
 
     this.target = null;         // enemy Soldier
@@ -260,6 +266,13 @@ export class Soldier {
       return this._dirAnim('crouchFwd', 'crouchBack', 'crouchLeft', 'crouchRight');
     }
     if (moving) {
+      // Reloading outranks the gait it replaces — same stride, hands busy — and
+      // picks the clip matching the tier it stands in for. Forward only: these
+      // clips' legs travel forward, so strafing or backpedalling falls through
+      // to ordinary locomotion rather than sliding sideways mid-reload.
+      if (this.reloading && this.moveF > 0 && Math.abs(this.moveF) >= Math.abs(this.moveR)) {
+        return this.speed2D > 4 ? 'runReload' : 'walkReload';
+      }
       // Sprint is a tier above run rather than a direction: the clip carries the
       // rifle low, which only reads going forward, and that is the only case the
       // controller flags — it drops the flag the moment the boost stops applying.
@@ -268,8 +281,9 @@ export class Soldier {
         ? this._dirAnim('run', 'runBack', 'runLeft', 'runRight')
         : this._dirAnim('walk', 'walkBack', 'walkLeft', 'walkRight');
     }
+    if (this.reloading) return 'idleReload';
     if (this.target || this.aiming) return 'aim';
-    return 'idle';
+    return this.idleAnim;
   }
 
   playAnim(key, fade = 0.18) {
@@ -278,20 +292,18 @@ export class Soldier {
     if (!next) return;
     const prev = this.actions[this.currentAnim];
     next.reset();
-    // One-shots: a death holds its final pose, and the jump holds its landing
-    // frame if the fall outlasts the 0.63 s clip rather than looping the leap.
-    if (key === 'jump' || key.startsWith('death')) {
+    // One-shots: a death holds its final pose, and the jump and reloads hold
+    // their last frame rather than looping if the event outlasts the clip.
+    const isReload = key.endsWith('Reload');
+    if (key === 'jump' || isReload || key.startsWith('death')) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
     }
-    // Stretch the jump over the actual airtime so the landing frame arrives as
-    // the feet do. A taller jump hangs longer, so this cannot be a constant —
-    // a Spartan's doubled height is 1.41x the airtime, not 2x.
-    if (key === 'jump') {
-      next.setEffectiveTimeScale(this.jumpAirtime > 0.05
-        ? next.getClip().duration / this.jumpAirtime
-        : 1);
-    }
+    // A clip that accompanies a timed event is stretched to span it, so it ends
+    // as the event does. Neither duration is a constant: a taller jump hangs
+    // longer, and reload time is per-weapon (2.1-3.4 s across the armoury).
+    const span = key === 'jump' ? this.jumpAirtime : isReload ? this.reloadTime : 0;
+    if (span > 0.05) next.setEffectiveTimeScale(next.getClip().duration / span);
     next.fadeIn(fade).play();
     if (prev) prev.fadeOut(fade);
     this.currentAnim = key;

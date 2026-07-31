@@ -321,7 +321,12 @@ export const ASSET_PATHS = {
     marine: '/UNSC/Characters/Marine/Marine_1.glb',
   },
   animations: {
-    idle: '/animations/idle.glb',
+    // Two rifle idles, assigned per soldier at spawn so a crowd standing around
+    // is not 64 copies of one loop. Both are long (8.6 s / 10.7 s), which is
+    // what keeps them from reading as a cycle. These replace the old generic
+    // idle.glb, which was an unarmed pose on soldiers who all carry rifles.
+    idle: '/animations/idle_rifle_1/idle_rifle_1.glb',
+    idleLook: '/animations/idle_rifle_2_lookaround/idle_rifle_2_lookaround.glb',
     // Standing locomotion, 4-way per speed tier. The walk set is cycle-matched
     // at ~1.03 s so the step cadence does not change when you strafe
     // (walking-backwards.glb is the same motion at 1.46 s — it breaks that).
@@ -329,6 +334,14 @@ export const ASSET_PATHS = {
     // Sprint (Shift): rifle carried low, the classic head-down run. Its own tier
     // above `run`, so it only shows while the sprint boost is actually applying.
     sprint: '/animations/rifle-down-run.glb',
+    // Reloads, played full-body per gait rather than masked over one: legs and
+    // arms were authored together, which avoids a reload's torso fighting a
+    // separately-authored stride. One per speed tier, each stretched to the
+    // carried weapon's reload time (2.1-3.4 s across the armoury). The moving
+    // two are shown forward-only, since their legs travel forward.
+    idleReload: '/animations/idle_reload/idle_reload.glb',   // 2.97 s
+    walkReload: '/animations/walk_reload/walk_reload.glb',   // 4.13 s
+    runReload: '/animations/run_reload/run_reload.glb',      // 3.70 s
     runBack: '/animations/run-backwards.glb',
     runLeft: '/animations/run-left.glb',
     runRight: '/animations/run-right.glb',
@@ -342,7 +355,7 @@ export const ASSET_PATHS = {
     // Standing rifle-aim: the pose for holding still with a target. Exported
     // from a reduced Mixamo skeleton (42 bones — middle/ring/pinky fingers are
     // absent), so those bones keep whatever the outgoing clip left them at.
-    aim: '/animations/Idle_rifle_aim/Idle_ridle_aim.glb',
+    aim: '/animations/Idle_rifle_aim/Idle_rifle_aim.glb',
     // The crouch idle is its own pose now that `aim` stands up.
     crouchIdle: '/animations/idle-crouching-aiming.glb',
     // Crouch locomotion, 4-way. These are re-exports with the mesh stripped
