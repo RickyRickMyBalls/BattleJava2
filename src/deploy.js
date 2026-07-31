@@ -3,7 +3,8 @@
 // canvas layer for soldier dots, loadout strip, and the deploy dive transition.
 
 import * as THREE from 'three';
-import { CFG, TEAM, WEAPONS, CLASSES, GADGETS } from './config.js';
+import { CFG, TEAM, WEAPONS, CLASSES } from './config.js';
+import { SLOTS, slotValue, slotDef, validateLoadout } from './loadout.js';
 import { terrainHeight } from './world.js';
 
 const _v = new THREE.Vector3();
@@ -521,7 +522,7 @@ export class DeployScreen {
   }
 
   refreshLoadout() {
-    const lo = this.game.playerLoadout;
+    const lo = validateLoadout(this.game.playerLoadout);
     const icons = (this.game.armory && this.game.armory.icons) || {};
 
     // class tabs
@@ -532,33 +533,34 @@ export class DeployScreen {
       b.classList.toggle('sel', lo.cls === key);
       b.onclick = () => {
         lo.cls = key;
-        if (!def.secondaries.includes(lo.secondary)) lo.secondary = def.secondaries[0];
+        // Same repair the armoury runs, from the same module — these two screens
+        // edit one loadout object and each used to carry its own copy of this.
+        validateLoadout(lo);
         this.refreshLoadout();
       };
       this.el.classTabs.appendChild(b);
     }
 
-    // slot row: weapons (click → armory) + class gadgets (visual for now)
-    const wslot = (key, label) => {
-      const def = WEAPONS[key];
-      const img = icons[key]
-        ? `<img src="${icons[key]}" draggable="false">`
-        : `<span class="dp-slot2-fb">${def.name.split(' ')[0]}</span>`;
-      return `<div class="dp-slot2 wpn" data-armory="1" title="${def.name} — click to customize">${img}<span class="dp-slot2-tag">${label}</span></div>`;
+    // Slot row, driven off the same table the armoury builds from, so the two
+    // screens cannot disagree about what a loadout contains. Weapons show their
+    // line-art icon; everything else shows its registry glyph. The whole strip
+    // opens the armoury.
+    const cell = (slot) => {
+      const key = slotValue(lo, slot);
+      const def = slotDef(slot, key);
+      if (!def) return '';
+      const art = slot.art === 'weapon'
+        ? (icons[key]
+          ? `<img src="${icons[key]}" draggable="false">`
+          : `<span class="dp-slot2-fb">${def.name.split(' ')[0]}</span>`)
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${def.svg || ''}</svg>`;
+      const cls = slot.art === 'weapon' ? 'wpn' : 'gadget';
+      return `<div class="dp-slot2 ${cls}" data-armory="1" title="${def.name} — click to customize">${art}<span class="dp-slot2-tag">${def.name}</span></div>`;
     };
-    const gslot = (gkey) => {
-      const g = GADGETS[gkey];
-      if (!g) return '';
-      return `<div class="dp-slot2 gadget" title="${g.name} — coming soon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${g.svg}</svg>
-        <span class="dp-slot2-tag">${g.name}</span>
-      </div>`;
-    };
-    const gadgets = (CLASSES[lo.cls].gadgets || []).map(gslot).join('');
+    const weapons = SLOTS.filter((s) => s.art === 'weapon').map(cell).join('');
+    const kit = SLOTS.filter((s) => s.art !== 'weapon').map(cell).join('');
     this.el.slots.innerHTML =
-      wslot(lo.primary, WEAPONS[lo.primary].name) +
-      wslot(lo.secondary, WEAPONS[lo.secondary].name) +
-      `<div class="dp-slot2-sep"></div>` + gadgets +
+      weapons + `<div class="dp-slot2-sep"></div>` + kit +
       `<button class="dp-slot2 customize" id="dpCustomize2" title="Open the armory">✛<span class="dp-slot2-tag">CUSTOMIZE</span></button>`;
     for (const s of this.el.slots.querySelectorAll('[data-armory]')) {
       s.onclick = () => { if (this.game.armory) this.game.armory.show('apply'); };

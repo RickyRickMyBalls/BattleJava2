@@ -1,5 +1,15 @@
 // Armory / loadout menu: class tabs, weapon cards with baked thumbnails,
 // and an interactive 3D inspection viewer (drag to spin, wheel to zoom).
+//
+// The bottom panel has two states. GRID shows all six equipped slots at once —
+// primary, secondary, two gadgets, grenade, melee. Clicking one drops into
+// PICKER, which replaces the grid with that slot's options and a way back. The
+// two rows of everything-at-once this replaced could not survive going from two
+// slots to six: most pools hold one or two items, so a permanent row per slot
+// spent the panel's whole height showing single cards.
+//
+// What may go in a slot, and what to do when a change makes a slot illegal,
+// both live in loadout.js — deploy.js edits the same object and has to agree.
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -9,7 +19,8 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { CFG, WEAPONS, CLASSES, PRIMARIES } from './config.js';
+import { CFG, WEAPONS, CLASSES } from './config.js';
+import { SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout } from './loadout.js';
 import { prewarm, weaponClones } from './assets.js';
 
 const S = CFG.armoryStage;
@@ -18,6 +29,13 @@ const L = S.light;
 const MODE_TAGS = {
   auto: 'FULL-AUTO', burst: '3-ROUND BURST', semi: 'SEMI-AUTO',
   pump: 'PUMP-ACTION', projectile: 'ROCKET', charge: 'CHARGE BEAM',
+};
+
+// The gadget-kind half of the same idea: a display name for GADGETS[].kind, so
+// the breadcrumb reads WEAPON SLOT rather than the raw `weaponSlot`.
+const KIND_TAGS = {
+  consumable: 'CONSUMABLE', weaponSlot: 'WEAPON SLOT',
+  placeable: 'DEPLOYABLE', passive: 'PASSIVE',
 };
 
 const DESCRIPTIONS = {
@@ -29,6 +47,12 @@ const DESCRIPTIONS = {
   sniper: 'Anti-personnel sniper system. Two body shots or one clean headshot.',
   rocket: 'Shoulder-fired rockets with a wide blast radius. Vehicles, squads, problems.',
   laser: 'Charge, hold the line steady, and delete whatever the beam touches.',
+  magnum: 'Sidearm you can draw twice as fast as you can reload. For the moment your rifle clicks empty.',
+  // Non-weapon slots. Keyed the same way — the info panel reads one map.
+  biofoam: 'Field injector. Your shields come back on their own; your health does not. This is what buys it back.',
+  webbing: 'Harness rated for a second long gun in place of the sidearm. Both weapons carry less spare ammo.',
+  frag: 'Fragmentation grenade. Three-second fuse, wide lethal radius — the answer to a held room.',
+  bash: 'Buttstock across the jaw. Two strikes through full shields, one against anyone already stripped.',
 };
 
 const norm = (v, min, max) => Math.max(0.05, Math.min(1, (v - min) / (max - min)));
@@ -124,10 +148,18 @@ const DitherShader = {
 export class LoadoutMenu {
   constructor(game) {
     this.game = game;
-    this.loadout = game.playerLoadout;
+    // Repair on the way in: a session loadout may predate a config change, or
+    // still be the old two-field shape, and every screen assumes six legal slots.
+    this.loadout = validateLoadout(game.playerLoadout);
     this.visible = false;
     this.mode = 'deploy';
     this.onDeploy = null;
+    // Which slot's options are open. null = the six-card grid.
+    this.pickSlot = null;
+    // What the info panel and the stage are describing. The SLOT matters as
+    // well as the key: with combat webbing the same rifle can sit in either
+    // weapon slot, so the key alone no longer identifies where you are.
+    this.viewSlot = 'primary';
     this.viewKey = this.loadout.primary;
     this.dragging = false;
     this.icons = {};
@@ -156,11 +188,11 @@ export class LoadoutMenu {
           <div class="ar-wpn-name" id="arWpnName"></div>
           <div class="ar-crumb" id="arCrumb"></div>
           <div class="ar-desc" id="arDesc"></div>
-          <div class="ar-nums">
-            <div class="ar-num"><span id="arDmg"></span><label>DAMAGE</label></div>
-            <div class="ar-num"><span id="arRof"></span><label>RPM</label></div>
-            <div class="ar-num"><span id="arMag"></span><label>MAG</label></div>
-          </div>
+          <!-- Generated: the three stats are per-KIND now. A weapon reports
+               damage/RPM/mag, biofoam reports heal/charges/inject time, a
+               grenade reports damage/radius/carried. Hardcoding the labels
+               only worked while every slot held a gun. -->
+          <div class="ar-nums" id="arNums"></div>
           <div class="ar-bars" id="arBars"></div>
         </div>
         <div class="ar-viewer" id="arViewer"></div>
@@ -168,16 +200,8 @@ export class LoadoutMenu {
       <div class="ar-bottom" id="arBottom">
         <div class="ar-tabs" id="arTabs"></div>
         <div class="ar-panel">
-          <div class="ar-cards">
-            <div class="ar-slot">
-              <div class="ar-slot-label">PRIMARY</div>
-              <div class="ar-row" id="arPrimaries"></div>
-            </div>
-            <div class="ar-slot">
-              <div class="ar-slot-label">CLASS WEAPON</div>
-              <div class="ar-row" id="arSecondaries"></div>
-            </div>
-          </div>
+          <!-- Filled by _renderGrid / _renderPicker. -->
+          <div class="ar-cards" id="arCards"></div>
           <div class="ar-foot">
             <div class="ar-summary" id="arSummary"></div>
             <button id="arDeploy">DEPLOY</button>
@@ -185,21 +209,23 @@ export class LoadoutMenu {
         </div>
       </div>`;
     document.body.appendChild(ov);
+    // The card art box derives its shape from this — see `.ar-card img`. Written
+    // from config rather than repeated in the stylesheet so the bake's aspect and
+    // the box's aspect cannot drift apart, which is exactly how the art ended up
+    // drawing at half height.
+    ov.style.setProperty('--ar-thumb-aspect', `${S.cardThumbW} / ${S.cardThumbH}`);
     this.el = {
       overlay: ov,
       className: ov.querySelector('#arClassName'),
       wpnName: ov.querySelector('#arWpnName'),
       crumb: ov.querySelector('#arCrumb'),
       desc: ov.querySelector('#arDesc'),
-      dmg: ov.querySelector('#arDmg'),
-      rof: ov.querySelector('#arRof'),
-      mag: ov.querySelector('#arMag'),
+      nums: ov.querySelector('#arNums'),
       bars: ov.querySelector('#arBars'),
       viewer: ov.querySelector('#arViewer'),
       bottom: ov.querySelector('#arBottom'),
       tabs: ov.querySelector('#arTabs'),
-      primaries: ov.querySelector('#arPrimaries'),
-      secondaries: ov.querySelector('#arSecondaries'),
+      cards: ov.querySelector('#arCards'),
       summary: ov.querySelector('#arSummary'),
       deploy: ov.querySelector('#arDeploy'),
     };
@@ -1425,8 +1451,18 @@ export class LoadoutMenu {
     this.camera.lookAt(x, aimY, 0);
   }
 
+  // Swapping the model resets the stage — zoom, pitch and the spin you dragged
+  // it to. Hover fires this constantly as the cursor crosses a row of cards, so
+  // it MUST no-op when the model is not actually changing; without the guard,
+  // sweeping across the six grid cards re-clones and re-frames on every card
+  // boundary and throws away whatever angle you had set up.
+  //
+  // `viewKey` is no longer set here — _view owns it, because the stage and the
+  // info panel no longer always show the same thing (a gadget has no model, so
+  // the deck keeps showing your primary while the panel describes the gadget).
   _showModel(key) {
-    this.viewKey = key;
+    if (this.modelKey === key) return;
+    this.modelKey = key;
     while (this.holder.children.length) this.holder.remove(this.holder.children[0]);
     while (this.mirror.children.length) this.mirror.remove(this.mirror.children[0]);
     const src = this.game.assets.weaponModels[key];
@@ -1503,6 +1539,11 @@ export class LoadoutMenu {
     this.game.menuOpen = true;
     this.el.overlay.style.display = 'block';
     this.el.deploy.textContent = mode === 'deploy' ? 'DEPLOY' : 'APPLY LOADOUT';
+    // Always open on the grid looking at the primary, whatever was left over
+    // from the last visit.
+    this.pickSlot = null;
+    this.viewSlot = 'primary';
+    this.viewKey = this.loadout.primary;
     this._showModel(this.loadout.primary);
     this.refresh();
     requestAnimationFrame(() => this._resizeViewer());
@@ -1515,7 +1556,7 @@ export class LoadoutMenu {
   }
 
   refresh() {
-    const lo = this.loadout;
+    const lo = validateLoadout(this.loadout);
     this.el.className.textContent = `${CLASSES[lo.cls].name.toUpperCase()} CLASS`;
 
     // tabs
@@ -1526,77 +1567,231 @@ export class LoadoutMenu {
       b.classList.toggle('sel', lo.cls === key);
       b.onclick = () => {
         lo.cls = key;
-        if (!def.secondaries.includes(lo.secondary)) lo.secondary = def.secondaries[0];
-        this._showModel(lo.secondary);
+        // Every slot can be invalidated by a class switch, not just the one the
+        // old code repaired — and the repair order matters. loadout.js owns it.
+        validateLoadout(lo);
+        this.pickSlot = null;          // a pool you were browsing may be gone
+        this._view(slotById('primary'), lo.primary);
         this.refresh();
       };
       this.el.tabs.appendChild(b);
     }
 
-    // cards
-    const mkCard = (key, selected, slot) => {
-      const card = document.createElement('div');
-      card.className = 'ar-card' + (selected ? ' sel' : '') + (this.viewKey === key ? ' viewing' : '');
-      const img = document.createElement('img');
-      // Baked render first, hand-authored SVG line art as the fallback (the bake
-      // needs a GL context and only exists after prewarm).
-      img.src = this.thumbs[key] || this.icons[key] || '';
-      img.className = this.thumbs[key] ? 'ar-thumb' : 'ar-line';
-      img.draggable = false;
-      const label = document.createElement('div');
-      label.className = 'ar-card-name';
-      label.textContent = WEAPONS[key].name;
-      card.appendChild(img);
-      card.appendChild(label);
-      card.onclick = () => {
-        if (slot === 'primary') lo.primary = key; else lo.secondary = key;
-        this._showModel(key);
-        this.refresh();
-      };
-      return card;
-    };
-    this.el.primaries.innerHTML = '';
-    for (const key of PRIMARIES) this.el.primaries.appendChild(mkCard(key, lo.primary === key, 'primary'));
-    this.el.secondaries.innerHTML = '';
-    for (const key of CLASSES[lo.cls].secondaries) this.el.secondaries.appendChild(mkCard(key, lo.secondary === key, 'secondary'));
+    if (this.pickSlot) this._renderPicker(); else this._renderGrid();
+    this._renderInfo();
 
-    // info panel for the viewed weapon
-    const def = WEAPONS[this.viewKey];
-    this.el.wpnName.textContent = def.name;
-    // Breadcrumb rather than bordered chips: at chip weight this line competed
-    // with the weapon name directly above it. Same information, read as a path.
-    const slotTag = PRIMARIES.includes(this.viewKey) ? 'PRIMARY' : 'CLASS WEAPON';
-    const crumb = [`${CLASSES[lo.cls].name.toUpperCase()} WEAPON`, slotTag, MODE_TAGS[def.mode]];
-    this.el.crumb.innerHTML = `<i>&lsaquo;</i>` + crumb.map((t) => `<span>${t}</span>`).join('');
-    this.el.desc.textContent = DESCRIPTIONS[this.viewKey] || '';
-    this.el.dmg.textContent = def.pellets ? `${def.dmg}×${def.pellets}` : def.dmg;
-    this.el.rof.textContent = def.mode === 'charge' ? '—' : def.rpm;
-    this.el.mag.textContent = def.mag;
-
-    // HANDLING is hipfire spread under a friendlier name — how controllable the
-    // weapon is unaimed, which is what the word means to a player. Keeping it
-    // keyed to spreadHip is what stops it duplicating MOBILITY, which is length.
-    const bars = [
-      ['ACCURACY', 1 - norm(def.spreadAds, 0.001, 0.02)],
-      ['RANGE', norm(def.falloff[1], 40, 820)],
-      ['HANDLING', 1 - norm(def.spreadHip, 0.004, 0.045)],
-      ['MOBILITY', 1 - norm(def.len, 0.55, 1.4)],
-    ];
-    this.el.bars.innerHTML = bars.map(([label, v]) =>
-      `<div class="ar-bar"><label>${label}</label><div class="ar-track"><div style="width:${Math.round(v * 100)}%"></div></div></div>`
-    ).join('');
-
+    const wpn = (k) => (WEAPONS[k] ? WEAPONS[k].name : '—');
     this.el.summary.textContent =
-      `${CLASSES[lo.cls].name.toUpperCase()} — ${WEAPONS[lo.primary].name} | ${WEAPONS[lo.secondary].name}`;
+      `${CLASSES[lo.cls].name.toUpperCase()} — ${wpn(lo.primary)} | ${wpn(lo.secondary)}`;
 
-    // A class with three secondaries makes the panel taller than one with a
-    // single card, and the framing reads that height — so re-aim after the rows
-    // are rebuilt, not before.
+    // The panel's height drives the framing, and the picker is a different
+    // height from the grid — so re-aim after the rows are rebuilt, not before.
     this._frameCamera();
 
     // keep the deploy screen's loadout strip and lobby preview in sync
     if (this.game.deployScreen) this.game.deployScreen.refreshLoadout();
     if (this.game.lobby && this.game.lobby.active) this.game.lobby.refreshPreview();
+  }
+
+  // ------------------------------------------------------------ Panel --
+  // One card builder for both states and every registry. `art` on the slot says
+  // where the picture comes from: weapons have a baked 3D thumbnail (with the
+  // hand-drawn SVG behind it for the frames before prewarm finishes), and
+  // everything else has the inline glyph its registry entry carries.
+  _mkCard(slot, key, opts) {
+    const def = slotDef(slot, key);
+    const isWeapon = slot.art === 'weapon';
+    const card = document.createElement('div');
+    card.className = (isWeapon ? 'ar-card' : 'ar-chip')
+      + (opts.selected ? ' sel' : '')
+      + (this.viewSlot === slot.id && this.viewKey === key ? ' viewing' : '')
+      // The corner tick used to be hardcoded to the class-weapon row. It marks
+      // specialist-tier weapons now, which is what that row actually held.
+      + (isWeapon && def && def.slot === 'specialist' ? ' specialist' : '');
+    card.dataset.slot = slot.id;
+    card.dataset.key = key || '';
+
+    if (opts.slotTag) {
+      const tag = document.createElement('div');
+      tag.className = 'ar-card-slot';
+      tag.textContent = slot.label;
+      card.appendChild(tag);
+    }
+    if (isWeapon) {
+      const img = document.createElement('img');
+      img.src = this.thumbs[key] || this.icons[key] || '';
+      img.className = this.thumbs[key] ? 'ar-thumb' : 'ar-line';
+      img.draggable = false;
+      card.appendChild(img);
+    } else {
+      const glyph = document.createElement('div');
+      glyph.className = 'ar-glyph';
+      glyph.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">${(def && def.svg) || ''}</svg>`;
+      card.appendChild(glyph);
+    }
+    const label = document.createElement('div');
+    label.className = 'ar-card-name';
+    label.textContent = (def && def.name) || '—';
+    card.appendChild(label);
+
+    card.onclick = opts.onClick;
+    // Hover previews into the info panel and onto the stage. Deliberately does
+    // NOT call refresh() — that would tear down the card the cursor is inside
+    // and rebuild it, which drops the hover state and re-enters this handler.
+    card.onmouseenter = () => this._view(slot, key);
+    return card;
+  }
+
+  _slotRow(labelText, onBack) {
+    const wrap = document.createElement('div');
+    wrap.className = 'ar-slot';
+    const label = document.createElement('div');
+    label.className = 'ar-slot-label' + (onBack ? ' ar-back' : '');
+    label.innerHTML = onBack ? `<i>&lsaquo;</i>${labelText}` : labelText;
+    if (onBack) label.onclick = onBack;
+    const row = document.createElement('div');
+    row.className = 'ar-row';
+    wrap.appendChild(label);
+    wrap.appendChild(row);
+    this.el.cards.appendChild(wrap);
+    return row;
+  }
+
+  // All six equipped slots at once. Every card reads `sel` because every card
+  // IS what you are carrying — the grid shows state, the picker shows choice.
+  _renderGrid() {
+    const lo = this.loadout;
+    this.el.cards.innerHTML = '';
+    const row = this._slotRow('LOADOUT', null);
+    // Every grid card is `sel` so its art sits at full opacity — but six cyan
+    // borders at once is a wall of selection state that means nothing, since
+    // "equipped" is the only thing any of them could be. .ar-grid tones the
+    // border back down and leaves .viewing to be the thing that stands out.
+    row.classList.add('ar-grid');
+    for (const slot of SLOTS) {
+      const key = slotValue(lo, slot);
+      row.appendChild(this._mkCard(slot, key, {
+        selected: true,
+        slotTag: true,
+        onClick: () => { this.pickSlot = slot.id; this._view(slot, key); this.refresh(); },
+      }));
+    }
+  }
+
+  // One slot's options. Picking commits, re-validates (a weaponSlot gadget can
+  // invalidate the secondary from here) and returns to the grid.
+  _renderPicker() {
+    const lo = this.loadout;
+    const slot = slotById(this.pickSlot);
+    if (!slot) { this.pickSlot = null; this._renderGrid(); return; }
+    this.el.cards.innerHTML = '';
+    const back = () => { this.pickSlot = null; this.refresh(); };
+    const row = this._slotRow(slot.label, back);
+    const cur = slotValue(lo, slot);
+    for (const key of slot.pool(lo.cls, lo)) {
+      row.appendChild(this._mkCard(slot, key, {
+        selected: key === cur,
+        onClick: () => {
+          setSlot(lo, slot, key);
+          validateLoadout(lo);
+          this.pickSlot = null;
+          this.refresh();
+        },
+      }));
+    }
+  }
+
+  // Point the info panel and the stage at one item, without rebuilding the
+  // panel around the cursor. Called on hover and on any state change.
+  _view(slot, key) {
+    if (this.viewSlot === slot.id && this.viewKey === key) return;
+    this.viewSlot = slot.id;
+    this.viewKey = key;
+    for (const el of this.el.cards.querySelectorAll('.viewing')) el.classList.remove('viewing');
+    const el = this.el.cards.querySelector(`[data-slot="${slot.id}"][data-key="${key || ''}"]`);
+    if (el) el.classList.add('viewing');
+    // Only weapons have a model. Rather than empty the deck for a gadget, the
+    // stage keeps showing the gun you are carrying — the info panel is what is
+    // describing the gadget.
+    this._showModel(slot.art === 'weapon' && key ? key : this.loadout.primary);
+    this._renderInfo();
+  }
+
+  // Per-kind info. A weapon reports damage/RPM/mag and the four bars; the other
+  // registries report what they actually have, and skip the bars entirely —
+  // those are all derived from ballistics a gadget does not carry.
+  _renderInfo() {
+    const lo = this.loadout;
+    const slot = slotById(this.viewSlot) || SLOTS[0];
+    const def = slotDef(slot, this.viewKey);
+    if (!def) {
+      this.el.wpnName.textContent = '—';
+      this.el.crumb.innerHTML = '';
+      this.el.desc.textContent = '';
+      this.el.nums.innerHTML = '';
+      this.el.bars.innerHTML = '';
+      return;
+    }
+
+    this.el.wpnName.textContent = def.name;
+    // Breadcrumb rather than bordered chips: at chip weight this line competed
+    // with the weapon name directly above it. Same information, read as a path.
+    // The slot comes from the SLOT now, not from guessing at the weapon key —
+    // with webbing the same rifle is legal in either weapon slot.
+    // The third crumb is what KIND of thing this is. A grenade slot holding a
+    // grenade has nothing to add there, so it drops out rather than repeating
+    // the slot name back at you.
+    const kindTag = slot.art === 'weapon' ? MODE_TAGS[def.mode] : KIND_TAGS[def.kind];
+    const crumb = [`${CLASSES[lo.cls].name.toUpperCase()} KIT`, slot.label, kindTag]
+      .filter(Boolean)
+      .filter((t, i, a) => a.indexOf(t) === i);   // GRENADE / GRENADE reads as a bug
+    this.el.crumb.innerHTML = `<i>&lsaquo;</i>` + crumb.map((t) => `<span>${t}</span>`).join('');
+    this.el.desc.textContent = DESCRIPTIONS[this.viewKey] || '';
+
+    const nums = this._statsFor(slot, def);
+    this.el.nums.innerHTML = nums.map(([v, l]) =>
+      `<div class="ar-num"><span>${v}</span><label>${l}</label></div>`).join('');
+
+    if (slot.art === 'weapon') {
+      // HANDLING is hipfire spread under a friendlier name — how controllable the
+      // weapon is unaimed, which is what the word means to a player. Keeping it
+      // keyed to spreadHip is what stops it duplicating MOBILITY, which is length.
+      const bars = [
+        ['ACCURACY', 1 - norm(def.spreadAds, 0.001, 0.02)],
+        ['RANGE', norm(def.falloff[1], 40, 820)],
+        ['HANDLING', 1 - norm(def.spreadHip, 0.004, 0.045)],
+        ['MOBILITY', 1 - norm(def.len, 0.55, 1.4)],
+      ];
+      this.el.bars.innerHTML = bars.map(([label, v]) =>
+        `<div class="ar-bar"><label>${label}</label><div class="ar-track"><div style="width:${Math.round(v * 100)}%"></div></div></div>`
+      ).join('');
+    } else {
+      this.el.bars.innerHTML = '';
+    }
+  }
+
+  // [value, label] triples for the stat row, per slot kind.
+  _statsFor(slot, def) {
+    if (slot.art === 'weapon') {
+      return [
+        [def.pellets ? `${def.dmg}×${def.pellets}` : def.dmg, 'DAMAGE'],
+        [def.mode === 'charge' ? '—' : def.rpm, 'RPM'],
+        [def.mag, 'MAG'],
+      ];
+    }
+    if (slot.id === 'grenade') {
+      return [[def.dmg, 'DAMAGE'], [`${def.splash}m`, 'RADIUS'], [def.count, 'CARRIED']];
+    }
+    if (slot.id === 'melee') {
+      return [[def.dmg, 'DAMAGE'], [`${def.range}m`, 'REACH'], [`${def.useTime}s`, 'SWING']];
+    }
+    if (def.kind === 'consumable') {
+      return [[def.heal, 'RESTORES'], [def.charges, 'CHARGES'], [`${def.useTime}s`, 'INJECT']];
+    }
+    if (def.kind === 'weaponSlot') {
+      return [['2nd', 'WEAPON'], [`×${def.reserveMult}`, 'RESERVE'], ['—', 'SIDEARM']];
+    }
+    return [];
   }
 
   // The armory owns a SEPARATE WebGLRenderer, so it shares nothing with the

@@ -37,7 +37,11 @@ export default defineConfig({
   publicDir: 'source',
   plugins: [debugSavePlugin()],
   server: {
-    port: 5199,
+    // 5199 stays the default (5173 is taken), so `npm run dev` is unchanged.
+    // Honouring PORT lets a second dev server run alongside the first, which
+    // matters when two sessions have this repo open at once — otherwise the
+    // second one just fails to bind.
+    port: Number(process.env.PORT) || 5199,
     host: '127.0.0.1'
   }
 });

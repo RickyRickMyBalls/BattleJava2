@@ -641,7 +641,10 @@
     /* No border-top here any more — .ar-panel owns the shelf edge now. */
     /* min-width:0 all the way down, or flex items refuse to shrink below their
        content width and the row overflows anyway. */
-    .ar-cards { display: flex; gap: 46px; padding: 18px 4vw 4px; min-width: 0; }
+    /* Gap and side padding both bought down to widen the cards. Only bites on
+       narrow viewports — see the flex-basis note on .ar-card for why a wide
+       screen never noticed the old 46/4vw at all. */
+    .ar-cards { display: flex; gap: 30px; padding: 18px 2.5vw 4px; min-width: 0; }
     .ar-slot { min-width: 0; }
     /* Small cyan tick before the label, as in the reference */
     .ar-slot-label {
@@ -653,42 +656,133 @@
        cyan they out-shout the weapon on the stand, which is the thing you are
        actually meant to be looking at. */
     /* Width is what makes the art bigger, not height: the line drawings are about
-       3.1:1, so any card taller than width/3.1 is just air around the gun. Sized
-       so the widest class (2 primaries + 3 class weapons) still fits one row. */
-    /* 330 is the target, but it SHRINKS rather than overflowing: Spartan carries
+       3.1:1, so any card taller than width/3.1 is just air around the gun.
+       The row this was sized against (2 primaries + 3 class weapons) no longer
+       exists — the panel is a six-slot grid now: two weapon cards plus four
+       fixed-width chips. Re-measured after that change: 420 a card at 1920,
+       shrinking to 234 at 1100, one row and no overflow at either end. */
+    /* 420 is the target, but it SHRINKS rather than overflowing: Spartan carries
        four class weapons, so that row is six cards wide and does not fit at full
-       size. object-fit:contain scales the art down with it. */
+       size. object-fit:contain scales the art down with it. At 1920 the six-card
+       row settles around 292 a card, so it still lands on one row.
+       It was 330, and that number — not the gap — was what kept the guns small.
+       Measured at 1920: cards sat at exactly 330 with 380px of row slack going
+       unused, because flex-grow is 0. Tightening the gap alone would have moved
+       nothing on any normal display.
+       Grow stays at 0 deliberately. With grow the cards would divide whatever
+       space their own slot has, and Support carries ONE primary against two
+       class weapons — that lone card would balloon to double its neighbours.
+       A fixed basis is what keeps every card the same width whatever the class. */
     /* Big art, deliberately. Shrinking these to ~76px was tried and reverted:
        it took .ar-bottom from 420 to 346 but bought the weapon nothing, because
        _frameCamera takes the MAX of the width-fit and height-fit distances and
        width is what binds at any normal aspect — the gun just re-centred 37px
        lower into the freed band. Owner's call is that the cards read better
        large; padX is the knob if the weapon ever needs to grow. */
+    /* OPAQUE fills, not washes. These three hexes are not invented — they are
+       what the old rgba() cards actually composited to at mid-row, measured off
+       the live page: card wash over .ar-panel::before's gradient over the 3D
+       plate. So the cards look like they always did, they just no longer move.
+       That was the problem with the washes: the plate behind them is a lit room,
+       so a card's fill changed with the camera, and the bright spot on the back
+       wall used to bleed up through whichever card it sat behind.
+       They are also flat where the composite used to fall off from #16202a at
+       the top of the row to #10161d at the bottom — the panel gradient runs
+       0.26 to 0.71 alpha across the card's height. Reinstating that falloff
+       means a linear-gradient, which browsers cannot transition, so the hover
+       fade below would snap. Flat keeps the fade. */
     .ar-card {
       position: relative;
-      cursor: pointer; flex: 0 1 330px; min-width: 0;
-      background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.10);
+      cursor: pointer; flex: 0 1 420px; min-width: 0;
+      background: #121a22; border: 1px solid rgba(255,255,255,0.10);
       padding: 12px 12px 10px; transition: border-color 0.12s, background 0.12s;
     }
-    .ar-card:hover { border-color: rgba(127,212,255,0.55); background: rgba(255,255,255,0.075); }
+    .ar-card:hover { border-color: rgba(127,212,255,0.55); background: #1c232c; }
     /* Border and a soft halo, no fill wash. The old rgba(58,160,255,0.12) plate
        plus a double shadow made the selected card the most saturated thing on
-       screen — brighter than the weapon it was selecting. */
+       screen — brighter than the weapon it was selecting. The opaque fill keeps
+       that intent: it is a touch DARKER and bluer than the unselected card, not
+       brighter, exactly as the 5% cyan wash resolved to over this dark a base. */
     .ar-card.sel {
-      border-color: var(--hud-cyan); background: rgba(58,160,255,0.05);
+      border-color: var(--hud-cyan); background: #0c1826;
       box-shadow: 0 0 16px rgba(127,212,255,0.16);
     }
     .ar-card.viewing { outline: 1px solid rgba(127,212,255,0.4); }
-    /* Decorative only: the corner tick the reference puts on class-weapon
-       cards. Nothing behind it yet — it becomes the attachment affordance if
-       weapon unlocks ever land. */
-    #arSecondaries .ar-card::after {
+    /* The corner tick the reference puts on class-weapon cards. It used to be
+       bound to the #arSecondaries row, which no longer exists — the panel is a
+       slot grid now. It marks SPECIALIST-tier weapons instead (sniper, DMR,
+       rocket, laser): the ones you cannot take as a primary and have to spend a
+       gadget slot to carry. That is roughly what the old row held anyway, so it
+       keeps its meaning and gains a rule. */
+    .ar-card.specialist::after {
       content: ''; position: absolute; left: 10px; bottom: 9px;
       border-left: 5px solid transparent; border-right: 5px solid transparent;
       border-bottom: 6px solid rgba(255,255,255,0.20);
     }
-    #arSecondaries .ar-card.sel::after { border-bottom-color: var(--hud-cyan-dim); }
-    .ar-card img { width: 100%; height: 150px; object-fit: contain; display: block; }
+    .ar-card.specialist.sel::after { border-bottom-color: var(--hud-cyan-dim); }
+    /* --- Slot grid ---------------------------------------------------------
+       Six slots on one row: two wide weapon cards carrying baked 3D thumbnails,
+       then four square chips for the gadgets, grenade and melee. Equal-width
+       cards would have crushed the weapon art (the bakes are ~3.1:1), and the
+       deploy screen's strip already splits them exactly this way. */
+    .ar-chip {
+      position: relative; cursor: pointer; flex: 0 0 132px; min-width: 0;
+      background: #121a22; border: 1px solid rgba(255,255,255,0.10);
+      padding: 12px 10px 10px; transition: border-color 0.12s, background 0.12s;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .ar-chip:hover { border-color: rgba(127,212,255,0.55); background: #1c232c; }
+    .ar-chip.sel { border-color: var(--hud-cyan); background: #0c1826; }
+    .ar-chip.viewing { outline: 1px solid rgba(127,212,255,0.4); }
+    /* Sized off the weapon card's art box so a chip and a card come out the same
+       height in the grid — the glyph is the only thing standing in for a 3:1
+       letterbox thumbnail. */
+    .ar-glyph {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: #8fa7b8; opacity: 0.5; transition: opacity 0.12s, color 0.12s;
+    }
+    .ar-glyph svg { width: 40px; height: 40px; display: block; }
+    .ar-chip:hover .ar-glyph { opacity: 0.85; }
+    .ar-chip.sel .ar-glyph {
+      opacity: 1; color: var(--hud-cyan);
+      filter: drop-shadow(0 0 6px rgba(127,212,255,0.45));
+    }
+    .ar-chip .ar-card-name { font-size: 10px; letter-spacing: 1px; }
+    .ar-chip.sel .ar-card-name { color: var(--hud-cyan); }
+    /* The slot's name, on the card, in the grid only — the grid has one shared
+       label ("LOADOUT") where the old layout had one per row. */
+    .ar-card-slot {
+      font-size: 9px; letter-spacing: 3px; color: #6d8496;
+      text-align: center; margin-bottom: 8px; line-height: 1;
+    }
+    .ar-grid .ar-card.sel .ar-card-slot, .ar-grid .ar-chip.sel .ar-card-slot { color: #93b0c4; }
+    /* In the grid, `sel` is doing a different job than in the picker: it means
+       "this is what you are carrying", which is true of all six at once. Keep
+       the full-opacity art it buys, drop the cyan border and halo so .viewing
+       is the only thing competing for the eye. */
+    .ar-grid .ar-card.sel, .ar-grid .ar-chip.sel {
+      border-color: rgba(255,255,255,0.16); background: #121a22; box-shadow: none;
+    }
+    .ar-grid .ar-card.sel:hover, .ar-grid .ar-chip.sel:hover {
+      border-color: rgba(127,212,255,0.55); background: #1c232c;
+    }
+    /* Back out of the picker. The slot label IS the affordance — it is already
+       the only text anchoring that row. */
+    .ar-back { cursor: pointer; transition: color 0.12s; }
+    .ar-back:hover { color: #dceaf5; }
+    .ar-back i { font-style: normal; margin-right: 8px; color: var(--hud-cyan); }
+    /* The box takes its shape from the BAKE, not from a hardcoded height. It
+       used to be `height: 150px`, which silently drifted: the bake is 528x168
+       (3.14:1) and the box had become 236x150 (1.57:1), so object-fit:contain
+       filled the width and used exactly HALF the height. Every card was 50% dead
+       space and the guns looked shrunken inside them.
+       --ar-thumb-aspect is written from cardThumbW/H at build time, so config
+       stays the single source of truth and this cannot come apart again. The
+       fallback here only matters for the frames before that runs. */
+    .ar-card img {
+      width: 100%; height: auto; aspect-ratio: var(--ar-thumb-aspect, 528 / 168);
+      object-fit: contain; display: block;
+    }
     /* Both card sources are line work now, so both dim by opacity alone — a
        brightness filter on 1px strokes just eats them. */
     .ar-thumb { opacity: 0.5; }

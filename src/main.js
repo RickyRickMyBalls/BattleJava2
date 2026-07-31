@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MAPS } from './config.js';
+import { makeLoadout } from './loadout.js';
 import { loadAssets } from './assets.js';
 import { loadMap } from './maps.js';
 import { Game } from './game.js';
@@ -45,7 +46,7 @@ window.addEventListener('unhandledrejection', (e) => { loadmsg.textContent = `Re
 // carried into the game) and the shared menu-open flag.
 const session = {
   assets: null,
-  playerLoadout: { cls: 'assault', primary: 'ar', secondary: 'smg' },
+  playerLoadout: makeLoadout('assault'),
   gameType: 'conquest',
   mapId: 'demo',
   menuOpen: false,

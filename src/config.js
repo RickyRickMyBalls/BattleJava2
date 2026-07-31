@@ -942,7 +942,7 @@ export const CLASSES = {
     gadgetA: ['biofoam'],
     gadgetB: ['webbing'],
     grenades: ['frag'],
-    melee: 'bash',
+    melees: ['bash'],
     // legacy shape — still what game.js/menu.js/deploy.js read today
     secondaries: ['smg', 'shotgun'], gadgets: ['frag', 'medkit'],
   },
@@ -1010,6 +1010,10 @@ export const GADGETS = {
 export const GRENADES = {
   frag: {
     name: 'M9 FRAG', model: '/UNSC/weapons/Gernade/Frag.glb',
+    // Same line art as the GADGETS.frag stub — every slot registry carries an
+    // `svg` so the armoury card renderer never has to know which registry an
+    // item came from.
+    svg: '<circle cx="12" cy="14" r="6"/><rect x="10" y="4" width="4" height="3.4"/><circle cx="16.4" cy="5" r="1.8"/>',
     dmg: 110, splash: 5.5,
     fuse: 3.2,          // seconds from throw to detonation, cooked or not
     throwSpeed: 18,     // m/s at release
@@ -1032,6 +1036,9 @@ export const GRENADES = {
 export const MELEE = {
   bash: {
     name: 'RIFLE BASH',
+    // A stock coming down, with the impact ticks. The only slot that had no art
+    // of its own — weapons have baked thumbnails, everything else has a glyph.
+    svg: '<path d="M12 4.5l4.2 4.2-4.2 4.2-4.2-4.2z"/><path d="M8.2 13.2 3.5 20.5"/><path d="M17.8 4.2 19.8 2.2M18.8 8.6l2.4-.9M14.6 2.6l.7-1.4"/>',
     dmg: 60,
     range: 2.2,         // metres from the eye
     arc: 0.7,           // radians of forgiveness either side of the crosshair

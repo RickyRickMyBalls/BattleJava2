@@ -39,6 +39,7 @@
 //   raycastCover(a…b)          t in [0,1] or Infinity  [Combat]
 
 import { TEAM } from './config.js';
+import { makeLoadout } from './loadout.js';
 import { Combat } from './combat.js';
 import { GameAudio } from './audio.js';
 
@@ -110,7 +111,7 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     // Read through to the session like menuOpen does, rather than capturing the
     // reference at build time — the arena outlives any single armory visit.
     get playerLoadout() {
-      return (session && session.playerLoadout) || { cls: 'assault', primary: 'ar', secondary: 'smg' };
+      return (session && session.playerLoadout) || makeLoadout('assault');
     },
 
     // The lobby is never over, never dead, never bleeding tickets.

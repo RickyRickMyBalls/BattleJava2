@@ -1,7 +1,8 @@
 // Match orchestrator: teams, squads, spawning, capture logic, tickets, win state.
 
 import * as THREE from 'three';
-import { CFG, TEAM, CLASSES, PRIMARIES } from './config.js';
+import { CFG, TEAM, CLASSES } from './config.js';
+import { makeLoadout, randomLoadout, validateLoadout } from './loadout.js';
 import { World } from './world.js';
 import { Soldier } from './soldier.js';
 import { Squad, TeamBrain, squadNames } from './ai.js';
@@ -22,7 +23,7 @@ export class Game {
     this.session = session || null;
     this.playerTeam = TEAM.BLUE;
     // the session owns the loadout so lobby customization carries into the game
-    this.playerLoadout = session ? session.playerLoadout : { cls: 'assault', primary: 'ar', secondary: 'smg' };
+    this.playerLoadout = validateLoadout(session ? session.playerLoadout : makeLoadout('assault'));
 
     this.world = new World(scene, mapDef, mapData);
     this.audio = new GameAudio(this);
@@ -73,9 +74,11 @@ export class Game {
         const isPlayer = def.team === this.playerTeam && i === 0;
         const label = isPlayer ? 'You' : `${squad.name[0]}-${(i % CFG.squadSize) + 1} ${def.names[nameIdx++ % def.names.length]}`;
         const cls = isPlayer ? this.playerLoadout.cls : CFG.squadComposition[i % CFG.squadComposition.length];
-        const primary = isPlayer ? this.playerLoadout.primary : PRIMARIES[Math.floor(Math.random() * PRIMARIES.length)];
-        const secs = CLASSES[cls].secondaries;
-        const secondary = isPlayer ? this.playerLoadout.secondary : secs[Math.floor(Math.random() * secs.length)];
+        // AI kits come from the same slot pools the armoury offers, so a squad
+        // is a mix and an AI can never carry something a player could not.
+        const kit = isPlayer ? this.playerLoadout : randomLoadout(cls);
+        const primary = kit.primary;
+        const secondary = kit.secondary;
         // Blue wears the class's model (spartan vs marine); red is always Covenant
         const char = def.team === TEAM.BLUE
           ? this.assets.characters[CLASSES[cls].model] || this.assets.characters.marine
