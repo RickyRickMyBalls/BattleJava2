@@ -226,7 +226,10 @@ export const CFG = {
     // crushed into the few pixels above it. The whole gradient therefore has to
     // happen between roughly 0.5 m and 5 m — a gentle per-metre figure spreads
     // the ramp over distances that occupy no pixels and the deck comes out flat.
-    haze: 0.5,
+    // Reduced once the reflection landed: Fresnel brightens toward the horizon
+    // for the same geometric reason haze does, so at the old 0.5 the two
+    // stacked and the horizon blew out. Haze is now only the atmosphere.
+    haze: 0.26,
     hazeStart: 0.4,
     // The deck has to arrive at the sky's horizon glow, not just at its base
     // horizon colour, or there is a visible step in value exactly on the join.
@@ -234,12 +237,62 @@ export const CFG = {
     // (0.6 = the glow only shows over the last 40% of the fade).
     floorBand: 0x0d151d,
     bandRamp: 0.6,
-    lineColor: 0x9fc8e0, // cool white, not cyan — the grid is a surface detail
-    lineMinor: 0.035,
-    lineMajor: 0.09,
-    lineNear: 1.0,      // camera distance where grid lines start to appear...
-    lineNearSoft: 2.2,  // ...and where they reach full strength. The near metre
+    // ---- Panel seams ------------------------------------------------------
+    // OFF by default, and only because the deck MAP now carries its own panel
+    // grid — two grids at different pitches read as a mistake, and the map's
+    // pitch is irregular so there is nothing to align a procedural grid to.
+    // The seam light comes from `grooveGlow` below instead, which lights the
+    // map's own grooves and is therefore aligned by construction.
+    //
+    // Turn this back on (and drop `deckUrl`) if you ever want a deck whose
+    // panelling is generated rather than authored. It is NOT a ruled grid:
+    // `seamDrop` keeps or drops each minor segment on a hash of (boundary
+    // index, cell along it), so runs stop short and T-junctions form the way
+    // real panelling does. Major seams never drop.
+    proceduralSeams: false,
+    seamGroove: 0x02040a,   // the recessed line itself, darker than the plate
+    // Groove half-width in METRES, and it has to be a real panel gap — a few
+    // millimetres. The deck near the camera covers roughly 1.4 mm per pixel, so
+    // 0.010 here is a 14-pixel bar, which is how you end up with Tron instead
+    // of a hangar. seamCoverage takes care of the far end going sub-pixel.
+    seamWidth: 0.0022,
+    seamMajorWidth: 0.004,
+    // The light in the seam. This one is NOT authored as a final pixel like the
+    // surface colours are — it is a LIGHT, so it lives in scene-linear and its
+    // strength runs above 1.0 on purpose. That is what puts it over the bloom
+    // threshold and lets ACES roll it off, which is the whole "glowing" read.
+    // Cool WHITE, not cyan. A saturated hue here interacts badly with the bloom
+    // threshold: only the green and blue channels clear it, so the halo comes
+    // out neon regardless of how far the strength is turned down.
+    seamGlow: 0xcfe6f7,
+    seamGlowStrength: 0.8,
+    seamGlowMajor: 1.3,
+    // Brightness variation per plate edge, so a run does not read as one
+    // uniform strip of light. 0 = every seam identical.
+    seamVary: 0.45,
+    seamGlowWidth: 0.014,   // how far the light bleeds either side, metres
+    seamDrop: 0.45,         // fraction of minor seam segments that are missing
+    // Per-plate brightness variation. Keep it small: a plate's tone is hashed
+    // per CELL, so where a seam has been dropped and two cells read as one
+    // plate, a large value shows the step across a seam that is not there.
+    panelTone: 0.07,
+    seamNear: 0.6,      // camera distance where seams start to appear...
+    seamNearSoft: 3.0,  // ...and where they reach full strength. The near metre
                         // of deck stays clean; the haze kills them far away.
+                        // Also gates grooveGlow.
+
+    // Light in the deck map's OWN grooves. Keyed off the map going dark, so it
+    // follows whatever panelling the map has — no alignment problem, and it
+    // inherits the map's irregularity for free. Like seamGlow this is a LIGHT:
+    // scene-linear, driven past 1.0 so it clears the bloom threshold.
+    // These are fractions of the map's MEAN, and the mean is a poor midpoint for
+    // a map like this one: its plates are near-black and its mean is dragged up
+    // by bright bolt specks, so anything near 0.5 catches whole plate interiors
+    // and lights them up in blotches. Only the darkest cores are grooves.
+    grooveGlow: 0xcfe6f7,
+    grooveGlowStrength: 0.35,
+    grooveLo: 0.05,     // map/mean at or below this is fully "groove"...
+    grooveHi: 0.28,     // ...and at or above this is fully "plate"
     // Surface detail — the scuffs and polish smears, and the thing doing more
     // work than the grid is. A TEXTURE rather than procedural noise, and not
     // only because it looks better: the deck is seen at a grazing angle, where
@@ -250,12 +303,63 @@ export const CFG = {
     // `deckUrl` null = a seamless one is generated into a canvas at startup, so
     // this works with no asset. Point it at a real authored map (greyscale,
     // tiling, ~1-2k) and that wins — nothing else has to change.
-    deckUrl: null,      // e.g. '/other/deck_detail.jpg' (served from source/)
-    deckTile: 5.0,      // metres per repeat
-    deckDetail: 0.55,   // how hard the map modulates the deck, 0 = flat colour
+    // The deck map now owns the PLATE STRUCTURE — grooves, bolts, cracks,
+    // plate-to-plate tone — not just scuffs. It is read as a multiplicative
+    // albedo against its own mean (measured at load, so any map drops in
+    // without re-tuning): at the mean it changes nothing, grooves darken,
+    // bolt highlights brighten.
+    //
+    // This one is not seamless as authored (~23/255 mismatch left to right) and
+    // its panel pitch is not a whole fraction of its width, so it cannot simply
+    // be cropped square. `deckSeamBlend` fixes it at load — see _makeSeamless.
+    deckUrl: '/textures/5ff69bb8-9eac-4840-9eaf-ea05eef860ba.png',
+    deckSeamBlend: 0.10, // border band mirror-blended to make the map tile
+    deckTile: 1.0,       // metres per repeat — puts its plates at roughly 24 cm
+    deckDetail: 0.85,    // how hard the map modulates the deck, 0 = flat colour
+    deckMapMax: 3.0,     // clamp on map/mean, so bolt specks cannot blow out
     floorAlpha: 1,      // the deck is opaque now; this is a global escape hatch
-    reflect: 0.5,     // mirrored-gun opacity at the contact line...
+    // ---- Environment reflection -------------------------------------------
+    // What makes the deck read as a polished floor in a room rather than a dark
+    // plane with lines on it, and the biggest single thing the stage was
+    // missing. The eye sits ~18 cm above the deck, so nearly every floor pixel
+    // is seen at a grazing angle — and at grazing angles a dielectric reflects
+    // almost everything. That one effect produces all three things the
+    // reference has at once: the brightening toward the horizon, the broad soft
+    // smears, and the wet look.
+    //
+    // It is close to free because the sky is already a pure function of ray
+    // direction (see SKY_FN in menu.js): reflect the view vector about the
+    // floor normal and evaluate that same function. No render target, no
+    // second pass, nothing to keep in sync.
+    reflectF0: 0.045,      // reflectance looking straight down; ~0.04 dielectric
+    reflectStrength: 1.0,  // global multiplier on the mirrored sky
+    reflectRough: 0.20,    // blur, as a spread in the reflected ray's Y
+    // Broad rough-specular lobes off the existing key and front lights. At a
+    // grazing view these stretch along the surface into the long horizontal
+    // smears the reference floor has — lower specPower = longer and softer.
+    specColor: 0xdcefff,
+    specPower: 90,
+    specKey: 0.45,
+    specFront: 0.9,
+    glossVar: 0.9,         // how far the deck map breaks up the polish
+
+    reflect: 0.85,    // mirrored-gun opacity at the contact line...
     reflectFade: 0.2, // ...falling to nothing this many metres below it
+    // Blur on the mirrored weapon, with no render target involved: the copy is
+    // drawn `reflectBlurTaps` times, each offset in SCREEN space by an amount
+    // proportional to how far below the mirror line that vertex sits.
+    //
+    // Scaling by depth is the whole point. A real reflection is sharp where the
+    // object meets the surface and smears as it recedes, so a uniform offset
+    // would blur the contact line too and visibly unstick the weapon from the
+    // deck. Offsets are mostly vertical because that is the direction a floor
+    // reflection actually spreads on screen.
+    // Tap count is a smoothness knob, not a strength one: at 5 the copies sit
+    // ~14 px apart at the deepest point and read as discrete ghosts rather than
+    // a blur. Raise this (or lower reflectBlur) if you see banding — the cost is
+    // only draw calls of geometry that is already resident.
+    reflectBlurTaps: 9,
+    reflectBlur: 0.25, // NDC offset per metre of depth below the mirror line
     shadowAlpha: 0.55,
     shadowSize: 1024,
 
@@ -264,6 +368,18 @@ export const CFG = {
     // (fog_fragment sits below tonemapping_fragment in the shader), so this is
     // a FINAL DISPLAY colour like everything else on the stage — see the
     // LinearSRGBColorSpace note where it is built in menu.js.
+    // ---- Bloom ------------------------------------------------------------
+    // The point of this is the seams: a bright line without bloom is just a
+    // bright line, and no amount of tuning the seam colour makes it read as
+    // light coming out of the floor. It runs on the LINEAR HDR buffer between
+    // the scene render and tone mapping, so `threshold` is a scene radiance and
+    // not a display value — the deck sits around 0.02 there and the seams are
+    // pushed above 1.0 by seamGlowStrength, which is what separates them.
+    bloom: true,
+    bloomStrength: 0.35,
+    bloomRadius: 0.4,
+    bloomThreshold: 0.35,
+
     fog: true,
     fogColor: 0x0d131c, // match `sky.horizon`
     fogNear: 1.0,       // metres from the camera where haze starts

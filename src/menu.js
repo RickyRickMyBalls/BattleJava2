@@ -3,6 +3,11 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { CFG, WEAPONS, CLASSES, PRIMARIES } from './config.js';
 import { prewarm, weaponClones } from './assets.js';
 
@@ -27,29 +32,93 @@ const DESCRIPTIONS = {
 
 const norm = (v, min, max) => Math.max(0.05, Math.min(1, (v - min) / (max - min)));
 
-// Output encoding for the stage's two raw shaders (sky and deck). three only
-// injects its own colour-space conversion into its own materials, so a raw
-// ShaderMaterial has to do this itself or it renders linear — far darker than
-// the authored hex.
+// ---- Authoring stage colours in display space, on a tone-mapped pipeline ----
 //
-// It has to be the REAL sRGB curve, not the pow(1/2.2) approximation that used
-// to be here. THREE.Color decodes an authored hex with the real curve, and that
-// curve has a LINEAR TOE near black; pow has none. Through midtones the two
-// agree closely enough not to notice. Through the near-black values this whole
-// palette is made of they do not: #05080e went in and #0d1116 came out, about
-// three times too bright in linear, and no amount of tuning the config could
-// put the deck down on black because the floor of the encode was the problem.
-// With the matching OETF the hex you author is the pixel you get.
-const SRGB_ENCODE = `
-  vec3 toSRGB(vec3 c) {
-    c = max(c, 0.0);
-    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+// The sky and deck used to encode to sRGB themselves and write straight to the
+// canvas, which made an authored hex the final pixel. Bloom ends that: three
+// disables tone mapping whenever it renders into a render target, so the
+// composer's OutputPass has to own tone mapping and encoding for everything —
+// and a shader that had already encoded itself would be put through ACES and
+// sRGB a second time.
+//
+// So the stage shaders now emit plain scene-linear, like every other material.
+// To keep the config authored in display space (which is the useful way to tune
+// a backdrop — you pick the pixel you want), `stageColor` runs an authored hex
+// BACKWARDS through the exact transform the OutputPass will apply, so it lands
+// on that hex. Verified round-trip exact to 0/255 across the palette.
+//
+// This does NOT apply to lights — see `seamGlow` in config, which is authored
+// in scene-linear on purpose so it can exceed 1.0 and bloom.
+const ACES_IN = [0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777];
+const ACES_OUT = [1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602];
+const mat3Mul = (m, v) => [
+  m[0] * v[0] + m[3] * v[1] + m[6] * v[2],
+  m[1] * v[0] + m[4] * v[1] + m[7] * v[2],
+  m[2] * v[0] + m[5] * v[1] + m[8] * v[2],
+];
+
+// three's ACESFilmicToneMapping, transcribed from tonemapping_pars_fragment.
+function acesFilmic(c, exposure) {
+  let v = c.map((x) => (x * exposure) / 0.6);
+  v = mat3Mul(ACES_IN, v);
+  v = v.map((x) => (x * (x + 0.0245786) - 0.000090537) / (x * (0.983729 * x + 0.432951) + 0.238081));
+  v = mat3Mul(ACES_OUT, v);
+  return v.map((x) => Math.min(1, Math.max(0, x)));
+}
+
+// Scene-linear colour that tone-maps to the authored hex. Componentwise fixed
+// point — ACES is smooth and monotonic over this range, so scaling the input by
+// how far the output missed converges in a few steps.
+function stageColor(hex, exposure) {
+  const target = new THREE.Color(hex).toArray();
+  let c = target.map((x) => x / 0.3);
+  for (let i = 0; i < 40; i++) {
+    const got = acesFilmic(c, exposure);
+    c = c.map((x, k) => (got[k] > 1e-9 ? x * (target[k] / got[k]) : x));
   }
-  // Sub-LSB dither. The stage spans only a handful of 8-bit steps end to end,
-  // so without breaking them up its gradients show as banded stripes.
-  float dither(vec2 p) {
-    return (fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+  return new THREE.Color().fromArray(c);
+}
+
+// The sky, as a pure function of world ray direction, shared verbatim by the
+// backdrop and the deck. That sharing is the whole reason the floor can mirror
+// the room essentially for free: the backdrop evaluates it for the view ray,
+// the deck evaluates it for the REFLECTED view ray. No render target, no second
+// pass, and no chance of the two drifting apart.
+//
+// The vignette is deliberately NOT in here — it is a lens effect, so it belongs
+// to the backdrop's screen space and must not appear in a reflection.
+const SKY_FN = `
+  uniform vec3 uSkyTop, uSkyHorizon, uSkyBand, uSkyCol;
+  uniform float uSkyRise, uSkyBandW, uSkyColX, uSkyColW;
+
+  vec3 skyColor(vec3 dir) {
+    float up = dir.y;   // 0 on the horizon, +1 straight up
+    vec3 c = mix(uSkyHorizon, uSkyTop, smoothstep(0.0, uSkyRise, up));
+    // the tight atmospheric band sitting on the horizon line
+    c += uSkyBand * exp(-abs(up) / max(uSkyBandW, 1e-4));
+    // one soft distant light column behind the weapon
+    float cx = (dir.x - uSkyColX) / max(uSkyColW, 1e-4);
+    c += uSkyCol * exp(-cx * cx) * (1.0 - smoothstep(0.0, uSkyRise * 2.2, abs(up)));
+    return c;
   }`;
+
+// Sub-LSB dither, applied last. OutputPass writes 8-bit and does not dither;
+// the stage spans only a handful of 8-bit steps end to end, so without this its
+// gradients band into visible stripes.
+const DitherShader = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      c.rgb += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+      gl_FragColor = c;
+    }`,
+};
 
 export class LoadoutMenu {
   constructor(game) {
@@ -217,6 +286,7 @@ export class LoadoutMenu {
     this.zoom = 1;
     this._buildBackdrop();
     this._buildStage();
+    this._buildComposer();
 
     const dom = this.renderer.domElement;
     dom.addEventListener('pointerdown', (e) => { this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY; });
@@ -247,6 +317,31 @@ export class LoadoutMenu {
     this._resizeObs.observe(this.el.viewer);
   }
 
+  // Scene -> bloom -> tone map -> dither.
+  //
+  // Everything in the scene now renders scene-linear into a half-float buffer;
+  // OutputPass is what applies ACES and the sRGB encode at the end. That split
+  // is forced rather than chosen: three turns tone mapping OFF whenever it
+  // renders into a render target (three.module.js, `currentRenderTarget === null
+  // ? renderer.toneMapping : NoToneMapping`), so the moment a post chain exists
+  // the weapon stops being tone-mapped by the renderer and something at the end
+  // has to do it. Which in turn is why the sky and deck had to give up encoding
+  // themselves — see `stageColor`.
+  _buildComposer() {
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    if (S.bloom) {
+      // Threshold is a SCENE RADIANCE here, not a display value: the deck sits
+      // near 0.02 and the seams are driven past 1.0 by seamGlowStrength, so
+      // this number separates lights from surfaces rather than bright from dark.
+      this.bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(1, 1), S.bloomStrength, S.bloomRadius, S.bloomThreshold);
+      this.composer.addPass(this.bloomPass);
+    }
+    this.composer.addPass(new OutputPass());
+    this.composer.addPass(new ShaderPass(DitherShader));
+  }
+
   // The sky, as a full-screen quad inside the scene rather than a CSS gradient
   // behind the canvas. Moving it in here is what lets the deck HAZE into it:
   // the floor shader blends toward the same horizon colour with distance, so
@@ -258,25 +353,32 @@ export class LoadoutMenu {
   // setViewOffset, since the lens shift lives in projectionMatrix and therefore
   // in its inverse. A screen-space gradient would need re-tuning every time
   // _frameCamera moved the frustum.
+  // The sky's uniform block. Built fresh for each material that wants it — the
+  // deck needs the same numbers to reflect, and handing both shaders the same
+  // named set is what keeps SKY_FN drop-in for either.
+  _skyUniforms() {
+    const K = S.sky, e = L.exposure;
+    return {
+      uSkyTop: { value: stageColor(K.top, e) },
+      uSkyHorizon: { value: stageColor(K.horizon, e) },
+      uSkyBand: { value: stageColor(K.band, e) },
+      uSkyCol: { value: stageColor(K.column, e) },
+      uSkyRise: { value: K.rise },
+      uSkyBandW: { value: K.bandWidth },
+      uSkyColX: { value: K.columnX },
+      uSkyColW: { value: K.columnW },
+    };
+  }
+
   _buildBackdrop() {
     const K = S.sky;
-    // Colours go through THREE.Color (sRGB-decoded on the way in) and come back
-    // out through pow(1/2.2) at the end of the shader — the same round trip the
-    // deck does, so the hex you author is roughly the pixel you get.
     const mat = new THREE.ShaderMaterial({
       depthTest: false,
       depthWrite: false,
       uniforms: {
+        ...this._skyUniforms(),
         uProjInv: { value: new THREE.Matrix4() },
         uViewInv: { value: new THREE.Matrix4() },
-        uTop: { value: new THREE.Color(K.top) },
-        uHorizon: { value: new THREE.Color(K.horizon) },
-        uBand: { value: new THREE.Color(K.band) },
-        uBandW: { value: K.bandWidth },
-        uRise: { value: K.rise },
-        uCol: { value: new THREE.Color(K.column) },
-        uColX: { value: K.columnX },
-        uColW: { value: K.columnW },
         uVig: { value: K.vignette },
       },
       vertexShader: `
@@ -288,25 +390,18 @@ export class LoadoutMenu {
         }`,
       fragmentShader: `
         uniform mat4 uProjInv, uViewInv;
-        uniform vec3 uTop, uHorizon, uBand, uCol;
-        uniform float uBandW, uRise, uColX, uColW, uVig;
+        uniform float uVig;
         varying vec2 vNdc;
-        ${SRGB_ENCODE}
+        ${SKY_FN}
 
         void main() {
           vec4 vp = uProjInv * vec4(vNdc, -1.0, 1.0);
           vec3 dir = normalize((uViewInv * vec4(normalize(vp.xyz / vp.w), 0.0)).xyz);
-          float up = dir.y;   // 0 on the horizon, +1 straight up
-
-          vec3 col = mix(uHorizon, uTop, smoothstep(0.0, uRise, up));
-          // the tight atmospheric band sitting on the horizon line
-          col += uBand * exp(-abs(up) / max(uBandW, 1e-4));
-          // one soft distant light column behind the weapon
-          float cx = (dir.x - uColX) / max(uColW, 1e-4);
-          col += uCol * exp(-cx * cx) * (1.0 - smoothstep(0.0, uRise * 2.2, abs(up)));
+          vec3 col = skyColor(dir);
           col *= 1.0 - uVig * dot(vNdc, vNdc) * 0.5;
 
-          gl_FragColor = vec4(toSRGB(col) + dither(gl_FragCoord.xy), 1.0);
+          // scene-linear out; OutputPass tone maps and encodes
+          gl_FragColor = vec4(max(col, 0.0), 1.0);
         }`,
     });
     this.backdrop = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
@@ -315,17 +410,78 @@ export class LoadoutMenu {
     this.scene.add(this.backdrop);
   }
 
-  // The deck's detail map. Greyscale around 0.5 — the shader reads it as a
-  // signed multiplier, so 0.5 is "leave this pixel alone".
+  // Force a map to tile by mirror-blending a band at each border.
   //
-  // Generated into a canvas when no `deckUrl` is configured, so the stage needs
-  // no asset to look right. Seamless by construction: the smears run the full
-  // width (so X wraps for free) and any that would cross the top or bottom edge
-  // are drawn a second time wrapped, which is what makes Z wrap too.
+  // At the very edge the output is the average of that pixel and its opposite
+  // number, so column 0 and column W-1 come out identical and the tile joins
+  // exactly — same for the rows. The two passes run in sequence rather than
+  // being summed, which is what makes the CORNERS agree as well.
+  //
+  // Chosen over the alternatives because it holds for any map: cropping to a
+  // whole number of panels needs a regular pitch (this one's is irregular, and
+  // is not a whole fraction of its width either), and MirroredRepeatWrapping
+  // would halve the effective panel pitch at every mirror line.
+  _makeSeamless(img) {
+    const W = img.naturalWidth, H = img.naturalHeight;
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const band = Math.max(1, Math.round(Math.min(W, H) * S.deckSeamBlend));
+    const src = g.getImageData(0, 0, W, H);
+    const mid = g.createImageData(W, H);
+    // weight reaches exactly 0.5 at the border and 0 by `band` pixels in
+    const wOf = (i, n) => 0.5 * (1 - Math.min(1, Math.min(i, n - 1 - i) / band));
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const w = wOf(x, W), o = (y * W + x) * 4, m = (y * W + (W - 1 - x)) * 4;
+        for (let k = 0; k < 3; k++) mid.data[o + k] = src.data[o + k] * (1 - w) + src.data[m + k] * w;
+        mid.data[o + 3] = 255;
+      }
+    }
+    const out = g.createImageData(W, H);
+    let sum = 0;
+    for (let y = 0; y < H; y++) {
+      const w = wOf(y, H);
+      for (let x = 0; x < W; x++) {
+        const o = (y * W + x) * 4, m = ((H - 1 - y) * W + x) * 4;
+        for (let k = 0; k < 3; k++) out.data[o + k] = mid.data[o + k] * (1 - w) + mid.data[m + k] * w;
+        out.data[o + 3] = 255;
+        sum += out.data[o];
+      }
+    }
+    g.putImageData(out, 0, 0);
+    // The shader reads the map against its own MEAN, so any map — dark plates,
+    // mid-grey scuffs — drops in without re-tuning deckDetail.
+    this._mapMid.value = Math.max(0.02, sum / (W * H) / 255);
+    return cv;
+  }
+
+  // The deck's map. With `deckUrl` set it carries the whole plate structure —
+  // grooves, bolts, cracks, plate-to-plate tone. Without one, a scuff map is
+  // generated into a canvas so the stage still works with no asset; that one is
+  // seamless by construction (smears run the full width, so X wraps for free,
+  // and any crossing the top or bottom edge are drawn again wrapped).
   _deckTexture() {
     let tex;
     if (S.deckUrl) {
-      tex = new THREE.TextureLoader().load(S.deckUrl);
+      // Loaded by hand rather than through TextureLoader: the bitmap has to be
+      // processed on a canvas before the GPU sees it, both to make it tile and
+      // to measure its mean.
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 1;
+      const g2 = cv.getContext('2d');
+      g2.fillStyle = '#808080';
+      g2.fillRect(0, 0, 1, 1);
+      tex = new THREE.CanvasTexture(cv);
+      const img = new Image();
+      img.onload = () => {
+        tex.image = this._makeSeamless(img);
+        tex.needsUpdate = true;
+      };
+      img.onerror = () => console.warn(`deck map failed to load: ${S.deckUrl}`);
+      img.src = S.deckUrl;
     } else {
       const N = 1024;
       const cv = document.createElement('canvas');
@@ -366,6 +522,7 @@ export class LoadoutMenu {
       }
       g.putImageData(img, 0, 0);
       tex = new THREE.CanvasTexture(cv);
+      this._mapMid.value = 0.5; // generated map is centred by construction
     }
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     // NoColorSpace, not sRGB: this is a multiplier, not a colour. Decoding it
@@ -386,29 +543,56 @@ export class LoadoutMenu {
   // never cover the gun: reflected geometry is always on the far side of the
   // mirror line from the camera.
   _buildStage() {
+    this._mapMid = { value: 0.5 }; // filled in by _deckTexture / _makeSeamless
+    const dir = (p) => new THREE.Vector3(...p).normalize();
     const floorMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       uniforms: {
-        // NOTE: authored in FINAL DISPLAY space. The deck is a raw ShaderMaterial,
-        // so three's ACES tone mapping never touches it — these are the pixels you
-        // get. Consequence worth knowing while tuning: changing `light.exposure`
-        // moves the weapon but NOT the deck, so the two can drift apart.
-        uBase: { value: new THREE.Color(S.floorBase) },
-        uHorizon: { value: new THREE.Color(S.floorHorizon) },
-        uBand: { value: new THREE.Color(S.floorBand) },
+        ...this._skyUniforms(), // the deck reflects the sky — see SKY_FN
+        // Surface colours are authored in DISPLAY space and pushed back through
+        // the tone curve by stageColor, so the hex in config is the pixel you
+        // get. Lights (uSeamGlow, uGrooveGlow, uSpec) are NOT — those are
+        // scene-linear and run past 1.0 so they bloom.
+        uBase: { value: stageColor(S.floorBase, L.exposure) },
+        uHorizon: { value: stageColor(S.floorHorizon, L.exposure) },
+        uBand: { value: stageColor(S.floorBand, L.exposure) },
         uBandRamp: { value: S.bandRamp },
-        uLine: { value: new THREE.Color(S.lineColor) },
-        uGlow: { value: new THREE.Color(S.floorGlow) },
+        uGroove: { value: stageColor(S.seamGroove, L.exposure) },
+        uSeamOn: { value: S.proceduralSeams ? 1 : 0 },
+        uSeamGlow: { value: new THREE.Color(S.seamGlow) },
+        uSeamStr: { value: S.seamGlowStrength },
+        uSeamStrMajor: { value: S.seamGlowMajor },
+        uSeamW: { value: S.seamWidth },
+        uSeamWMajor: { value: S.seamMajorWidth },
+        uSeamGlowW: { value: S.seamGlowWidth },
+        uSeamDrop: { value: S.seamDrop },
+        uSeamVary: { value: S.seamVary },
+        uPanelTone: { value: S.panelTone },
+        uGlow: { value: stageColor(S.floorGlow, L.exposure) },
         uStep: { value: S.gridStep },
         uMajor: { value: S.gridMajor },
-        uMinorAmp: { value: S.lineMinor },
-        uMajorAmp: { value: S.lineMajor },
         uHaze: { value: S.haze },
         uHazeStart: { value: S.hazeStart },
-        uLineNear: { value: S.lineNear },
-        uLineSoft: { value: S.lineNearSoft },
+        uLineNear: { value: S.seamNear },
+        uLineSoft: { value: S.seamNearSoft },
+        uGrooveGlow: { value: new THREE.Color(S.grooveGlow) },
+        uGrooveStr: { value: S.grooveGlowStrength },
+        uGrooveLo: { value: S.grooveLo },
+        uGrooveHi: { value: S.grooveHi },
+        uF0: { value: S.reflectF0 },
+        uReflect: { value: S.reflectStrength },
+        uRough: { value: S.reflectRough },
+        uSpec: { value: new THREE.Color(S.specColor) },
+        uSpecPow: { value: S.specPower },
+        uL1: { value: dir(L.keyPos) },
+        uL1Str: { value: S.specKey },
+        uL2: { value: dir(L.frontPos) },
+        uL2Str: { value: S.specFront },
+        uGlossVar: { value: S.glossVar },
         uMap: { value: this._deckTexture() },
+        uMapMid: this._mapMid,
+        uMapMax: { value: S.deckMapMax },
         uTile: { value: S.deckTile },
         uDetail: { value: S.deckDetail },
         uGlowR: { value: S.glowRadius },
@@ -422,26 +606,54 @@ export class LoadoutMenu {
           gl_Position = projectionMatrix * viewMatrix * wp;
         }`,
       fragmentShader: `
-        uniform vec3 uBase, uHorizon, uBand, uLine, uGlow;
+        uniform vec3 uBase, uHorizon, uBand, uGlow, uGroove, uSeamGlow;
         uniform float uBandRamp;
-        uniform float uStep, uMajor, uMinorAmp, uMajorAmp;
+        uniform float uStep, uMajor, uSeamOn;
+        uniform float uSeamStr, uSeamStrMajor, uSeamW, uSeamWMajor;
+        uniform float uSeamGlowW, uSeamDrop, uSeamVary, uPanelTone;
+        uniform vec3 uGrooveGlow, uSpec;
+        uniform float uGrooveStr, uGrooveLo, uGrooveHi;
+        uniform float uF0, uReflect, uRough, uSpecPow, uL1Str, uL2Str, uGlossVar;
+        uniform vec3 uL1, uL2;
         uniform float uHaze, uHazeStart, uLineNear, uLineSoft;
         uniform sampler2D uMap;
-        uniform float uTile, uDetail, uGlowR, uAlpha;
+        uniform float uTile, uDetail, uMapMid, uMapMax, uGlowR, uAlpha;
         varying vec3 vWorld;
-        ${SRGB_ENCODE}
+        ${SKY_FN}
 
-        // 1.0 on a grid line (~1px wide, antialiased), 0.0 between lines
-        float gridLine(float c, float s) {
-          float w = max(fwidth(c), 1e-5);
-          float d = abs(fract(c / s - 0.5) - 0.5) * s / w;
-          float line = 1.0 - min(d, 1.0);
-          // Dissolve once a line is narrower than the pixel drawing it. Without
-          // this the term never reaches 0 in the far field and the whole horizon
-          // whitens into a solid sheet of line colour instead of a floor — which
-          // is exactly what happens the moment the deck gets big enough to have
-          // a real distance to it.
-          return line * (1.0 - smoothstep(s * 0.35, s * 0.9, w));
+        float hash21(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 34.56);
+          return fract(p.x * p.y);
+        }
+
+        // Metres to the nearest MINOR seam crossing axis "a", where "b" runs
+        // along it. The pair (boundary index, cell index along that boundary) is
+        // the SEGMENT identity, and hashing it is what makes individual runs go
+        // missing — which is where the uneven spacing and the T-junctions come
+        // from. A ruled grid cannot produce either.
+        float seamMinor(float a, float b, float s) {
+          float bi = floor(a / s + 0.5);
+          // major boundaries are owned by seamMajor; skip them here so the two
+          // tiers do not stack into one over-bright line
+          if (abs(mod(bi, uMajor)) < 0.5) return 1e3;
+          if (hash21(vec2(bi, floor(b / s))) < uSeamDrop) return 1e3;
+          return abs(a / s - bi) * s;
+        }
+
+        // ...and to the nearest MAJOR seam. These never drop: they are the
+        // structure the plates are laid against.
+        float seamMajor(float a, float s) {
+          return abs(a / s - floor(a / s + 0.5)) * s;
+        }
+
+        // Coverage of a seam of half-width "w" at distance "d", antialiased on
+        // the distance field's own screen-space gradient. Widening to a pixel
+        // and dimming to compensate is what makes far seams FADE rather than
+        // sparkle — the energy is conserved instead of being point-sampled.
+        float seamCoverage(float d, float w, float fp) {
+          float wide = max(w, fp * 0.6);
+          return (1.0 - smoothstep(0.0, wide, d)) * (w / wide);
         }
 
         void main() {
@@ -457,20 +669,91 @@ export class LoadoutMenu {
           float amp = smoothstep(uLineNear, uLineSoft, d);
 
           vec3 col = uBase;
+          // Per-plate tone. Hashed per CELL, so where a seam has been dropped
+          // and two cells read as one plate there is a small step across a seam
+          // that is not there — keep uPanelTone low enough that it reads as
+          // patina rather than as a mistake.
+          vec2 cell = floor(vWorld.xz / uStep);
+          col *= 1.0 + (hash21(cell) - 0.5) * 2.0 * uPanelTone;
           // small pool of light directly beneath the weapon
           col += uGlow * pow(1.0 - min(length(vWorld.xz) / uGlowR, 1.0), 2.0);
-          // Surface detail, sampled in world XZ so it stays put on the deck
-          // rather than swimming with the camera. Signed around 0.5, and it
-          // MULTIPLIES: scuffs have to scale with how lit a patch of deck is,
-          // or they stay equally visible in the dark near field where nothing
-          // should be readable. Mip selection handles the grazing angle, so
-          // unlike the sine version this needs no distance fade of its own.
+          // The deck map, sampled in world XZ so it stays put on the deck rather
+          // than swimming with the camera. Read against its OWN MEAN, measured
+          // at load: at the mean it changes nothing, grooves darken and bolts
+          // brighten, and any map drops in without re-tuning uDetail. It
+          // MULTIPLIES, so plate detail scales with how lit that patch is
+          // instead of staying equally readable in the dark near field. Mip
+          // selection handles the grazing angle.
           float det = texture2D(uMap, vWorld.xz / uTile).r;
-          col *= 1.0 + (det - 0.5) * 2.0 * uDetail;
+          float m = clamp(det / uMapMid, 0.0, uMapMax);
+          col *= mix(1.0, m, uDetail);
 
-          float minor = max(gridLine(vWorld.x, uStep), gridLine(vWorld.z, uStep));
-          float major = max(gridLine(vWorld.x, uStep * uMajor), gridLine(vWorld.z, uStep * uMajor));
-          col += uLine * (minor * uMinorAmp + major * uMajorAmp) * amp;
+          // ---- light in the deck map's own grooves ----
+          // Keyed off the map going dark, so it follows whatever panelling the
+          // map has and is aligned to it by construction — which is the whole
+          // reason the procedural seams below are off when a map is in use.
+          float groove = 1.0 - smoothstep(uGrooveLo, uGrooveHi, m);
+          col += uGrooveGlow * groove * uGrooveStr * amp;
+
+          // ---- procedural panel seams (only without a panelled deck map) ----
+          if (uSeamOn > 0.5) {
+          float dMinor = min(seamMinor(vWorld.x, vWorld.z, uStep),
+                             seamMinor(vWorld.z, vWorld.x, uStep));
+          float dMajor = min(seamMajor(vWorld.x, uStep * uMajor),
+                             seamMajor(vWorld.z, uStep * uMajor));
+          // Clamp the footprint: a dropped segment makes the distance field jump
+          // to 1e3, and fwidth across that discontinuity is enormous — unclamped
+          // it blows the seam width open for one pixel at every plate corner.
+          float fpMinor = clamp(fwidth(dMinor), 1e-5, uStep * 0.25);
+          float fpMajor = clamp(fwidth(dMajor), 1e-5, uStep * 0.25);
+          float cMinor = seamCoverage(dMinor, uSeamW, fpMinor);
+          float cMajor = seamCoverage(dMajor, uSeamWMajor, fpMajor);
+
+          // The groove is a recess in the plate, so it REPLACES the surface...
+          col = mix(col, uGroove, max(cMinor, cMajor) * 0.9 * amp);
+          // ...and the light in it is emissive, so it ADDS. The exp() skirt is
+          // the light spilling onto the plates either side; bloom widens it
+          // further, which is what finally reads as a glow rather than a line.
+          float spill = exp(-dMinor / uSeamGlowW) * uSeamStr
+                      + exp(-dMajor / uSeamGlowW) * uSeamStrMajor;
+          // Vary brightness per plate edge. Keyed on the cell, so it steps at
+          // every plate boundary — a long run reads as a line of separate lit
+          // gaps rather than one uniform strip of neon.
+          float segVar = 1.0 - uSeamVary * hash21(cell + 7.13);
+          col += uSeamGlow * (cMinor * uSeamStr + cMajor * uSeamStrMajor + spill * 0.22) * amp * segVar;
+          }
+
+          // ---- environment reflection ----
+          // The deck is polished, and the eye sits a few centimetres above it,
+          // so Fresnel is doing most of the work: at these grazing angles the
+          // surface reflects nearly everything, which is what produces the
+          // brightening toward the horizon, the long soft smears and the wet
+          // look all at once.
+          vec3 V = normalize(vWorld - cameraPosition);
+          vec3 R = reflect(V, vec3(0.0, 1.0, 0.0));
+          float cosT = clamp(-V.y, 0.0, 1.0);
+          float F = uF0 + (1.0 - uF0) * pow(1.0 - cosT, 5.0);
+          // Scuffs break the polish, so the map drives glossiness too — that is
+          // what stops the reflection reading as a clean mirror.
+          float gloss = clamp(mix(1.0, m, uGlossVar), 0.0, 2.0);
+          // Five weighted taps spread in Y approximate a rough reflection. Y
+          // only: on a horizontal floor the sky varies almost entirely with
+          // height, so blurring across it is where all the softness is. Five
+          // rather than three because the horizon band is tight (uSkyBandW is
+          // 0.02) — at any useful roughness three taps straddle it and the
+          // reflection bands into visible steps instead of a smooth falloff.
+          vec3 refl = skyColor(normalize(R + vec3(0.0, -uRough, 0.0)))
+                    + skyColor(normalize(R + vec3(0.0, -uRough * 0.5, 0.0))) * 2.0
+                    + skyColor(R) * 3.0
+                    + skyColor(normalize(R + vec3(0.0, uRough * 0.5, 0.0))) * 2.0
+                    + skyColor(normalize(R + vec3(0.0, uRough, 0.0)));
+          refl /= 9.0;
+          col = mix(col, refl, clamp(F * uReflect * gloss, 0.0, 1.0));
+          // Broad specular lobes off the key and front lights. At a grazing view
+          // these stretch along the deck into the horizontal smears.
+          float spec = pow(max(dot(R, uL1), 0.0), uSpecPow) * uL1Str
+                     + pow(max(dot(R, uL2), 0.0), uSpecPow) * uL2Str;
+          col += uSpec * spec * F * gloss;
 
           // ...and the deck hazes into the sky. It has to land on the backdrop's
           // colour at ray.y == 0 INCLUDING that shader's horizon glow, hence the
@@ -480,7 +763,8 @@ export class LoadoutMenu {
           vec3 far = uHorizon + uBand * smoothstep(uBandRamp, 1.0, haze);
           col = mix(col, far, haze);
 
-          gl_FragColor = vec4(toSRGB(col) + dither(gl_FragCoord.xy), uAlpha);
+          // scene-linear out; OutputPass tone maps and encodes
+          gl_FragColor = vec4(max(col, 0.0), uAlpha);
         }`,
     });
     const quad = new THREE.PlaneGeometry(S.floorSize, S.floorSize).rotateX(-Math.PI / 2);
@@ -510,14 +794,22 @@ export class LoadoutMenu {
   // deck has already dissolved by the time you are looking a metre under it.
   // Fade the mirrored copy out with depth below the mirror line so it stays a
   // smear hugging the contact point, which is all the reference image shows.
-  _fadeMirrorMaterial(mat) {
+  //
+  // `jitter` is this copy's screen-space offset per metre of depth below the
+  // mirror line — see reflectBlur in config. Applied to gl_Position AFTER the
+  // projection, multiplied by w so it stays a constant offset in pixels rather
+  // than shrinking with distance: a blur kernel is a screen-space thing.
+  _fadeMirrorMaterial(mat, jitter) {
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uMirrorY = { value: this.floorY };
       sh.uniforms.uMirrorFade = { value: S.reflectFade };
+      sh.uniforms.uJitter = { value: jitter };
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying float vMirY;')
+        .replace('#include <common>',
+          '#include <common>\nvarying float vMirY;\nuniform vec2 uJitter;\nuniform float uMirrorY;')
         .replace('#include <project_vertex>',
-          '#include <project_vertex>\nvMirY = (modelMatrix * vec4(transformed, 1.0)).y;');
+          '#include <project_vertex>\nvMirY = (modelMatrix * vec4(transformed, 1.0)).y;\n' +
+          'gl_Position.xy += uJitter * max(0.0, uMirrorY - vMirY) * gl_Position.w;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>',
           '#include <common>\nvarying float vMirY;\nuniform float uMirrorY, uMirrorFade;')
@@ -532,31 +824,46 @@ export class LoadoutMenu {
   // Mirrored copies need their own materials (transparent, depth-free), and the
   // originals are shared with the real gun — so clone the materials once per
   // weapon and keep them. Eight guns; cloning on every tab click would churn.
+  //
+  // The result is a STACK of `reflectBlurTaps` copies at a fraction of the
+  // opacity each, spread along a mostly-vertical screen-space line: that stack
+  // is the blur. Costs a few extra draw calls of already-uploaded geometry, and
+  // buys a soft reflection with no render target, no second pass, and no
+  // interaction with the composer.
   _mirrorFor(key) {
     if (this._mirrors[key]) return this._mirrors[key];
     const src = this.game.assets.weaponModels[key];
     if (!src) return null;
-    const m = src.clone(true);
-    m.traverse((o) => {
-      if (!o.isMesh) return;
-      o.castShadow = false;
-      o.receiveShadow = false;
-      o.renderOrder = 3;
-      const one = !Array.isArray(o.material);
-      const mats = (one ? [o.material] : o.material).map((mat) => {
-        const c = mat.clone();
-        c.transparent = true;
-        c.opacity = S.reflect;
-        c.depthWrite = false;
-        c.depthTest = false;            // the deck is drawn before it, not over it
-        c.side = THREE.DoubleSide;      // negative Y scale flips triangle winding
-        this._fadeMirrorMaterial(c);
-        return c;
+    const taps = Math.max(1, Math.round(S.reflectBlurTaps));
+    const group = new THREE.Group();
+    for (let i = 0; i < taps; i++) {
+      const t = taps === 1 ? 0 : (i / (taps - 1)) * 2 - 1; // -1 .. 1
+      // mostly vertical: a floor reflection spreads along the surface, which at
+      // this camera is very nearly straight up the screen
+      const jitter = new THREE.Vector2(t * S.reflectBlur * 0.22, t * S.reflectBlur);
+      const m = src.clone(true);
+      m.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = false;
+        o.receiveShadow = false;
+        o.renderOrder = 3;
+        const one = !Array.isArray(o.material);
+        const mats = (one ? [o.material] : o.material).map((mat) => {
+          const c = mat.clone();
+          c.transparent = true;
+          c.opacity = S.reflect / taps;
+          c.depthWrite = false;
+          c.depthTest = false;          // the deck is drawn before it, not over it
+          c.side = THREE.DoubleSide;    // negative Y scale flips triangle winding
+          this._fadeMirrorMaterial(c, jitter);
+          return c;
+        });
+        o.material = one ? mats[0] : mats;
       });
-      o.material = one ? mats[0] : mats;
-    });
-    this._mirrors[key] = m;
-    return m;
+      group.add(m);
+    }
+    this._mirrors[key] = group;
+    return group;
   }
 
   _placeStage() {
@@ -676,6 +983,7 @@ export class LoadoutMenu {
     const h = this.el.viewer.clientHeight;
     if (!w || !h) return; // hidden — the observer fires again once it lays out
     this.renderer.setSize(w, h, false);
+    this.composer.setSize(w, h); // also resizes every pass, bloom included
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this._frameCamera(); // framing depends on aspect
@@ -790,6 +1098,16 @@ export class LoadoutMenu {
     // prewarm copies have to cast too or the first real frame still hitches.
     for (const c of clones) c.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     await prewarm(this.renderer, this.scene, this.camera, clones);
+    // ...then one real frame through the composer. three keys its program cache
+    // on tone mapping AND output colour space, and both differ between the
+    // shared prewarm's sRGB target and the composer's linear half-float one, so
+    // without this every material compiles a second time on the first bloomed
+    // frame — precisely the hitch prewarm exists to prevent.
+    const bay = new THREE.Group();
+    for (const c of clones) bay.add(c);
+    this.scene.add(bay);
+    this.composer.render();
+    this.scene.remove(bay);
     this._bakeThumbnails();
     this.refresh(); // swap the cards over to the baked renders
   }
@@ -919,6 +1237,6 @@ export class LoadoutMenu {
     const bu = this.backdrop.material.uniforms;
     bu.uProjInv.value.copy(this.camera.projectionMatrixInverse);
     bu.uViewInv.value.copy(this.camera.matrixWorld);
-    this.renderer.render(this.scene, this.camera);
+    this.composer.render();
   }
 }
