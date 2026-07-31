@@ -441,20 +441,98 @@ export class LoadoutMenu {
       }
     }
     const out = g.createImageData(W, H);
-    let sum = 0;
     for (let y = 0; y < H; y++) {
       const w = wOf(y, H);
       for (let x = 0; x < W; x++) {
         const o = (y * W + x) * 4, m = ((H - 1 - y) * W + x) * 4;
         for (let k = 0; k < 3; k++) out.data[o + k] = mid.data[o + k] * (1 - w) + mid.data[m + k] * w;
         out.data[o + 3] = 255;
-        sum += out.data[o];
       }
     }
     g.putImageData(out, 0, 0);
+    return cv;
+  }
+
+  // Repack a deck map into the one texture the shader samples:
+  //   R = height / albedo detail
+  //   G, B = the surface normal's two tangential components
+  //
+  // Packed rather than shipped as a second texture because R is all the deck
+  // shader was ever reading — G and B were carrying a duplicate of it. One
+  // upload, one sampler, one fetch in the inner loop, and the normal can never
+  // drift out of register with the albedo because they are the same pixels.
+  //
+  // The normal is a Sobel gradient of the luminance treated as height, which is
+  // what finally gives the deck something for the specular lobes and the
+  // reflection to catch: until now it was a mathematically flat plane, so every
+  // bolt and chamfer in the map was painted-on shading that could not respond to
+  // light. Sampling wraps, because the map tiles.
+  //
+  // Gradients are scaled by 3x their own RMS rather than by a fixed constant, so
+  // a soft map and a crunchy one both land in range; strength stays tunable in
+  // the shader via deckNormal.
+  _packDeckMap(cv) {
+    const W = cv.width, H = cv.height;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    const img = g.getImageData(0, 0, W, H);
+    const d = img.data;
+    const h = new Float32Array(W * H);
+    let sum = 0;
+    for (let p = 0, i = 0; p < W * H; p++, i += 4) {
+      h[p] = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      sum += h[p];
+    }
+    // Blur a COPY of the height before differencing it. A Sobel over the raw
+    // map turns its film grain into normals too, and grain-sized normals read
+    // as speckle rather than as surface — the relief we want is the bolts,
+    // chamfers and groove edges, which are all far larger than a pixel. The
+    // albedo keeps using the unblurred height, so plate detail stays crisp.
+    let hb = h;
+    const rad = Math.max(0, Math.round(S.deckNormalBlur));
+    if (rad > 0) {
+      const n = rad * 2 + 1, tmp = new Float32Array(W * H);
+      hb = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          let s = 0;
+          for (let i = -rad; i <= rad; i++) s += h[y * W + ((((x + i) % W) + W) % W)];
+          tmp[y * W + x] = s / n;
+        }
+      }
+      for (let x = 0; x < W; x++) {
+        for (let y = 0; y < H; y++) {
+          let s = 0;
+          for (let i = -rad; i <= rad; i++) s += tmp[((((y + i) % H) + H) % H) * W + x];
+          hb[y * W + x] = s / n;
+        }
+      }
+    }
+    const at = (x, y) => hb[((y % H) + H) % H * W + (((x % W) + W) % W)];
+    const gx = new Float32Array(W * H), gy = new Float32Array(W * H);
+    let sq = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = y * W + x;
+        gx[p] = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1))
+              - (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1));
+        gy[p] = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1))
+              - (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
+        sq += gx[p] * gx[p] + gy[p] * gy[p];
+      }
+    }
+    const rms = Math.sqrt(sq / (2 * W * H));
+    const k = 1 / Math.max(1e-4, rms * 3);
+    const enc = (v) => Math.round((Math.max(-1, Math.min(1, v * k)) * 0.5 + 0.5) * 255);
+    for (let p = 0, i = 0; p < W * H; p++, i += 4) {
+      d[i] = Math.round(h[p] * 255);
+      d[i + 1] = enc(gx[p]);
+      d[i + 2] = enc(gy[p]);
+      d[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
     // The shader reads the map against its own MEAN, so any map — dark plates,
     // mid-grey scuffs — drops in without re-tuning deckDetail.
-    this._mapMid.value = Math.max(0.02, sum / (W * H) / 255);
+    this._mapMid.value = Math.max(0.02, sum / (W * H));
     return cv;
   }
 
@@ -477,7 +555,7 @@ export class LoadoutMenu {
       tex = new THREE.CanvasTexture(cv);
       const img = new Image();
       img.onload = () => {
-        tex.image = this._makeSeamless(img);
+        tex.image = this._packDeckMap(this._makeSeamless(img));
         tex.needsUpdate = true;
       };
       img.onerror = () => console.warn(`deck map failed to load: ${S.deckUrl}`);
@@ -521,8 +599,10 @@ export class LoadoutMenu {
         d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, d[i] + n));
       }
       g.putImageData(img, 0, 0);
-      tex = new THREE.CanvasTexture(cv);
-      this._mapMid.value = 0.5; // generated map is centred by construction
+      // same packing as the loaded path — the shader always expects normals in
+      // G/B, so a generated map that left them as a copy of R would read as a
+      // wildly tilted surface everywhere
+      tex = new THREE.CanvasTexture(this._packDeckMap(cv));
     }
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     // NoColorSpace, not sRGB: this is a multiplier, not a colour. Decoding it
@@ -590,6 +670,7 @@ export class LoadoutMenu {
         uL2: { value: dir(L.frontPos) },
         uL2Str: { value: S.specFront },
         uGlossVar: { value: S.glossVar },
+        uNormalStr: { value: S.deckNormal },
         uMap: { value: this._deckTexture() },
         uMapMid: this._mapMid,
         uMapMax: { value: S.deckMapMax },
@@ -613,7 +694,7 @@ export class LoadoutMenu {
         uniform float uSeamGlowW, uSeamDrop, uSeamVary, uPanelTone;
         uniform vec3 uGrooveGlow, uSpec;
         uniform float uGrooveStr, uGrooveLo, uGrooveHi;
-        uniform float uF0, uReflect, uRough, uSpecPow, uL1Str, uL2Str, uGlossVar;
+        uniform float uF0, uReflect, uRough, uSpecPow, uL1Str, uL2Str, uGlossVar, uNormalStr;
         uniform vec3 uL1, uL2;
         uniform float uHaze, uHazeStart, uLineNear, uLineSoft;
         uniform sampler2D uMap;
@@ -684,9 +765,18 @@ export class LoadoutMenu {
           // MULTIPLIES, so plate detail scales with how lit that patch is
           // instead of staying equally readable in the dark near field. Mip
           // selection handles the grazing angle.
-          float det = texture2D(uMap, vWorld.xz / uTile).r;
+          vec4 tex = texture2D(uMap, vWorld.xz / uTile);
+          float det = tex.r;
           float m = clamp(det / uMapMid, 0.0, uMapMax);
           col *= mix(1.0, m, uDetail);
+          // Surface normal, unpacked from G/B. Faded out with haze: normal maps
+          // alias viciously at grazing angles, and the far deck is exactly that.
+          // Mip averaging already pulls the gradients toward zero out there, so
+          // this only finishes a job the hardware has started.
+          float nStr = uNormalStr * (1.0 - haze);
+          vec3 N = normalize(vec3((tex.g - 0.5) * -2.0 * nStr,
+                                  1.0,
+                                  (tex.b - 0.5) * -2.0 * nStr));
 
           // ---- light in the deck map's own grooves ----
           // Keyed off the map going dark, so it follows whatever panelling the
@@ -729,9 +819,12 @@ export class LoadoutMenu {
           // surface reflects nearly everything, which is what produces the
           // brightening toward the horizon, the long soft smears and the wet
           // look all at once.
+          // Reflected about the MAP's normal, not a flat up vector: this is what
+          // makes bolts, chamfers and groove edges actually catch the sky and
+          // the spec lobes instead of being painted-on shading.
           vec3 V = normalize(vWorld - cameraPosition);
-          vec3 R = reflect(V, vec3(0.0, 1.0, 0.0));
-          float cosT = clamp(-V.y, 0.0, 1.0);
+          vec3 R = reflect(V, N);
+          float cosT = clamp(dot(-V, N), 0.0, 1.0);
           float F = uF0 + (1.0 - uF0) * pow(1.0 - cosT, 5.0);
           // Scuffs break the polish, so the map drives glossiness too — that is
           // what stops the reflection reading as a clean mirror.

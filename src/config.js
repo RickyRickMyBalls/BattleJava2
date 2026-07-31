@@ -141,12 +141,15 @@ export const CFG = {
     // deck is taking up too much frame this is the knob — at 5 the horizon
     // landed at 0.23 of frame height against the reference's 0.57.
     //
-    // It briefly had to be non-zero: when the deck's gradient came from haze
+    // It briefly had to be positive: when the deck's gradient came from haze
     // alone, a near-zero eye height left no near field to grade across and the
     // floor read as a flat sheet. The Fresnel reflection supplies that gradient
-    // now — it keys off the ratio of eye height to distance, so it still falls
-    // off correctly with the eye only centimetres up — and 0 is fine again.
-    pitch: 0,
+    // now — it keys off the RATIO of eye height to distance, so it still falls
+    // off correctly with the eye only centimetres up — so zero and slightly
+    // negative are both fine. The real floor on this value is that the eye must
+    // stay above the deck plane; go far enough negative and you are under it,
+    // and a plane you are below simply is not there.
+    pitch: -2,
     pitchMin: -12,     // drag-to-orbit limits; below 0 you see the underside
     pitchMax: 32,
     pitchSpeed: 0.22,  // degrees per pixel dragged
@@ -297,9 +300,9 @@ export const CFG = {
     // by bright bolt specks, so anything near 0.5 catches whole plate interiors
     // and lights them up in blotches. Only the darkest cores are grooves.
     grooveGlow: 0xcfe6f7,
-    grooveGlowStrength: 0.35,
+    grooveGlowStrength: 0.9,
     grooveLo: 0.05,     // map/mean at or below this is fully "groove"...
-    grooveHi: 0.28,     // ...and at or above this is fully "plate"
+    grooveHi: 0.42,     // ...and at or above this is fully "plate"
     // Surface detail — the scuffs and polish smears, and the thing doing more
     // work than the grid is. A TEXTURE rather than procedural noise, and not
     // only because it looks better: the deck is seen at a grazing angle, where
@@ -321,7 +324,7 @@ export const CFG = {
     // be cropped square. `deckSeamBlend` fixes it at load — see _makeSeamless.
     deckUrl: '/textures/deck_plates.png',
     deckSeamBlend: 0.10, // border band mirror-blended to make the map tile
-    deckTile: 1.0,       // metres per repeat — puts its plates at roughly 24 cm
+    deckTile: 2.0,       // metres per repeat — puts its plates at roughly 48 cm
     deckDetail: 0.85,    // how hard the map modulates the deck, 0 = flat colour
     deckMapMax: 3.0,     // clamp on map/mean, so bolt specks cannot blow out
     floorAlpha: 1,      // the deck is opaque now; this is a global escape hatch
@@ -349,6 +352,19 @@ export const CFG = {
     specKey: 0.45,
     specFront: 0.9,
     glossVar: 0.9,         // how far the deck map breaks up the polish
+    // Strength of the surface normal derived from the deck map (Sobel of its
+    // luminance, packed into the map's G/B at load — see _packDeckMap). This is
+    // what lets bolts and groove chamfers catch the reflection and the spec
+    // lobes; without it the deck is a mathematically flat plane and every piece
+    // of relief in the texture is painted-on shading that cannot respond to
+    // light. Faded out with haze in the shader, since normal maps alias badly
+    // at exactly the grazing angles the far deck is seen at.
+    deckNormal: 0.1,
+    // Radius in texels that the height is blurred by BEFORE the gradient is
+    // taken. 0 lets the map's film grain become normals, which reads as speckle
+    // on the deck rather than as surface relief; the features worth catching
+    // light (bolts, chamfers, groove edges) are all much wider than this.
+    deckNormalBlur: 2,
 
     reflect: 0.2,      // mirrored-gun opacity at the contact line...
     reflectFade: 0.13, // ...falling to nothing this many metres below it
