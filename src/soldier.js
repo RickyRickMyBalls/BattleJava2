@@ -49,6 +49,20 @@ export function makeWeaponMount(mesh) {
   return makeBoneMount(mesh, 'righthand');
 }
 
+// Every weapon carries a `ref_muzzle` empty at the barrel tip (authored in
+// Blender). Blender appends .001 to duplicate names — the DMR and rocket
+// launcher both have it — and GLTFLoader then strips the dot as a reserved
+// character, so what actually reaches the scene graph is `ref_muzzle001`.
+// Match the suffix in any of its forms rather than the authored spelling.
+// Resolve once per gun and cache: a traverse per shot, with 64 soldiers
+// firing, is not free.
+const MUZZLE_RE = /^ref_muzzle[._]?\d*$/i;
+export function findMuzzle(root) {
+  let found = null;
+  if (root) root.traverse((o) => { if (!found && MUZZLE_RE.test(o.name || '')) found = o; });
+  return found;
+}
+
 // Upper-spine mount for the stowed weapon.
 export function makeBackMount(mesh) {
   return makeBoneMount(mesh, 'spine2') || makeBoneMount(mesh, 'spine1') || makeBoneMount(mesh, 'spine');
@@ -181,6 +195,7 @@ export class Soldier {
       if (src && !this.guns[def.key]) {
         const gun = src.clone(true);
         restoreBakedDisplays(gun); // ammo counters: clones keep the baked look
+        gun.userData.muzzle = findMuzzle(gun);
         this.guns[def.key] = gun;
       }
     }
@@ -197,6 +212,7 @@ export class Soldier {
     if (!src) return;
     const gun = src.clone(true);
     restoreBakedDisplays(gun);
+    gun.userData.muzzle = findMuzzle(gun);
     this.guns[key] = gun;
   }
 
@@ -326,7 +342,17 @@ export class Soldier {
   eyePos(out) {
     return out.set(this.pos.x, this.pos.y + 1.62, this.pos.z);
   }
+  // Barrel tip of the gun actually being held, so a rocket launcher and a
+  // pistol no longer fire from the same nominal chest point. Falls back to that
+  // point when there is no model (arena stubs, a soldier before its mesh loads).
+  //
+  // The world matrix can lag by a frame on distant soldiers, whose animation is
+  // throttled — invisible on a tracer origin, but do not build anything
+  // precision-critical on it.
   muzzlePos(out) {
+    const gun = this.guns && this.guns[this.heldKey];
+    const m = gun && gun.userData.muzzle;
+    if (m) return m.getWorldPosition(out);
     out.set(this.pos.x + Math.sin(this.yaw) * 0.5, this.pos.y + 1.42, this.pos.z + Math.cos(this.yaw) * 0.5);
     return out;
   }

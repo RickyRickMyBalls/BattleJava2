@@ -8,6 +8,8 @@ const _dir = new THREE.Vector3();
 const _to = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _pellet = new THREE.Vector3();
+// Reused result record for traceHit — read it before the next call.
+const _trace = { t: 0, hit: null, isHead: false, blockT: 1 };
 
 const MAX_TRACERS = 140;
 const MAX_ROCKETS = 12;
@@ -92,16 +94,16 @@ export class Combat {
   }
 
   // ---- Player shot from the camera -------------------------------------
-  firePlayerShot(from, dir, def, spreadRad) {
-    this._firePellets(this.game.playerSoldier, from, dir, def, spreadRad);
+  firePlayerShot(from, dir, def, spreadRad, visualFrom) {
+    this._firePellets(this.game.playerSoldier, from, dir, def, spreadRad, visualFrom || from);
   }
 
-  _firePellets(shooter, from, dir, def, spreadRad) {
+  _firePellets(shooter, from, dir, def, spreadRad, visualFrom = from) {
     const pellets = def.pellets || 1;
     for (let i = 0; i < pellets; i++) {
       _pellet.copy(dir);
       applySpread(_pellet, spreadRad + (pellets > 1 ? def.pelletSpread : 0));
-      this.resolveRay(shooter, from, _pellet, def);
+      this.resolveRay(shooter, from, _pellet, def, visualFrom);
     }
   }
 
@@ -179,9 +181,19 @@ export class Combat {
   }
 
   // ---- Shared hitscan: soldiers vs cover vs terrain, nearest wins -------
-  resolveRay(shooter, from, dir, def) {
+  // `visualFrom` is where the shot is DRAWN from; `from`/`dir` stay the ray the
+  // hit is resolved on. They differ for the player, whose aim comes off the
+  // camera while the tracer has to leave the barrel — otherwise every shot
+  // appears to come out of the middle of the screen. Defaults to `from`, which
+  // is what AI want: they already fire from their own muzzle.
+  // Nearest thing a ray meets — soldiers, cover, terrain — with no side effects.
+  // Shared so that third-person aiming asks exactly the question the shot
+  // resolver answers; a second copy of this would drift and the crosshair would
+  // quietly stop agreeing with where rounds land. Returns a reused record, so
+  // read it before calling again. Never pass a module scratch as `from`/`dir`:
+  // `_tmp` is written in here.
+  traceHit(shooter, from, dir, range) {
     const world = this.game.world;
-    const range = def.range;
     const ex = from.x + dir.x * range, ey = from.y + dir.y * range, ez = from.z + dir.z * range;
 
     const tCover = world.raycastCover(from.x, from.y, from.z, ex, ey, ez);
@@ -206,7 +218,27 @@ export class Combat {
       if (t >= 0 && t / range < hitT) { hit = s; hitT = t / range; isHead = false; }
     }
 
-    const endT = hit ? hitT : tBlock;
+    _trace.t = hit ? hitT : tBlock;
+    _trace.hit = hit;
+    _trace.isHead = isHead;
+    _trace.blockT = tBlock;
+    return _trace;
+  }
+
+  // Point the crosshair is actually over. Third person fires from the barrel,
+  // which sits off to one side of the camera, so the round has to be aimed at
+  // this rather than simply sent along the camera's forward.
+  aimPoint(shooter, from, dir, range, out) {
+    const t = this.traceHit(shooter, from, dir, range).t;
+    return out.set(from.x + dir.x * range * t, from.y + dir.y * range * t, from.z + dir.z * range * t);
+  }
+
+  resolveRay(shooter, from, dir, def, visualFrom = from) {
+    const range = def.range;
+    const tr = this.traceHit(shooter, from, dir, range);
+    const hit = tr.hit, isHead = tr.isHead;
+
+    const endT = tr.t;
     const endX = from.x + dir.x * range * endT;
     const endY = from.y + dir.y * range * endT;
     const endZ = from.z + dir.z * range * endT;
@@ -214,21 +246,27 @@ export class Combat {
     const trc = def.tracer || {};
     const style = trc.style || (trc.thick ? 'beam' : 'bolt');
     const alpha = trc.opacity ?? 1;
+    const vx = visualFrom.x, vy = visualFrom.y, vz = visualFrom.z;
     if (style === 'beam') {
       // laser: three slightly offset full-length lines, fading out
       for (let i = -1; i <= 1; i++) {
-        this.spawnTracer(from.x + i * 0.03, from.y + i * 0.03, from.z, endX, endY, endZ, shooter.team, trc.color, trc.life, 0, alpha);
+        this.spawnTracer(vx + i * 0.03, vy + i * 0.03, vz, endX, endY, endZ, shooter.team, trc.color, trc.life, 0, alpha);
       }
     } else if (style === 'vapor') {
       // sniper: instant full-length trail that lingers, rises and fades
-      this.spawnTracer(from.x, from.y, from.z, endX, endY, endZ, shooter.team, trc.color, trc.life || 0.85, trc.drift ?? 0.35, alpha);
+      this.spawnTracer(vx, vy, vz, endX, endY, endZ, shooter.team, trc.color, trc.life || 0.85, trc.drift ?? 0.35, alpha);
     } else {
       // ballistic bolt; `every` spawns a tracer only on every Nth shot
       const every = trc.every || 1;
       const n = (this._shotCount.get(def.key) || 0) + 1;
       this._shotCount.set(def.key, n);
       if (n % every === 0) {
-        this.spawnBolt(from.x, from.y, from.z, dir.x, dir.y, dir.z, range * endT,
+        // Aim from the muzzle to the impact point rather than reusing `dir`:
+        // when the two origins differ the bolt has to converge on the hit, or
+        // it flies visibly parallel to where the round actually landed.
+        const bx = endX - vx, by = endY - vy, bz = endZ - vz;
+        const blen = Math.hypot(bx, by, bz) || 1;
+        this.spawnBolt(vx, vy, vz, bx / blen, by / blen, bz / blen, blen,
           shooter.team, trc.color, trc.len || 4, trc.speed || 420, alpha);
       }
     }

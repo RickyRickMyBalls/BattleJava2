@@ -5,10 +5,13 @@ import * as THREE from 'three';
 import { CFG, WEAPONS, CLASSES, FP_DEFAULT, ADS_DEFAULT } from './config.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
+import { findMuzzle } from './soldier.js';
 
 const P = CFG.player;
 const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
+const _muzzle = new THREE.Vector3();
+const _aim = new THREE.Vector3();
 
 // Hip reference pose for the viewmodel holder. Aiming moves the holder to the
 // weapon's own `ads.pos` — the transform that puts that weapon's sight on the
@@ -159,11 +162,11 @@ export class Player {
     this._on(this.dom, 'mousedown', (e) => {
       if (this.game.menuOpen) return;
       if (!this.locked) { this.requestLock(); return; }
-      // Shots spawn at the camera, which in third person sits metres behind the
-      // player — so the observation camera does not shoot, same as freecam.
-      if (this.freecam || this.thirdPerson) return;
+      if (this.freecam) return;
       if (e.button === 0) this.firing = true;
-      if (e.button === 2) this.ads = true;
+      // ADS on a boom camera is its own piece of work — until then it would
+      // zoom the fov with no viewmodel to bring up.
+      if (e.button === 2 && !this.thirdPerson) this.ads = true;
     });
     this._on(document, 'mouseup', (e) => {
       if (e.button === 0) this.firing = false;
@@ -222,7 +225,18 @@ export class Player {
     this.viewmodel.visible = !on;
     if (on) this.tpDist = 0;       // ease the boom out from the head
     this.syncBodyVisibility();
-    this.game.hud.setCrosshairVisible(!on);
+    // The crosshair stays up: rounds are aimed at what it covers, so it is
+    // telling the truth in this view too.
+    this.game.hud.setCrosshairVisible(true);
+    // The flash cannot ride a hidden viewmodel — park it in the world and drive
+    // it from the body's muzzle instead.
+    const flashHome = on ? this.game.scene : this.viewmodel;
+    flashHome.add(this.flash);
+    flashHome.add(this.muzzleLight);
+    if (!on) {
+      this.flash.position.set(0, 0.03, -0.55);
+      this.muzzleLight.position.copy(this.flash.position);
+    }
     this.game.hud.setModeTag(on ? 'THIRD PERSON — O TO EXIT' : null);
   }
 
@@ -290,6 +304,10 @@ export class Player {
       if (fp.scale) mount.scale.setScalar(fp.scale);
       mount.add(model);
       this.gunHolder.add(mount);
+      // Barrel tip of the viewmodel. The viewmodel is posed for the screen
+      // rather than placed physically, so this sits ~half a metre off the
+      // camera — which is exactly where the gun the player can see is.
+      this.vmMuzzle = findMuzzle(model);
       // drive the gun's built-in ammo counter (weapons with a numbers_atlas)
       this.ammoDisplay = createAmmoDisplay(model);
       if (this.ammoDisplay) this.ammoDisplay.set(this.weapon.mag);
@@ -299,6 +317,7 @@ export class Player {
       tagViewmodelLayer(this.viewmodel);
     } else {
       this.ammoDisplay = null;
+      this.vmMuzzle = null;
     }
     this.game.hud.setWeaponName(this.weapon.def.name);
     this._syncBodyWeapons();
@@ -465,7 +484,15 @@ export class Player {
     // ---- Camera ----
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-    if (this.thirdPerson) this._applyBoom(dt);
+    if (this.thirdPerson) {
+      this._applyBoom(dt);
+      // world-space flash follows the body's barrel while it is alight
+      if (this.flash.material.opacity > 0 || this.muzzleLight.intensity > 0) {
+        s.muzzlePos(_muzzle);
+        this.flash.position.copy(_muzzle);
+        this.muzzleLight.position.copy(_muzzle);
+      }
+    }
     this.syncBodyVisibility();
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon
@@ -608,11 +635,32 @@ export class Player {
 
     this.camera.getWorldDirection(_dir);
     _from.copy(this.camera.position).addScaledVector(_dir, 0.3);
+    // Aim stays on the camera ray — the crosshair must keep telling the truth —
+    // but the round is drawn leaving the barrel. `_muzzle` is only ever read
+    // here, so it is safe to hand to a function that does not write it.
+    let muzzle = this.vmMuzzle ? this.vmMuzzle.getWorldPosition(_muzzle) : _from;
+
+    if (this.thirdPerson) {
+      // The viewmodel is hidden, so the visible gun is the body's — and the
+      // camera sits metres behind and to one side of it. Sending the round
+      // along the camera's forward from there would land it well off the
+      // crosshair, worse the closer the target is. So: find what the crosshair
+      // covers, then aim the round from the barrel at that point. Cover between
+      // the muzzle and the target now blocks the shot even when the camera can
+      // see over it, which is correct and is the one behaviour that differs
+      // from first person.
+      muzzle = this.soldier.muzzlePos(_muzzle);
+      this.game.combat.aimPoint(this.soldier, _from, _dir, def.range, _aim);
+      _dir.subVectors(_aim, muzzle).normalize();
+      _from.copy(muzzle);
+    }
 
     if (def.mode === 'projectile') {
-      this.game.combat.fireRocket(this.soldier, _from.clone(), _dir.clone(), def);
+      // A rocket is a visible object with travel time, so spawning it at the
+      // eye instead of the tube is far more obvious than a tracer doing it.
+      this.game.combat.fireRocket(this.soldier, muzzle.clone(), _dir.clone(), def);
     } else {
-      this.game.combat.firePlayerShot(_from, _dir, def, spread);
+      this.game.combat.firePlayerShot(_from, _dir, def, spread, muzzle);
       this.game.audio.playShot(def);
     }
 
