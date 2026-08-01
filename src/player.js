@@ -126,6 +126,10 @@ export class Player {
     this.reviving = false;
     this.reviveTarget = null;
     this.giveUpHeld = 0;    // seconds SPACE has been held while downed
+    // Supply crates share the interact key with casualty pickups.
+    this.drawing = false;
+    this.drawTimer = 0;
+    this.supplyCrate = null;
 
     // Input ownership. Listeners live on `document`, so every Player that
     // exists is handling every event — fine while there was only ever one, but
@@ -487,6 +491,7 @@ export class Player {
   actionBusy() {
     return this.gadgetBusy()
       || this.reviving
+      || this.drawing
       || !!(this.grenade && this.grenade.useTimer > 0)
       || !!(this.melee && this.melee.useTimer > 0);
   }
@@ -505,6 +510,10 @@ export class Player {
     if (g.charges <= 0) { this.game.hud.message(`${g.def.name} — EMPTY`, 1.5); return; }
     g.charges--;
     g.useTimer = g.def.useTime || 0;
+    // Placed at the END of the lockout, the same shape biofoam uses: the
+    // commitment is paid before the thing exists. Flagged rather than dropped
+    // here so `_updateGadgets` stays the single place a lockout resolves.
+    if (g.def.kind === 'placeable' && g.def.crate) g.pendingPlace = true;
     this._cancelWeaponAction();
   }
 
@@ -537,7 +546,15 @@ export class Player {
       if (g.cooldown > 0) g.cooldown = Math.max(0, g.cooldown - dt);
       if (g.useTimer > 0) {
         g.useTimer -= dt;
-        if (g.useTimer <= 0) { g.useTimer = 0; g.cooldown = g.def.cooldown || 0; }
+        if (g.useTimer <= 0) {
+          g.useTimer = 0;
+          g.cooldown = g.def.cooldown || 0;
+          if (g.pendingPlace) {
+            g.pendingPlace = false;
+            const crate = this.game.supply && this.game.supply.place(this.soldier, g.def);
+            this.game.hud.message(crate ? `${g.def.name} DEPLOYED` : `${g.def.name} — NO ROOM`, 2);
+          }
+        }
       }
     }
 
@@ -765,6 +782,20 @@ export class Player {
   // Hold E over a downed teammate. The charge is spent on completion, so an
   // attempt broken off — by gunfire, by walking away, by the casualty bleeding
   // out under your hands — costs only the time.
+  // E is the one interact key, and two things now answer to it. Casualties win:
+  // a crate will still be there in ten seconds and a bleeding squadmate will
+  // not, so a body in reach suppresses the crate prompt entirely rather than
+  // the two competing for the same keypress.
+  _updateInteract(dt) {
+    if (this._nearestCasualty()) {
+      this.drawTimer = 0;
+      this._updateRevive(dt);
+      return;
+    }
+    this._updateRevive(dt);          // clears revive state and the prompt
+    this._updateSupply(dt);
+  }
+
   _updateRevive(dt) {
     this.reviving = this._stepRevive(dt);
     // The third-person body kneels over the casualty, and the first-person
@@ -808,6 +839,94 @@ export class Player {
       holding ? t.reviveProgress : 0,
     );
     return holding;
+  }
+
+  // Drawing from a supply crate. Hold E, the bar fills, one draw comes out and
+  // the crate's pool drops by that much. Releasing loses the partial hold —
+  // same rule as a pickup, and for the same reason: the cost of an interrupted
+  // interaction should be the time, not a wasted resource.
+  _updateSupply(dt) {
+    const sup = this.game.supply;
+    const s = this.soldier;
+    if (!sup || !s || !s.alive) { this.drawing = false; this.drawTimer = 0; return; }
+    const crate = sup.nearest(this.pos, s.team);
+    this.supplyCrate = crate;
+    if (!crate) { this.drawing = false; this.drawTimer = 0; return; }
+
+    const cd = crate.def.crate;
+    const holding = !!this.keys['KeyE'] && this.locked && !this.freecam && !this.gadgetBusy()
+      && !(this.grenade && this.grenade.useTimer > 0)
+      && !(this.melee && this.melee.useTimer > 0);
+    // Offer the crate even when you cannot use it, and say why. A player
+    // standing on a full crate with nothing happening will assume it is broken.
+    const need = this._supplyNeed(cd);
+    if (!need) {
+      this.drawing = false;
+      this.drawTimer = 0;
+      this.game.hud.setPrompt(`${cd.label} CRATE — ${crate.pool} LEFT · FULL`, 0);
+      return;
+    }
+    this.drawing = holding;
+    if (holding) {
+      this.drawTimer += dt;
+      if (this.drawTimer >= CFG.crate.drawTime) {
+        this.drawTimer = 0;
+        const got = sup.draw(crate);
+        if (got > 0) this._takeSupply(cd, got);
+      }
+    } else {
+      this.drawTimer = 0;
+    }
+    this.game.hud.setPrompt(
+      holding ? `TAKING ${cd.label}` : `HOLD E — ${cd.label} CRATE (${crate.pool} LEFT)`,
+      holding ? this.drawTimer / CFG.crate.drawTime : 0,
+    );
+  }
+
+  // Is there anything this crate can actually give us right now?
+  _supplyNeed(cd) {
+    if (cd.give === 'biofoam') {
+      const b = this.biofoam;
+      return !!b && b.charges < ((BIOFOAM.perClass && BIOFOAM.perClass[this.loadout.cls]) || BIOFOAM.count);
+    }
+    if (this.weapons.some((w) => w && w.reserve < this._reserveCap(w))) return true;
+    return !!(this.grenade && this.grenade.count < this.grenade.def.count);
+  }
+
+  // The reserve ceiling for a weapon slot, honouring any gadget penalty — the
+  // same rule `_applyReservePenalty` applies at spawn. A webbing build's "full"
+  // is 0.6x everyone else's, and a crate must not quietly undo that by topping
+  // it up to the unpenalised maximum.
+  _reserveCap(w) {
+    let cap = w.def.reserve;
+    for (const which of ['primary', 'secondary']) {
+      const g = weaponSlotGadget(this.loadout, which);
+      if (g && g.reserveMult) cap = Math.round(cap * g.reserveMult);
+    }
+    return cap;
+  }
+
+  // Apply one draw. Reserve ammo only — the magazine in the gun is still yours
+  // to reload, so a crate pays for the next firefight rather than winning the
+  // one you are in.
+  _takeSupply(cd, amount) {
+    if (cd.give === 'biofoam') {
+      const b = this.biofoam;
+      const max = (BIOFOAM.perClass && BIOFOAM.perClass[this.loadout.cls]) || BIOFOAM.count;
+      b.charges = Math.min(max, b.charges + amount);
+      this.game.hud.message(`BIOFOAM — ${b.charges}`, 2);
+    } else {
+      for (const w of this.weapons) {
+        if (!w) continue;
+        const cap = this._reserveCap(w);
+        w.reserve = Math.min(cap, w.reserve + Math.round(cap * (cd.reserveFrac ?? 1)));
+      }
+      if (this.grenade && cd.grenades) {
+        this.grenade.count = Math.min(this.grenade.def.count, this.grenade.count + cd.grenades);
+      }
+      this.game.hud.message('RESUPPLIED', 2);
+    }
+    this.game.audio.playUI('resupply');
   }
 
   // Nearest downed teammate in reach. Any teammate, not just the squad — see
@@ -917,7 +1036,7 @@ export class Player {
       }
     }
     this.syncBodyVisibility();
-    this._updateRevive(dt);
+    this._updateInteract(dt);
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon
     // owns it — a sniper comes up slower than an SMG. Tuned in /chartest.html.
@@ -974,7 +1093,7 @@ export class Player {
 
     const w = this.weapon;
     this.game.hud.setAmmo(w.mag, w.reserve);
-    this.game.hud.setGadgets(this.biofoam, this.grenade); // no-op unless changed
+    this.game.hud.setGadgets(this.biofoam, this.grenade, this.gadgets); // no-op unless changed
     if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;
   }

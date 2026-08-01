@@ -18,6 +18,7 @@
 //   hud                        [Player, Combat]
 //   audio                      [Player, Combat]
 //   combat                     [Player._dischargeRound]
+//   supply                     [Player crate placement + draw] — null = no crates
 //   allSoldiers                [Combat] — hit candidates; [] = nothing to hit
 //   playerSoldier              [Player.soldier getter, Combat pellets]
 //   playerLoadout, playerTeam  [Player.applyLoadout]
@@ -108,6 +109,9 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
 
     allSoldiers: [],
     playerSoldier: null,
+    // No crates in the lobby/range: player.js checks for this rather than
+    // assuming a manager exists, the same way the casualty scans check `teams`.
+    supply: null,
     player: null,
     playerTeam: TEAM.BLUE,
     // Read through to the session like menuOpen does, rather than capturing the

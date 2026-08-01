@@ -79,6 +79,24 @@ export const CFG = {
     callRangeMult: 1.6,    // how much further a bot will travel for a call
   },
 
+  // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS
+  // OUT lives on its gadget def in `GADGETS`, because that is what differs;
+  // everything here is true of any crate.
+  //
+  // A crate is a finite pool, not a station: it serves a number of people and
+  // then it is scrap. That is what stops one Support anchoring a position
+  // indefinitely, and what makes placing a second one a real decision.
+  crate: {
+    reach: 2.6,          // metres you must be inside to draw
+    drawTime: 0.9,       // hold the interact key this long per draw
+    life: 240,           // seconds before an unspent crate despawns
+    placeAhead: 1.5,     // dropped this far in front of the placer
+    size: [0.92, 0.62, 0.72],
+    // Crates are team-coloured by their contents, not by side: you never see an
+    // enemy's, so a red/blue split would be information nobody can use.
+    markerRange: 70,
+  },
+
   player: {
     eyeHeight: 1.78,
     crouchEye: 1.15,
@@ -1311,18 +1329,43 @@ export const GADGETS = {
   },
 
   // --- Support -------------------------------------------------------------
+  // `crate` is what makes a placeable real: `pool` is how much the crate holds
+  // in the units it hands out, `per` is one draw. Pool divided by per is the
+  // number of soldiers it serves before it is scrap — the figure to tune, since
+  // it is what a Support is actually worth to a squad.
   medcrate: {
-    name: 'MEDICAL CRATE', kind: 'placeable', built: false,
+    name: 'MEDICAL CRATE', kind: 'placeable', built: true,
     svg: '<rect x="4" y="7" width="16" height="12" rx="1"/><path d="M12 10v6M9 13h6"/>',
     charges: 1,
+    useTime: 0.8,
+    crate: {
+      give: 'biofoam',
+      pool: 8,           // biofoam charges held
+      per: 2,            // handed over per draw — four soldiers topped up
+      color: 0x37d67a,
+      label: 'BIOFOAM',
+    },
   },
   // The resupply hub: standing near one regenerates gadget charges, grenades,
   // biofoam and reserve ammo for the whole team. That rule is what makes every
   // "2 charges per life" number in this file a pacing figure rather than a cap.
   ammocrate: {
-    name: 'AMMUNITION CRATE', kind: 'placeable', built: false,
+    name: 'AMMUNITION CRATE', kind: 'placeable', built: true,
     svg: '<rect x="4" y="7" width="16" height="12" rx="1"/><path d="M8 11h2v4H8zM14 11h2v4h-2z"/>',
     charges: 1,
+    useTime: 0.8,
+    crate: {
+      give: 'ammo',
+      pool: 6,           // resupplies held
+      per: 1,            // one draw is one resupply — the crate serves six
+      // What one resupply restores. Reserve only: the magazine in the gun is
+      // still yours to reload, so a crate never wins a firefight for you, it
+      // pays for the next one.
+      reserveFrac: 1,    // both weapons' spare ammo back to full
+      grenades: 1,       // and one frag
+      color: 0xffc44d,
+      label: 'AMMO',
+    },
   },
   supplypouch: {
     name: 'SUPPLY POUCH', kind: 'placeable', built: false,

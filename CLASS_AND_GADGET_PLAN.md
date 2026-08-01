@@ -804,6 +804,41 @@ cannot also snipe.
 The spotting drone is the most expensive gadget on this page — a controllable
 second entity with its own camera and UI. Build it last.
 
+### Supply crates
+
+**Locked:** Both of Support's crates are placed objects with a **finite pool**.
+You walk up, hold E, and take one draw; the pool drops by what you took. When it
+is empty the crate is scrap.
+
+| | Ammunition crate | Medical crate |
+| --- | --- | --- |
+| Holds | 6 resupplies | 8 biofoam charges |
+| One draw | Reserve ammo to full on both weapons, +1 frag | 2 charges |
+| Serves | 6 soldiers | 4 soldiers |
+
+A pool rather than a station is the whole design. A crate that simply radiates
+resupply lets one Support anchor a position for a match; a crate that serves six
+people and dies makes *where and when* you drop it the decision, and makes
+placing the second one matter. `pool ÷ per` is the number to tune, because it is
+what a Support is actually worth to a squad.
+
+**Reserve ammo only.** The magazine in the gun is still yours to reload, so a
+crate never wins the firefight you are in — it pays for the next one. The webbing
+build's 0.6× reserve penalty survives a resupply, too: its "full" is lower than
+everyone else's, and a crate must not quietly undo the cost of carrying two long
+guns.
+
+**One interact key, and casualties outrank crates.** E answers to both, and a
+body in reach suppresses the crate prompt entirely rather than the two competing
+for the same press. The crate will still be there in ten seconds; the casualty
+will not.
+
+**Open:** Bots do not use crates yet. That is the same objection this document
+raises about every gadget — 63 of 64 combatants are bots, so a crate only the
+player draws from is a crate that mostly does not exist. It is also the cheapest
+of the AI jobs on this page: the pool and the reach test already exist, and a bot
+needs only to notice it is short and walk over.
+
 ### Support — logistics and sustain
 
 | Slot | Options |
@@ -821,6 +856,9 @@ up in 1.67 seconds against everyone else's 5, and carries 15 biofoam charges
 against everyone else's 3. Fast enough to do it in the open, and rich enough to
 keep saying yes — which is what makes a squad want one when people start going
 down.
+
+Both crates are **built** — see Supply crates above. Support is now the first
+class whose identity gadgets actually function.
 
 **Open:** Both gadget slots are fixed, so Support has no loadout decision at all.
 It wants a third option to choose between. If construction supply comes from the
@@ -892,7 +930,12 @@ held SPACE, and finishing a casualty with any further damage. Behind
 with both weapons stowed while it plays; the downed pose is the existing death
 clip held at its last frame.
 
-**Not started** — every gadget behaviour, grenades, melee, construction, perks,
+**Landed** — Support's two crates, as finite pools drawn from with the interact
+key. `supply.js` owns crates, meshes and pools; what a draw *does* to a soldier
+stays with that soldier's state. Blockout geometry, swappable for an authored
+GLB without touching anything else. Bots cannot draw from them yet.
+
+**Not started** — every other gadget behaviour, grenades, melee, construction, perks,
 stamina, armor, drag and carry (casualty recovery phase 2), and the four
 unmigrated classes.
 
@@ -947,11 +990,13 @@ Ordered by how much each one changes if answered differently.
     default? Without it, Assault never carries the Magnum.
 13. What is Engineer's utility gadget, now that construction has left the slot?
 14. Does Support get a third gadget so it has a loadout decision at all?
-15. Does anything own sector capture?
-16. Does the Spartan ship with overshield first, deferring grapple and jetpack?
-17. Is one in five too frequent for the Spartan, now that its perk includes
+15. When do bots draw from crates? Until they do, Support's two identity gadgets
+    serve one combatant in sixty-four.
+16. Does anything own sector capture?
+17. Does the Spartan ship with overshield first, deferring grapple and jetpack?
+18. Is one in five too frequent for the Spartan, now that its perk includes
     unlimited stamina on top of shield, jump and free specialist access?
-18. Does the second-primary gadget stay Assault-only, or extend to other classes?
+19. Does the second-primary gadget stay Assault-only, or extend to other classes?
 
 ---
 
@@ -1029,6 +1074,13 @@ Ordered by how much each one changes if answered differently.
   nearer silent ones. Calls expire after 8 s and bots raise one automatically a
   beat after going down, so a busy field sorts into fresh casualties shouting and
   older ones quiet.
+- Built Support's two crates as finite pools rather than resupply stations: 6
+  ammunition resupplies, 8 biofoam charges, drawn one interaction at a time with
+  the interact key. `pool ÷ per` is what a Support is worth to a squad, and it
+  is the number to tune. Reserve ammo only, and the webbing reserve penalty
+  survives a resupply.
+- Locked casualties as outranking crates on the shared interact key. A crate
+  will still be there in ten seconds; a bleeding squadmate will not.
 - Gave the rescuer a CPR pose, with both weapons stowed and the first-person
   viewmodel hidden for the duration. A blockout clip, swappable by one path in
   `ASSET_PATHS.animations`. It loops at natural speed rather than stretching to

@@ -86,10 +86,10 @@ export class Hud {
   // Consumable gadget charges. Rebuilt only when the readout actually changes —
   // this runs every frame, and blowing away innerHTML each time would restart
   // the SVGs and thrash the layout for no reason.
-  setGadgets(biofoam, grenade) {
-    // The two universal consumables. Slot gadgets are deliberately absent —
-    // none of them are implemented, and a counter for something that does
-    // nothing is worse than no counter.
+  setGadgets(biofoam, grenade, gadgets) {
+    // The two universal consumables, plus any slot gadget that actually does
+    // something. Unbuilt ones stay absent on purpose — a counter for something
+    // that does nothing is worse than no counter.
     const shown = [];
     if (biofoam) {
       shown.push({ def: biofoam.def, n: biofoam.charges, busy: biofoam.useTimer > 0, tag: 'key X' });
@@ -97,6 +97,10 @@ export class Hud {
     if (grenade) {
       shown.push({ def: grenade.def, n: grenade.count, busy: grenade.useTimer > 0, tag: 'key G' });
     }
+    (gadgets || []).forEach((g, i) => {
+      if (!g || !g.def.built || g.def.kind === 'weaponSlot') return;
+      shown.push({ def: g.def, n: g.charges, busy: g.useTimer > 0, tag: `key ${3 + i}` });
+    });
     const sig = shown.map((g) => `${g.def.name}:${g.n}:${g.busy ? 1 : 0}`).join('|');
     if (sig === this._gadgetSig) return;
     this._gadgetSig = sig;
@@ -434,6 +438,19 @@ export class Hud {
         ctx.beginPath();
         ctx.arc(x, z, 5, 0, Math.PI * 2);
         ctx.stroke();
+      }
+    }
+    // Friendly supply crates, in their own contents colour. Squares, so they
+    // read as equipment rather than as another soldier blip.
+    const sup = this.game.supply;
+    if (sup) {
+      for (const c of sup.crates) {
+        if (c.team !== this.game.playerTeam || c.pool <= 0) continue;
+        ctx.fillStyle = `#${c.def.crate.color.toString(16).padStart(6, '0')}`;
+        ctx.fillRect(X(c.pos.x) - 2.5, Z(c.pos.z) - 2.5, 5, 5);
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(X(c.pos.x) - 2.5, Z(c.pos.z) - 2.5, 5, 5);
       }
     }
     // Player arrow (camera position while spectating)

@@ -68,6 +68,7 @@ export class GameAudio {
     // single-blip combat feedback above. Synthesized — no new audio asset.
     else if (kind === 'callHelp') { this._blip(520, 0.1, 0.16); this._blip(760, 0.13, 0.16, 0.11); }
     else if (kind === 'revived') { this._blip(560, 0.09, 0.15); this._blip(880, 0.15, 0.17, 0.09); }
+    else if (kind === 'resupply') { this._blip(660, 0.07, 0.13); this._blip(990, 0.1, 0.13, 0.07); }
   }
 
   _blip(freq, dur, vol, delay = 0) {
