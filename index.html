@@ -169,9 +169,15 @@
       position: absolute; top: 138px; left: 50%; transform: translateX(-50%); pointer-events: none;
       font-size: 14px; letter-spacing: 4px; color: var(--hud-red); text-shadow: 0 0 10px rgba(0,0,0,0.8);
     }
+    /* Pinned between the header and the loadout bar rather than centred on 44%.
+       Centred, it grew both ways with squad count and its lower edge reached
+       the bar on a short window — and capping max-height did not help, because
+       a centred box just gets shorter around the same midpoint. Anchoring both
+       edges means the gap is guaranteed and the existing scroll absorbs a long
+       squad list. */
     .dp-squad {
-      position: absolute; right: 20px; top: 44%; transform: translateY(-50%); width: 280px;
-      max-height: 62vh; overflow-y: auto;
+      position: absolute; right: 20px; top: 96px; bottom: calc(30px + var(--kb-h, 174px));
+      width: 280px; overflow-y: auto;
       background: var(--hud-bg); border: 1px solid var(--hud-cyan-dim); padding: 10px 12px;
     }
     .dp-sq-row { border: 1px solid transparent; padding: 5px 6px; margin: 2px 0; }
@@ -318,6 +324,20 @@
     }
     .kb-tabs button:hover { color: var(--hud-cyan); }
     .kb-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
+    /* The class perk, in the slot the CUSTOMIZE button used to hold. That
+       button was redundant: every card in this row opens the armoury, so it was
+       a seventh card doing what the other six already did.
+       A perk is not a slot and has no picker behind it, so it is set apart by
+       the separator before it and a warmer tint rather than by being a
+       different shape. */
+    .kb-perkcard {
+      background: rgba(24,20,12,0.55); border-color: #4a3f28;
+      color: rgba(255,200,120,0.8);
+    }
+    .kb-perkcard:hover { border-color: #a8823f; background: rgba(34,28,16,0.7); }
+    .kb-perkcard .kb-slotname { color: #7a6544; }
+    .kb-perkcard .kb-itemname { color: #b99a63; }
+
     /* Kit list and slot cards share one panel, list on the left. `stretch` is
        what makes the two columns the same height whichever is taller. */
     .kb-panel {
@@ -414,12 +434,46 @@
       content: ''; position: absolute; top: 0.3em; right: 0.3em;
       width: 0.4em; height: 0.4em; border-radius: 50%; background: #ffb15e; opacity: 0.8;
     }
-    .kb-customize {
-      flex: 0 0 5.6em; justify-content: center; gap: 0.4em;
-      color: var(--hud-cyan); background: rgba(127,212,255,0.08);
-    }
-    .kb-plus { font-size: 1.7em; line-height: 1; }
     .kb-sep { width: 1px; background: rgba(127,212,255,0.2); margin: 0.6em 0.3em; }
+
+    /* ---- Class perk detail (armoury left column) --------------------------
+       Replaces what started as a modal. This column had dead space under the
+       stat bars, and an inline panel is readable while you are still choosing
+       rather than something that interrupts and has to be dismissed. */
+    /* Bounded, because the panel's height varies with the perk: MJOLNIR carries
+       four stat rows plus the pending note and ran 47px into the class tabs
+       while the other four cleared comfortably. Capped against the viewport too
+       so a short window shrinks it rather than colliding, with scroll as the
+       backstop for any perk that outgrows even that. */
+    .ar-perkdetail {
+      margin-top: 12px; max-width: 340px;
+      max-height: min(232px, 22vh); overflow-y: auto;
+    }
+    .pd-head {
+      font-size: 10px; letter-spacing: 4px; color: #4d6675;
+      border-left: 3px solid var(--hud-cyan); padding-left: 10px; line-height: 1;
+    }
+    .pd-name {
+      font-size: 18px; letter-spacing: 4px; font-weight: 300;
+      color: var(--hud-cyan); margin: 7px 0 4px;
+    }
+    .pd-desc { font-size: 11px; line-height: 1.5; color: #8fa9ba; margin-bottom: 8px; }
+    .pd-stat {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 3px 0; border-top: 1px solid rgba(255,255,255,0.07);
+    }
+    .pd-stat .k { flex: 0 0 108px; font-size: 9px; letter-spacing: 2px; color: #6e93a8; }
+    .pd-stat .v { font-size: 12px; letter-spacing: 1px; color: #dceaf5; }
+    .pd-stat .n { font-size: 9px; letter-spacing: 1px; color: #4d6675; }
+    /* Designed but not wired. Saying so beats implying the number does
+       something — most of these wait on stamina, construction or the downed
+       state, none of which exist. */
+    .pd-stat.pending .v { color: #8a7350; }
+    .pd-stat.pending .k { color: #55707f; }
+    .pd-note {
+      margin-top: 8px; padding-top: 7px; border-top: 1px solid rgba(255,255,255,0.07);
+      font-size: 9px; letter-spacing: 1px; line-height: 1.5; color: #7a6544;
+    }
 
     /* ---- Deploy header ---- */
     .dp-header {

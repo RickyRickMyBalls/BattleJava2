@@ -13,6 +13,7 @@
 // refresh.
 
 import { CLASSES, GADGETS } from './config.js';
+import { perkFor } from './perkinfo.js';
 import {
   SLOTS, slotValue, slotDef, validateLoadout, matchingPreset,
   SLOTS_PER_CLASS, selectClass, selectSlot, resetSlot, saveBook,
@@ -111,14 +112,31 @@ export class LoadoutBar {
         this.slots.appendChild(sep);
       }
     }
-    const cust = document.createElement('button');
-    cust.className = 'kb-card kb-customize';
-    cust.innerHTML = '<span class="kb-slotname">CUSTOMIZE</span><span class="kb-plus">+</span>';
-    cust.title = 'Open the armoury';
-    cust.onclick = () => this._openArmoury();
-    this.slots.appendChild(cust);
+    // The class perk, in the slot the CUSTOMIZE button used to hold. That
+    // button was redundant — every card here opens the armoury, so it was a
+    // seventh card that did what the other six already did.
+    //
+    // A perk is NOT a slot: it is fixed by class and has no picker behind it.
+    // What keeps it from reading as one is the separator before it and its own
+    // styling; the click still opens the armoury, where the full breakdown is.
+    const sep = document.createElement('div');
+    sep.className = 'kb-sep';
+    this.slots.appendChild(sep);
+    this.slots.appendChild(this._perkCard(lo.cls));
 
     this._publishHeight();
+  }
+
+  _perkCard(cls) {
+    const perk = perkFor(cls);
+    const card = document.createElement('button');
+    card.className = 'kb-card glyph kb-perkcard';
+    card.title = perk ? `PERK — ${perk.name}: ${perk.desc}` : 'PERK';
+    card.onclick = () => this._openArmoury();
+    card.innerHTML = '<span class="kb-slotname">PERK</span>'
+      + `<span class="kb-art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${(perk && perk.svg) || ''}</svg></span>`
+      + `<span class="kb-itemname">${perk ? perk.name : '—'}</span>`;
+    return card;
   }
 
   // One card per slot, built to the same rules as the armoury grid: the SLOT

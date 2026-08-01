@@ -24,6 +24,7 @@ import {
   SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout,
   selectClass, selectSlot, resetSlot, saveBook, matchingPreset, SLOTS_PER_CLASS,
 } from './loadout.js';
+import { renderPerkDetail } from './perkinfo.js';
 import { prewarm, weaponClones } from './assets.js';
 
 const S = CFG.armoryStage;
@@ -234,6 +235,10 @@ export class LoadoutMenu {
                only worked while every slot held a gun. -->
           <div class="ar-nums" id="arNums"></div>
           <div class="ar-bars" id="arBars"></div>
+          <!-- Class perk, broken down. Lives here rather than in a modal: this
+               column had dead space under the bars, and the detail is readable
+               while you are still choosing instead of something to dismiss. -->
+          <div class="ar-perkdetail" id="arPerkDetail"></div>
         </div>
         <div class="ar-viewer" id="arViewer"></div>
       </div>
@@ -265,6 +270,7 @@ export class LoadoutMenu {
       viewer: ov.querySelector('#arViewer'),
       bottom: ov.querySelector('#arBottom'),
       tabs: ov.querySelector('#arTabs'),
+      perkDetail: ov.querySelector('#arPerkDetail'),
       cards: ov.querySelector('#arCards'),
       summary: ov.querySelector('#arSummary'),
       deploy: ov.querySelector('#arDeploy'),
@@ -1618,6 +1624,8 @@ export class LoadoutMenu {
       };
       this.el.tabs.appendChild(b);
     }
+
+    renderPerkDetail(this.el.perkDetail, lo.cls);
 
     if (this.pickSlot) this._renderPicker(); else this._renderGrid();
     this._renderInfo();

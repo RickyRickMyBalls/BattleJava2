@@ -1008,22 +1008,26 @@ export const BIOFOAM = {
 export const PERKS = {
   marathon: {
     name: 'MARATHON',
+    svg: '<path d="M13 3 6 13h5l-1 8 7-10h-5z"/>',
     desc: 'Larger stamina pool, and it recovers faster and while still moving.',
     stats: { staminaMax: 1.5, staminaRegen: 1.5 },
   },
   combatEngineer: {
     name: 'COMBAT ENGINEER',
+    svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>',
     desc: 'Carries a repair tool free, places blueprints, builds and repairs faster.',
     grants: ['repairtool'],       // removed from their gadget pool — that IS the perk
     stats: { buildRate: 2, repairRate: 2 },
   },
   combatLifesaver: {
     name: 'COMBAT LIFESAVER',
+    svg: '<path d="M2.5 12h4l2-5 3 10 2.2-5H21.5"/>',
     desc: 'Picks a downed soldier up in a third of the normal time.',
     stats: { reviveRate: 3 },
   },
   mjolnir: {
     name: 'MJOLNIR',
+    svg: '<path d="M12 3.5l7.5 2.8V12c0 4.6-3.2 7.4-7.5 8.5C7.7 19.4 4.5 16.6 4.5 12V6.3z"/><path d="M12 8.5v7"/>',
     desc: 'Powered armour: heavier shields, a three-metre jump, and no stamina limit.',
     // Free reach into the whole armoury in slot 2. This is the one perk that
     // brushes the utility-not-lethality rule, and it is why the Spartan pays
@@ -1036,6 +1040,7 @@ export const PERKS = {
   // exactly this on a 3 s TTL), or a squad spawn beacon.
   recon: {
     name: 'RECON',
+    svg: '<path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12 17.9 17.5 12 17.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/>',
     desc: 'Perk not yet decided.',
     stats: {},
   },
