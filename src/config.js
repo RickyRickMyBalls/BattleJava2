@@ -34,6 +34,12 @@ export const CFG = {
     shieldRegenRate: 12,
     runSpeed: 6.2,
     walkSpeed: 3.4,
+    // A tier above `runSpeed`, spent out of the same pool the player spends —
+    // see CFG.stamina.ai for when a bot is allowed to ask for it. Its own knob
+    // rather than a read of CFG.player.sprintMult: the two movers have different
+    // base speeds, and tying them together would make tuning one retune the
+    // other for no reason.
+    sprintMult: 1.5,
     // Jump is authored as a HEIGHT IN METRES — the single number to tune. Every
     // other jump quantity is derived from it and CFG.gravity: takeoff velocity
     // is sqrt(2*g*h), airtime is 2*v/g, and the jump clip is stretched to span
@@ -110,6 +116,28 @@ export const CFG = {
     // the latch, tapping Shift at zero buys a tenth of a second of sprint
     // every half second and the whole thing turns into a stutter.
     resprintAt: 1.5,
+
+    // When a BOT is allowed to ask for the boost. Measured over a 150 s battle
+    // (3603 alive-samples): 66% of the time a bot has no target, 89% has not
+    // been shot at in 2 s, and 93% is more than 25 m from where it is going —
+    // 57% satisfies all three at once, so this gate is open for most of a bot's
+    // life. It still barely moves the sim, because the pool's duty cycle eats
+    // the boost: a bot that always wants to sprint averages 6.53 m/s against a
+    // 6.2 run over a long trip, +5.4%. The visible change is the opening burst
+    // out of spawn — a full pool is 26% of a median 218 m trip — not the tempo.
+    //
+    // Retune `resprintAt` and `moveRegenMult` above to change what bots do
+    // after that first burst. `max` only sets how long the burst lasts.
+    ai: {
+      // Seconds since last hit. Matches BIOFOAM.aiReviveCalm, and for the same
+      // reason: `takeDamage` zeroes `shieldTimer`, so this is a free and
+      // instant "nobody is shooting at me". A bot that stows its rifle and runs
+      // while under fire reads as broken, whatever the pool says.
+      calm: 2.0,
+      // Don't sprint the last stretch. Also keeps a 9.3 m/s approach from
+      // slamming into the 2.5 m waypoint stop in `_move`.
+      minDist: 25,
+    },
   },
 
   // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS

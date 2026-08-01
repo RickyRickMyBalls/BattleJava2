@@ -217,6 +217,44 @@ export class Soldier {
     this.maxRange = Math.max(this.primary.ai.range, this.secondary.ai.range);
   }
 
+  // Spend and refill the sprint pool, and return the multiplier the sprint is
+  // worth this frame. ONE implementation for both movers: the player asks for it
+  // from the controller, a bot asks for it from `_move`, and the only thing they
+  // do not share is `sprintMult` — the two have their own top speeds and their
+  // own knob for it (CFG.player.sprintMult, CFG.soldier.sprintMult).
+  //
+  // Returns a multiplier rather than a boolean so that running dry RAMPS the
+  // bonus away over the last `exhaustBand` seconds instead of dropping it. The
+  // locked rule is that an empty pool slows you down, never freezes you — at
+  // zero this returns exactly 1 and you keep moving at base speed.
+  //
+  // Call it EXACTLY ONCE per soldier per frame, sprinting or not: the regen
+  // branch is in here too, so a skipped call is a frame of lost recovery and a
+  // doubled call is a frame of doubled drain.
+  stepStamina(dt, boosting, moving, sprintMult) {
+    if (!ST.enabled || this.staminaUnlimited) return sprintMult;
+
+    if (boosting && !this.exhausted) {
+      this.stamina -= dt;              // pool is denominated in seconds of sprint
+      this.staminaTimer = ST.regenDelay;
+      if (this.stamina <= 0) {
+        this.stamina = 0;
+        this.exhausted = true;         // latch: no stutter-sprinting at empty
+      }
+    } else if (this.stamina < this.maxStamina) {
+      // The delay runs off wall time whether or not you are moving — it is the
+      // gap between the last sprint frame and the refill starting, not a
+      // reward for standing still.
+      if (this.staminaTimer > 0) this.staminaTimer = Math.max(0, this.staminaTimer - dt);
+      else this.stamina = Math.min(this.maxStamina,
+        this.stamina + this.staminaRegen * (moving ? this.staminaMoveRegen : 1) * dt);
+    }
+    if (this.exhausted && this.stamina >= ST.resprintAt) this.exhausted = false;
+
+    if (this.exhausted) return 1;
+    return 1 + (sprintMult - 1) * Math.min(1, this.stamina / ST.exhaustBand);
+  }
+
   // Swap the character mesh (e.g., player switching between marine and spartan classes).
   setCharacter(character) {
     if (this.character === character) return;
@@ -446,6 +484,9 @@ export class Soldier {
     this.stamina = this.maxStamina;
     this.staminaTimer = 0;
     this.exhausted = false;
+    // Death does not run `_move`, so a soldier killed mid-sprint respawns still
+    // flagged as sprinting until its first move frame clears it.
+    this.sprinting = false;
     this.target = null;
     this.burstLeft = 0;
     // A respawn is a fresh kit — injector, frags and all.
@@ -653,6 +694,7 @@ export class Soldier {
     this.speed2D = 0;
     this.moveF = 0;
     this.moveR = 0;
+    this.sprinting = false;   // _move is not running to clear it
     if (!this.reviveHeld && this.reviveProgress > 0) {
       this.reviveProgress = Math.max(0, this.reviveProgress - dt * D.reviveDecay / D.reviveTime);
     }
@@ -905,6 +947,11 @@ export class Soldier {
   _move(dt) {
     const engaging = !!this.target;
     let desired = _v.set(0, 0, 0);
+    // How far the thing we are TRAVELLING to is, or 0 when we are not
+    // travelling at all. Only the travel branches below set it — fighting is
+    // not travel, and a bot closing on a target must never sprint at it with
+    // the rifle stowed.
+    let travelDist = 0;
 
     if (engaging) {
       const d = this.pos.distanceTo(this.target.pos);
@@ -925,6 +972,7 @@ export class Soldier {
       const dist = Math.hypot(dx, dz);
       if (dist > D.reviveRange * 0.7) {
         desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
+        travelDist = dist;
       }
       if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
     } else if (this.supplyTarget) {
@@ -936,17 +984,39 @@ export class Soldier {
       const dist = Math.hypot(dx, dz);
       if (dist > CFG.crate.reach * 0.6) {
         desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
+        travelDist = dist;
       }
       if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
     } else if (this.hasWaypoint) {
-      const wp = _v.copy(this.waypoint).add(this.formationOffset);
-      const dx = wp.x - this.pos.x, dz = wp.z - this.pos.z;
+      // Scalars, NOT a scratch Vector3. This read `_v.copy(waypoint).add(offset)`
+      // — and `desired` IS `_v`, so on any frame the soldier was already inside
+      // the 2.5 m stop below, `desired.set` never ran and the soldier kept the
+      // waypoint's absolute WORLD COORDINATES as its velocity: ~255 m/s, a 4 m
+      // lurch in one frame, every time a squad arrived at its objective.
+      // Same family as the all-bullets-miss bug in combat.js.
+      const wx = this.waypoint.x + this.formationOffset.x;
+      const wz = this.waypoint.z + this.formationOffset.z;
+      const dx = wx - this.pos.x, dz = wz - this.pos.z;
       const dist = Math.hypot(dx, dz);
       if (dist > 2.5) {
         desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
         this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 6));
+        travelDist = dist;
       }
     }
+
+    // Sprint. A tier above the travel run, on the same pool and the same rules
+    // the player spends — and gated on signals the AI already trusts elsewhere:
+    // no target (fighting is not travel), nobody shooting at us for `calm`
+    // seconds (`takeDamage` zeroes shieldTimer), and far enough out that the
+    // boost is worth spending. Applied BEFORE separation, because separation is
+    // a shove away from a squadmate, not a speed you were trying to travel at.
+    //
+    // `stepStamina` runs every frame regardless — it owns regen as well as
+    // drain, so skipping the call on a walking frame would strand the pool.
+    const wantSprint = !engaging && travelDist > ST.ai.minDist && this.shieldTimer >= ST.ai.calm;
+    const mult = this.stepStamina(dt, wantSprint, desired.lengthSq() > 0.16, S.sprintMult);
+    if (wantSprint) desired.multiplyScalar(mult);
 
     // Separation from squadmates
     for (const mate of this.squad.members) {
@@ -962,6 +1032,13 @@ export class Soldier {
 
     this.speed2D = desired.length();
     this.setMoveDir(desired.x, desired.z, this.speed2D);
+    // Set after setMoveDir because it reads moveF/moveR. The sprint clip carries
+    // the rifle low and its legs travel FORWARD, so it only reads on a
+    // forward-dominant vector — separation can shove the travel direction
+    // sideways, and a sideways sprint clip is a moonwalk. Same test the reload
+    // clips use for the same reason.
+    this.sprinting = wantSprint && mult > 1.01
+      && this.moveF > 0 && Math.abs(this.moveF) >= Math.abs(this.moveR);
     this.pos.x += desired.x * dt;
     this.pos.z += desired.z * dt;
     this.game.world.collideCircle(this.pos, 0.6);

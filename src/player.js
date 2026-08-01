@@ -95,10 +95,9 @@ export class Player {
     this.onGround = true;
     this.crouching = false;
     this.sprinting = false; // Shift is down and the boost is legal to ask for
-    // Latched when the sprint pool empties, cleared at CFG.stamina.resprintAt.
-    // Holding Shift does nothing while this is set — that is the whole point of
-    // the latch, and why it is separate from `sprinting`.
-    this.exhausted = false;
+    // The exhaust latch lives on the SOLDIER (`soldier.exhausted`), not here:
+    // bots latch too, and the HUD already reads the body rather than the
+    // controller. Holding Shift does nothing while it is set.
     this.walking = false;   // Ctrl: drops under the run threshold into the walk set
     this.ads = false;
     // Third-person observation camera (O). Look and movement are unchanged —
@@ -952,42 +951,13 @@ export class Player {
     return best;
   }
 
-  // Spend and refill the sprint pool, and return the sprint multiplier to
-  // actually apply this frame. The pool lives on the soldier (that is where
-  // perks resolve); the spending policy lives here, because sprint is a
-  // controller verb and no bot has one.
-  //
-  // Returns a multiplier rather than a boolean so that running dry RAMPS the
-  // bonus away over the last `exhaustBand` seconds instead of dropping it. The
-  // locked rule is that an empty pool slows you down, never freezes you — at
-  // zero this returns exactly 1 and you keep running at base speed.
+  // Spend and refill the sprint pool. The rule itself lives on the soldier —
+  // bots run the identical one, and two copies would drift — so this is only
+  // the controller's half: which multiplier the player's sprint is worth.
   _stepStamina(dt, boosting, moving) {
     const s = this.soldier;
-    if (!ST.enabled || !s || s.staminaUnlimited) return P.sprintMult;
-
-    if (boosting && !this.exhausted) {
-      s.stamina -= dt;                 // pool is denominated in seconds of sprint
-      s.staminaTimer = ST.regenDelay;
-      if (s.stamina <= 0) {
-        s.stamina = 0;
-        this.exhausted = true;         // latch: no stutter-sprinting at empty
-      }
-    } else if (s.stamina < s.maxStamina) {
-      // The delay runs off wall time whether or not you are moving — it is the
-      // gap between the last sprint frame and the refill starting, not a
-      // reward for standing still.
-      if (s.staminaTimer > 0) s.staminaTimer = Math.max(0, s.staminaTimer - dt);
-      else s.stamina = Math.min(s.maxStamina, s.stamina + s.staminaRegen * (moving ? s.staminaMoveRegen : 1) * dt);
-    }
-    if (this.exhausted && s.stamina >= ST.resprintAt) this.exhausted = false;
-    // Mirrored onto the soldier so anything reading the body (the HUD, a future
-    // third-person pass) sees the same state without reaching into the
-    // controller.
-    s.exhausted = this.exhausted;
-
-    if (this.exhausted) return 1;
-    const t = Math.min(1, s.stamina / ST.exhaustBand);
-    return 1 + (P.sprintMult - 1) * t;
+    if (!s) return P.sprintMult;
+    return s.stepStamina(dt, boosting, moving, P.sprintMult);
   }
 
   update(dt) {
