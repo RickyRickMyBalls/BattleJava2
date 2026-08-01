@@ -10,6 +10,7 @@ import { findMuzzle } from './soldier.js';
 
 const P = CFG.player;
 const D = CFG.downed;
+const ST = CFG.stamina;
 const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
 const _muzzle = new THREE.Vector3();
@@ -93,7 +94,11 @@ export class Player {
     this.velY = 0;
     this.onGround = true;
     this.crouching = false;
-    this.sprinting = false;
+    this.sprinting = false; // Shift is down and the boost is legal to ask for
+    // Latched when the sprint pool empties, cleared at CFG.stamina.resprintAt.
+    // Holding Shift does nothing while this is set — that is the whole point of
+    // the latch, and why it is separate from `sprinting`.
+    this.exhausted = false;
     this.walking = false;   // Ctrl: drops under the run threshold into the walk set
     this.ads = false;
     // Third-person observation camera (O). Look and movement are unchanged —
@@ -947,6 +952,44 @@ export class Player {
     return best;
   }
 
+  // Spend and refill the sprint pool, and return the sprint multiplier to
+  // actually apply this frame. The pool lives on the soldier (that is where
+  // perks resolve); the spending policy lives here, because sprint is a
+  // controller verb and no bot has one.
+  //
+  // Returns a multiplier rather than a boolean so that running dry RAMPS the
+  // bonus away over the last `exhaustBand` seconds instead of dropping it. The
+  // locked rule is that an empty pool slows you down, never freezes you — at
+  // zero this returns exactly 1 and you keep running at base speed.
+  _stepStamina(dt, boosting, moving) {
+    const s = this.soldier;
+    if (!ST.enabled || !s || s.staminaUnlimited) return P.sprintMult;
+
+    if (boosting && !this.exhausted) {
+      s.stamina -= dt;                 // pool is denominated in seconds of sprint
+      s.staminaTimer = ST.regenDelay;
+      if (s.stamina <= 0) {
+        s.stamina = 0;
+        this.exhausted = true;         // latch: no stutter-sprinting at empty
+      }
+    } else if (s.stamina < s.maxStamina) {
+      // The delay runs off wall time whether or not you are moving — it is the
+      // gap between the last sprint frame and the refill starting, not a
+      // reward for standing still.
+      if (s.staminaTimer > 0) s.staminaTimer = Math.max(0, s.staminaTimer - dt);
+      else s.stamina = Math.min(s.maxStamina, s.stamina + s.staminaRegen * (moving ? s.staminaMoveRegen : 1) * dt);
+    }
+    if (this.exhausted && s.stamina >= ST.resprintAt) this.exhausted = false;
+    // Mirrored onto the soldier so anything reading the body (the HUD, a future
+    // third-person pass) sees the same state without reaching into the
+    // controller.
+    s.exhausted = this.exhausted;
+
+    if (this.exhausted) return 1;
+    const t = Math.min(1, s.stamina / ST.exhaustBand);
+    return 1 + (P.sprintMult - 1) * t;
+  }
+
   update(dt) {
     const s = this.soldier;
     if (!s.alive) return;
@@ -964,8 +1007,13 @@ export class Player {
     if (this.keys['KeyA']) mx -= 1;
     if (this.keys['KeyD']) mx += 1;
     const moving = mx !== 0 || mz !== 0;
+    // Hoisted out of the speed line because three things need the same answer:
+    // the multiplier, the stamina drain, and the body's sprint clip. `mz` is
+    // still the raw ±1 here — it is normalised below, which preserves the sign.
+    const boosting = this.sprinting && mz > 0;
+    const sprintMult = this._stepStamina(dt, boosting, moving);
     let speed = P.speed;
-    if (this.sprinting && mz > 0) speed *= P.sprintMult;
+    if (boosting) speed *= sprintMult;
     if (this.walking) speed *= P.walkMult;
     if (this.crouching) speed *= P.crouchMult;
 
@@ -1013,12 +1061,20 @@ export class Player {
     s.aiming = this.ads; // drives the body's aim pose; AI use `target` instead
     s.crouching = this.crouching;
     // Only while the boost actually applies — `sprinting` stays true when you
-    // strafe with Shift down, but the speed bonus (and the clip) do not.
-    s.sprinting = this.sprinting && mz > 0;
+    // strafe with Shift down, but the speed bonus (and the clip) do not. Same
+    // rule now covers an empty pool: once stamina has ramped the bonus away
+    // there is no sprint to show, and the head-down clip over a jog is the body
+    // lying about how fast it is going.
+    s.sprinting = boosting && sprintMult > 1.01;
     s.airborne = !this.onGround;
     // `w` is declared further down in this scope, so read through the getter.
     s.reloading = this.weapon.reloading;
     s.reloadTime = this.weapon.def.reload;
+    // Mid-bash. Flagged off the lockout timer rather than the cooldown, so the
+    // body is swinging exactly as long as the hands are committed; the clip is
+    // authored longer than that on purpose and blends out on the way down.
+    s.meleeing = !!(this.melee && this.melee.useTimer > 0);
+    s.meleeSpan = this.melee ? (this.melee.def.animSpan || this.melee.def.useTime) : 0;
     // Direction is resolved against the body's own facing, not the camera's, so
     // the strafe clips stay correct however `s.yaw` is derived.
     s.setMoveDir(wx, wz, moving ? 1 : 0);
@@ -1058,7 +1114,9 @@ export class Player {
       Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) / TAN_HIP;
 
     // ---- Viewmodel pose/bob/recoil ----
-    if (moving && this.onGround) this.bobTime += dt * (this.sprinting ? 11 : 7.5);
+    // `s.sprinting` rather than `this.sprinting`: the fast bob belongs to the
+    // speed you are actually making, not to the key being held.
+    if (moving && this.onGround) this.bobTime += dt * (s.sprinting ? 11 : 7.5);
     const bobA = aim ? 0.004 : 0.012;
     const base = aim ? ads.pos : HIP_POS;
     const vx = base[0] + Math.sin(this.bobTime) * bobA;

@@ -324,6 +324,8 @@ export class Game {
 
     // HUD (real-time, even when paused)
     this.hud.setVitals(this.playerSoldier.shield, this.playerSoldier.health, this.playerSoldier.maxShield);
+    this.hud.setStamina(this.playerSoldier.stamina, this.playerSoldier.maxStamina,
+      this.playerSoldier.staminaUnlimited, this.playerSoldier.exhausted);
     this.hud.updateSectors(this.world.sectors);
     this.hud.setTickets(this.teams[0].tickets, this.teams[1].tickets);
     this.hud.updateSquadList(this.playerSquad);

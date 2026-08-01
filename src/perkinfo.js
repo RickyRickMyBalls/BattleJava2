@@ -15,16 +15,30 @@ const STAT_LABELS = {
   jumpHeight: { label: 'JUMP HEIGHT', fmt: (v) => `${v} m`, base: () => `${CFG.soldier.jumpHeight} m` },
   staminaMax: { label: 'STAMINA POOL', fmt: (v) => (v === Infinity ? 'UNLIMITED' : `×${v}`) },
   staminaRegen: { label: 'STAMINA RECOVERY', fmt: (v) => `×${v}` },
+  // Stated as the resulting behaviour, not the multiplier: "×1" against a
+  // baseline of 0.35 tells a player nothing, and this is the row that carries
+  // MARATHON's whole identity.
+  staminaMoveRegen: {
+    label: 'RECOVERS ON THE MOVE',
+    fmt: (v) => (v >= 1 ? 'FULL RATE' : `×${v}`),
+    base: () => `×${CFG.stamina.moveRegenMult}`,   // rendered as "others ×0.35"
+  },
   buildRate: { label: 'BUILD SPEED', fmt: (v) => `×${v}` },
   repairRate: { label: 'REPAIR SPEED', fmt: (v) => `×${v}` },
   reviveRate: { label: 'REVIVE SPEED', fmt: (v) => `×${v}` },
 };
 
 // Which perk stats the simulation actually reads today — soldier.setLoadout
-// pulls shield and jumpHeight off the perk and nothing else. The rest wait on
-// systems that do not exist yet (stamina, construction, the downed state), and
-// the panel says so rather than implying a perk does something.
-const LIVE_STATS = new Set(['shield', 'jumpHeight']);
+// resolves these off the perk, and player._stepStamina spends the pool. The
+// rest wait on systems that do not exist yet (construction, the downed state),
+// and the panel says so rather than implying a perk does something.
+//
+// Stamina is PLAYER-ONLY so far. It is live here because these rows are read in
+// the armoury, where you are choosing your own class — a bot's Marathon does
+// nothing yet, but a bot never reads this panel.
+const LIVE_STATS = new Set([
+  'shield', 'jumpHeight', 'staminaMax', 'staminaRegen', 'staminaMoveRegen',
+]);
 
 export function perkFor(cls) {
   const c = CLASSES[cls];

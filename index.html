@@ -110,6 +110,19 @@
     #shieldbar.flash > div { background: #fff; }
     #healthbar { height: 5px; background: #10202c; border: 1px solid var(--hud-cyan-dim); }
     #healthbar > div { height: 100%; background: #ffb15e; width: 100%; transition: width 0.1s; }
+    /* Stamina is the only vital that is normally FULL, so it is the only one
+       that earns its space by disappearing: opacity goes to 0 at a full pool
+       (hud.setVitals) and the element keeps its height, so shield and health
+       never move under it. Thinner and dimmer than health on purpose — third in
+       the hierarchy, and it must not read as a damage bar. Green, because both
+       other slots are taken and an amber-on-amber pair would be misread in
+       peripheral vision, which is the only way this bar is ever seen. */
+    #stambar { height: 3px; background: #10202c; border: 1px solid var(--hud-cyan-dim);
+               margin-top: 4px; opacity: 0; transition: opacity 0.25s; }
+    #stambar > div { height: 100%; background: #8fe6b0; width: 100%; transition: width 0.1s; }
+    /* Ran dry: the bar is refilling but Shift does nothing until resprintAt, and
+       without a distinct state that reads as a bug rather than a rule. */
+    #stambar.spent > div { background: #e6a05e; }
 
     #ammo { position: absolute; right: 26px; bottom: 26px; text-align: right; }
     #ammo .mag { font-size: 34px; font-weight: 600; color: var(--hud-cyan); }
@@ -1178,6 +1191,7 @@
     <div id="vitals">
       <div id="shieldbar"><div></div></div>
       <div id="healthbar"><div></div></div>
+      <div id="stambar"><div></div></div>
     </div>
 
     <div id="ammo">

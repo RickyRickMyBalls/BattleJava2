@@ -79,6 +79,39 @@ export const CFG = {
     callRangeMult: 1.6,    // how much further a bot will travel for a call
   },
 
+  // Stamina — see CLASS_AND_GADGET_PLAN.md. Player only for now: bots have no
+  // sprint tier at all (soldier._move picks between walkSpeed and runSpeed), so
+  // this narrows the player-vs-bot speed gap rather than widening it. Giving
+  // bots a sprint is a separate decision about bot movement, not a fairness
+  // patch owed to this one.
+  //
+  // `enabled` follows `downed`: the pool changes how the player crosses ground,
+  // and that is worth being able to switch off and re-feel rather than argue
+  // about on paper.
+  //
+  // The pool is denominated in SECONDS OF SPRINT — drain is 1/s by definition,
+  // which leaves `max` as the one number that has to be felt out rather than a
+  // rate and a capacity that only mean something multiplied together.
+  stamina: {
+    enabled: true,
+    max: 6,                // full pool = 6 s of sprint = ~57 m at 9.6 m/s,
+                           // which is a little over one sector radius (32 m)
+    regen: 0.5,            // units/sec standing still -> 12 s empty to full
+    regenDelay: 1.0,       // seconds after the last sprint frame before refill
+    // Regen while moving but not sprinting. Without this the baseline is
+    // 6 s of sprint followed by 12 s standing still, which is not a game.
+    // MARATHON raises it to 1 — that is the perk's "keeps recovering while
+    // still moving", and the axis that stops it being a weaker MJOLNIR.
+    moveRegenMult: 0.35,
+    // The last N units ramp the sprint bonus down to nothing instead of
+    // dropping it. Running out slows you; it never freezes you.
+    exhaustBand: 1.5,
+    // ...and once empty, recover this much before Shift bites again. Without
+    // the latch, tapping Shift at zero buys a tenth of a second of sprint
+    // every half second and the whole thing turns into a stutter.
+    resprintAt: 1.5,
+  },
+
   // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS
   // OUT lives on its gadget def in `GADGETS`, because that is what differs;
   // everything here is true of any crate.
@@ -1094,7 +1127,13 @@ export const PERKS = {
     name: 'MARATHON',
     svg: '<path d="M13 3 6 13h5l-1 8 7-10h-5z"/>',
     desc: 'Larger stamina pool, and it recovers faster and while still moving.',
-    stats: { staminaMax: 1.5, staminaRegen: 1.5 },
+    // Three keys, not two, and the third is the important one. Pool and rate
+    // alone make MARATHON a strictly weaker MJOLNIR — a bigger tank against a
+    // tank that never empties. `staminaMoveRegen: 1` overrides
+    // CFG.stamina.moveRegenMult outright, so the Assault is the only class that
+    // recovers at full rate on the move: MJOLNIR is capacity, this is recovery,
+    // and they stop being the same perk at different strengths.
+    stats: { staminaMax: 1.5, staminaRegen: 1.5, staminaMoveRegen: 1 },
   },
   combatEngineer: {
     name: 'COMBAT ENGINEER',
@@ -1518,6 +1557,15 @@ export const MELEE = {
     vertical: 1.5,
     useTime: 0.45,      // locked out of firing
     cooldown: 0.9,
+    // Third-person body clip, and the window it is compressed into. The clip
+    // (`melee` in ASSET_PATHS.animations) is 2.83 s as authored — playing it
+    // over `useTime` alone would be a 6.3x twitch. 1.2 s is a ~2.4x speed-up
+    // that still reads as a swing, and it deliberately outlasts the 0.45 s
+    // lockout: the tail is the recovery, blended out when the flag drops rather
+    // than played to its end. Nothing about the hit timing depends on this —
+    // the strike still lands at half of `useTime`.
+    anim: 'melee',
+    animSpan: 1.2,
   },
 };
 
@@ -1613,6 +1661,10 @@ export const ASSET_PATHS = {
     // timing readout, this is the body language. Placeholder: a generic CPR
     // clip standing in until a purpose-authored one exists.
     cpr: '/animations/CPR/CPR.glb',
+    // Rifle bash. Mixamo's "Rifle Block" — the rifle comes up and forward off
+    // the shoulder, which is the butt-stroke read we want. 2.83 s as authored,
+    // played compressed into `MELEE.bash.animSpan`; see the melee block above.
+    melee: '/animations/ridle-block.glb',
   },
   audio: {
     shot: '/UNSC/weapons/battle-rifle/audio/battle-rifle-shot-1.mp3',

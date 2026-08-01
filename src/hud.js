@@ -23,6 +23,7 @@ export class Hud {
       squadList: document.getElementById('squadList'),
       shieldbar: document.getElementById('shieldbar'),
       healthbar: document.getElementById('healthbar'),
+      stambar: document.getElementById('stambar'),
       ammoMag: document.getElementById('ammoMag'),
       ammoRes: document.getElementById('ammoRes'),
       reloadingTxt: document.getElementById('reloadingTxt'),
@@ -116,6 +117,20 @@ export class Hud {
   setVitals(shield, health, maxShield = CFG.soldier.shield) {
     this.el.shieldbar.firstElementChild.style.width = `${Math.max(0, (shield / maxShield) * 100)}%`;
     this.el.healthbar.firstElementChild.style.width = `${Math.max(0, (health / CFG.soldier.health) * 100)}%`;
+  }
+
+  // Stamina gets its own setter rather than more arguments on setVitals: it is
+  // the one vital that is usually full, and being full is the case where it
+  // must not be on screen at all. Passing `unlimited` (MJOLNIR) hides it
+  // permanently — a bar that can never move is noise, not information.
+  setStamina(stamina, maxStamina, unlimited, spent) {
+    const el = this.el.stambar;
+    if (!el) return;
+    const full = unlimited || !isFinite(maxStamina) || stamina >= maxStamina - 0.01;
+    el.style.opacity = full ? 0 : 1;
+    el.classList.toggle('spent', !!spent);
+    if (full) return;   // width under a hidden bar is nobody's business
+    el.firstElementChild.style.width = `${Math.max(0, (stamina / maxStamina) * 100)}%`;
   }
 
   showHitmarker(kill) {

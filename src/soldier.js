@@ -10,6 +10,7 @@ import { restoreBakedDisplays } from './drivenmaterial.js';
 const S = CFG.soldier;
 const AI = CFG.ai;
 const D = CFG.downed;
+const ST = CFG.stamina;
 const _v = new THREE.Vector3();
 // Second scratch, for a throw direction. Safe to pass into throwGrenade because
 // that only ever READS the direction (it copies it into the pooled grenade's
@@ -153,6 +154,12 @@ export class Soldier {
     this.reloading = false;     // ditto — mirrors the controller's weapon state
     this.reloadTime = 0;        // carried weapon's reload duration, for the stretch
     this.airborne = false;      // ditto — AI have no jump
+    // Mid-bash. Player controller only — AI have no melee verb yet, so this
+    // never leaves false on them. `meleeSpan` is the window the clip is
+    // compressed into (MELEE[x].animSpan), carried the same way `reloadTime`
+    // carries the per-weapon reload for its stretch.
+    this.meleeing = false;
+    this.meleeSpan = 0;
 
     this.target = null;         // enemy Soldier
     this.thinkTimer = Math.random() * AI.thinkInterval;
@@ -183,6 +190,28 @@ export class Soldier {
     // takeoff speed, hang time, how fast the jump clip plays — is derived from
     // this one number, so it is the only thing to tune. MJOLNIR clears 3 m.
     this.jumpHeight = perkStats.jumpHeight || S.jumpHeight;
+    // Stamina, in SECONDS OF SPRINT (drain is 1/s by definition). It lives here
+    // rather than on the controller for the same reason shield does: this is
+    // where perks resolve, and it is what lets bots opt in later without the
+    // rule being reimplemented on the other side.
+    //
+    // MJOLNIR's pool is literally Infinity, so `unlimited` is resolved once
+    // here and every consumer asks the flag — no bar width, drain or ramp ever
+    // divides by it.
+    this.maxStamina = ST.max * (perkStats.staminaMax || 1);
+    this.staminaUnlimited = !isFinite(this.maxStamina);
+    this.staminaRegen = ST.regen * (perkStats.staminaRegen || 1);
+    // MARATHON overrides the moving-regen penalty outright rather than scaling
+    // it, which is what "keeps recovering while still moving" means.
+    this.staminaMoveRegen = perkStats.staminaMoveRegen !== undefined
+      ? perkStats.staminaMoveRegen
+      : ST.moveRegenMult;
+    // Clamp, never refill: setLoadout also runs on firing-range weapon pickups,
+    // and picking a gun off the rack must not hand back a spent pool. `spawnAt`
+    // is the only thing that fills it.
+    this.stamina = Math.min(this.stamina !== undefined ? this.stamina : this.maxStamina, this.maxStamina);
+    this.staminaTimer = 0;   // regen delay remaining, seconds
+    this.exhausted = false;  // latched at empty, cleared at ST.resprintAt
     // targeting reach = the longest gun carried (capped so recon isn't omniscient)
     this.engageRange = Math.min(320, Math.max(this.primary.ai.range, this.secondary.ai.range));
     this.maxRange = Math.max(this.primary.ai.range, this.secondary.ai.range);
@@ -316,6 +345,10 @@ export class Soldier {
     // body lying about what the soldier is doing. It loops until the pickup
     // completes or is broken off.
     if (this.reviving) return 'cpr';
+    // A bash is a committed action like a pickup, so it outranks the gait and
+    // the reload the same way — but it sits BELOW `reviving` and `airborne`,
+    // which are states you cannot be swinging out of.
+    if (this.meleeing) return 'melee';
     if (this.crouching) {
       if (!moving) return 'crouchIdle';
       return this._dirAnim('crouchFwd', 'crouchBack', 'crouchLeft', 'crouchRight');
@@ -347,17 +380,20 @@ export class Soldier {
     if (!next) return;
     const prev = this.actions[this.currentAnim];
     next.reset();
-    // One-shots: a death holds its final pose, and the jump and reloads hold
-    // their last frame rather than looping if the event outlasts the clip.
+    // One-shots: a death holds its final pose, and the jump, bash and reloads
+    // hold their last frame rather than looping if the event outlasts the clip.
     const isReload = key.endsWith('Reload');
-    if (key === 'jump' || isReload || key.startsWith('death')) {
+    if (key === 'jump' || key === 'melee' || isReload || key.startsWith('death')) {
       next.setLoop(THREE.LoopOnce, 1);
       next.clampWhenFinished = true;
     }
     // A clip that accompanies a timed event is stretched to span it, so it ends
-    // as the event does. Neither duration is a constant: a taller jump hangs
-    // longer, and reload time is per-weapon (2.1-3.4 s across the armoury).
-    const span = key === 'jump' ? this.jumpAirtime : isReload ? this.reloadTime : 0;
+    // as the event does. None of the three durations is a constant: a taller
+    // jump hangs longer, reload time is per-weapon (2.1-3.4 s across the
+    // armoury), and the bash window is per-melee (MELEE[x].animSpan).
+    const span = key === 'jump' ? this.jumpAirtime
+      : key === 'melee' ? this.meleeSpan
+        : isReload ? this.reloadTime : 0;
     if (span > 0.05) next.setEffectiveTimeScale(next.getClip().duration / span);
     next.fadeIn(fade).play();
     if (prev) prev.fadeOut(fade);
@@ -407,6 +443,9 @@ export class Soldier {
     this._called = false;
     this.shield = this.maxShield;
     this.health = S.health;
+    this.stamina = this.maxStamina;
+    this.staminaTimer = 0;
+    this.exhausted = false;
     this.target = null;
     this.burstLeft = 0;
     // A respawn is a fresh kit — injector, frags and all.
@@ -558,6 +597,13 @@ export class Soldier {
     this.health = S.health * D.reviveHealth;
     this.shield = 0;
     this.shieldTimer = 0;
+    // Up on the same fraction as health, on purpose: `reviveHealth` is already
+    // the number that says how much of you came back, and reusing it means the
+    // strength of a pickup stays ONE knob. Sprinting straight out of a rescue
+    // is what the pool now costs you.
+    this.stamina = this.maxStamina * D.reviveHealth;
+    this.staminaTimer = 0;
+    this.exhausted = false;
     this.target = null;
     if (this.mesh) {
       this.mesh.visible = !this.isPlayer;
