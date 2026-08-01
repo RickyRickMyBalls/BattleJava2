@@ -33,6 +33,19 @@ export class LoadoutBar {
 
   mount(parent) { parent.appendChild(this.el); return this; }
 
+  // Publish the bar's measured height so the screens around it can clear it.
+  // It used to be a hardcoded 186px in the lobby's CSS, which was correct for
+  // exactly one font size — the moment the bar started scaling with the
+  // viewport, the hint and the class label were back inside it. Anything that
+  // needs to sit above the bar reads --kb-h rather than guessing.
+  _publishHeight() {
+    const h = this.el.offsetHeight;
+    if (h > 0 && h !== this._lastH) {
+      this._lastH = h;
+      document.documentElement.style.setProperty('--kb-h', `${h}px`);
+    }
+  }
+
   _changed() {
     const s = this.host.session;
     if (s) saveBook(s.loadouts);
@@ -104,6 +117,8 @@ export class LoadoutBar {
     cust.title = 'Open the armoury';
     cust.onclick = () => this._openArmoury();
     this.slots.appendChild(cust);
+
+    this._publishHeight();
   }
 
   // One card per slot, built to the same rules as the armoury grid: the SLOT

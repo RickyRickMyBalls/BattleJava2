@@ -238,20 +238,39 @@
       font-size: 9px; border: 1px solid var(--hud-cyan-dim); color: var(--hud-cyan);
     }
     .dp-mate-k { margin-left: auto; color: #6e93a8; }
+    /* Sits above the loadout bar rather than beside it. The two shared the
+       bottom edge while the bar was narrow, but the bar is centred and now
+       scales with the viewport — at 1366 it reaches into the button. Tracking
+       --kb-h keeps them apart at every size instead of only the one they were
+       laid out at. */
     .dp-bottom {
-      position: absolute; bottom: 20px; left: 24px; right: 24px;
+      position: absolute; bottom: calc(28px + var(--kb-h, 174px)); left: 24px; right: 24px;
       display: flex; align-items: flex-end; justify-content: flex-end; pointer-events: none;
     }
     .dp-bottom > * { pointer-events: auto; }
     /* ---- Bottom-center loadout strip ---- */
     /* Bar wrapper on the deploy screen. The lobby positions its own copy. */
+    /* Anchored to both edges and centred inside, rather than left:50% with a
+       translate. The translate version is shrink-to-fit, so .kb's `max-width:
+       100%` resolved against a width that was itself derived from .kb — the
+       cards collapsed to 91px and item names started clipping. Spanning the
+       viewport gives that percentage something real to measure against, and it
+       matches how the lobby mounts the same bar. */
     .dp-load2 {
-      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      position: absolute; bottom: 16px; left: 24px; right: 24px;
+      display: flex; justify-content: center; pointer-events: none;
     }
+    .dp-load2 > * { pointer-events: auto; }
     /* Centred in the space to the RIGHT of the settings panel, not on the
        viewport — .lb-panels is 400px and full height, so a viewport-centred bar
        runs under it. Anchoring to both edges and centring inside keeps the bar
-       clear at any width without hardcoding its own size. */
+       clear at any width without hardcoding its own size.
+       Left stays at the panel's full 400px. Reclaiming its faded right edge was
+       tried and reverted: the panel's CONTENT ends around y=566 and the bar top
+       lands at 576 on a 768-tall window, so the 46px of horizontal overlap was
+       only safe because of 10px of vertical luck. Shorten the window and the
+       bar rises into the START GAME button. Overlapping nothing is worth more
+       than 8% of width. */
     .lb-loadoutbar {
       position: absolute; bottom: 18px; left: 400px; right: 0;
       display: flex; justify-content: center; z-index: 3;
@@ -261,21 +280,45 @@
 
     /* ---- LoadoutBar (shared: deploy screen + lobby) ----------------------
        One component, mounted twice. These styles are deliberately screen
-       agnostic — nothing here may assume the deploy map behind it or the
-       lobby stage, or the two copies start drifting apart again. */
-    .kb { display: flex; flex-direction: column; align-items: center; gap: 7px; }
-    .kb-tabs { display: flex; gap: 3px; }
+       agnostic — nothing here may assume the deploy map behind it or the lobby
+       stage, or the two copies start drifting apart again.
+
+       EVERY dimension below is in `em`, so the whole bar scales from the single
+       font-size on .kb and there is one number to tune rather than twenty.
+       Deliberately NOT transform:scale() — that leaves the layout box at its
+       old size, so the collision clearances (the lobby's 400px settings panel,
+       the hint, the charinfo) would silently stop being true while still
+       looking correct until something resized.
+
+       The clamp is bounded by the tightest case, which is the lobby: its bar is
+       pinned between the settings panel and the right edge, so at 1366 it only
+       has ~1036px to work with against a bar that is ~88em wide. 0.85vw lands
+       just inside that and grows to the 18px cap on a wide screen. Cards may
+       also shrink (see .kb-card) as a backstop for aspect ratios this did not
+       anticipate. */
+    .kb {
+      font-size: clamp(11px, 0.9vw, 20px);
+      display: flex; flex-direction: column; align-items: center; gap: 0.7em;
+      max-width: 100%;
+    }
+    /* Buttons do NOT inherit font-size — the UA stylesheet gives them their own.
+       The cards and kit entries ARE buttons, so without this every `em` inside
+       them resolved against the browser default (~13.3px) instead of .kb, and
+       the whole bar stayed exactly the same size at 1366 and at 1920 while the
+       clamp dutifully changed a number nothing was reading. */
+    .kb button { font-family: inherit; font-size: inherit; }
+    .kb-tabs { display: flex; gap: 0.3em; }
     .kb-tabs button {
       cursor: pointer; background: rgba(8,18,28,0.85); color: #7c96a8;
-      border: 1px solid #24404f; border-bottom: none; padding: 7px 20px;
-      font-size: 11px; letter-spacing: 3px;
+      border: 1px solid #24404f; border-bottom: none; padding: 0.7em 2em;
+      font-size: 1.1em; letter-spacing: 0.27em;
     }
     .kb-tabs button:hover { color: var(--hud-cyan); }
     .kb-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
     /* Kit list and slot cards share one panel, list on the left. `stretch` is
        what makes the two columns the same height whichever is taller. */
     .kb-panel {
-      display: flex; align-items: stretch;
+      display: flex; align-items: stretch; max-width: 100%;
       background: rgba(6,14,22,0.88); border: 1px solid var(--hud-cyan-dim);
     }
     /* Width LOCKED: a flex item defaults to min-width:auto, so a long
@@ -283,8 +326,8 @@
        shrink every card, which reads as the row jumping when you switch class.
        Sized to fit the longest name, pinned, with an ellipsis as a backstop. */
     .kb-kits {
-      display: flex; flex-direction: column; justify-content: center; gap: 1px;
-      flex: 0 0 156px; min-width: 0; padding: 7px;
+      display: flex; flex-direction: column; justify-content: center; gap: 0.1em;
+      flex: 0 0 15.6em; min-width: 0; padding: 0.7em;
       border-right: 1px solid rgba(127,212,255,0.22);
     }
     /* Two lines: what the slot HOLDS on top, the slot number beneath at caption
@@ -292,14 +335,14 @@
     .kb-kit {
       cursor: pointer; text-align: left; background: none; color: #7c96a8;
       border: none; border-left: 2px solid transparent;
-      padding: 2px 8px; line-height: 1.15;
+      padding: 0.2em 0.8em; line-height: 1.15;
       transition: color 0.12s, background 0.12s, border-color 0.12s;
     }
     .kb-kit .n {
-      display: block; font-size: 9.5px; letter-spacing: 2px;
+      display: block; font-size: 0.95em; letter-spacing: 0.21em;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .kb-kit .s { display: block; font-size: 7px; letter-spacing: 1px; color: #55707f; }
+    .kb-kit .s { display: block; font-size: 0.7em; letter-spacing: 0.14em; color: #55707f; }
     .kb-kit:hover { color: #dceaf5; background: rgba(127,212,255,0.06); }
     .kb-kit.sel {
       color: var(--hud-cyan); background: rgba(127,212,255,0.10);
@@ -308,39 +351,43 @@
     .kb-kit.sel .s { color: var(--hud-cyan-dim); }
     .kb-reset {
       cursor: pointer; background: none; color: #55707f;
-      border: 1px solid #1e3543; margin-top: 4px; padding: 2px 8px;
-      font-size: 7.5px; letter-spacing: 2px;
+      border: 1px solid #1e3543; margin-top: 0.4em; padding: 0.2em 0.8em;
+      font-size: 0.75em; letter-spacing: 0.27em;
       transition: color 0.12s, border-color 0.12s;
     }
     .kb-reset:hover { color: #ffb15e; border-color: #6b4a28; }
-    .kb-slots { display: flex; gap: 8px; align-items: stretch; padding: 9px 12px; }
+    .kb-slots { display: flex; gap: 0.8em; align-items: stretch; padding: 0.9em 1.2em; min-width: 0; }
     /* Three stacked parts like the armoury card: slot name, art, item name.
        The strip used to show the item name alone, so you could not tell which
-       slot a gadget sat in without knowing the order. */
+       slot a gadget sat in without knowing the order.
+       `flex: 0 1 9.6em` — the basis is the intended size, the shrink is the
+       backstop that keeps a too-narrow window compressing rather than
+       overflowing. */
     .kb-card {
-      position: relative; width: 96px; min-height: 52px; max-height: 104px;
+      position: relative; flex: 0 1 9.6em; min-width: 0;
+      min-height: 5.2em; max-height: 10.4em;
       border: 1px solid #24404f; background: rgba(8,20,32,0.6);
       display: flex; flex-direction: column; align-items: center;
-      padding: 5px 4px 4px; cursor: pointer;
+      padding: 0.5em 0.4em 0.4em; cursor: pointer;
       color: rgba(127,212,255,0.75);
       transition: border-color 0.12s, background 0.12s;
     }
     .kb-card:hover { border-color: var(--hud-cyan); background: rgba(12,28,44,0.75); }
     .kb-slotname {
-      font-size: 6.5px; letter-spacing: 2px; color: #55707f;
+      font-size: 0.65em; letter-spacing: 0.31em; color: #55707f;
       line-height: 1; white-space: nowrap;
     }
     .kb-art {
       flex: 1; display: flex; align-items: center; justify-content: center;
-      width: 100%; min-height: 0; padding: 3px 0;
+      width: 100%; min-height: 0; padding: 0.3em 0;
     }
     .kb-art img { max-width: 92%; max-height: 100%; opacity: 0.9; object-fit: contain; }
-    .kb-art svg { width: 30px; height: 30px; }
-    .kb-fallback { font-size: 10px; letter-spacing: 1px; color: #6e93a8; }
+    .kb-art svg { width: 3em; height: 3em; }
+    .kb-fallback { font-size: 1em; letter-spacing: 0.1em; color: #6e93a8; }
     /* Two lines rather than one clipped one — BREACHING CHARGE and SMOKE
        LAUNCHER both truncated mid-word on a single line at this width. */
     .kb-itemname {
-      font-size: 6.5px; letter-spacing: 0.6px; color: #7fa0b4;
+      font-size: 0.65em; letter-spacing: 0.09em; color: #7fa0b4;
       line-height: 1.25; text-align: center; width: 100%;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
       overflow: hidden;
@@ -351,15 +398,15 @@
     .kb-card.wip .kb-art { opacity: 0.45; }
     .kb-card.wip .kb-itemname { color: #8a7350; }
     .kb-card.wip::after {
-      content: ''; position: absolute; top: 3px; right: 3px;
-      width: 4px; height: 4px; border-radius: 50%; background: #ffb15e; opacity: 0.8;
+      content: ''; position: absolute; top: 0.3em; right: 0.3em;
+      width: 0.4em; height: 0.4em; border-radius: 50%; background: #ffb15e; opacity: 0.8;
     }
     .kb-customize {
-      width: 62px; justify-content: center; gap: 4px;
+      flex: 0 0 6.2em; justify-content: center; gap: 0.4em;
       color: var(--hud-cyan); background: rgba(127,212,255,0.08);
     }
-    .kb-plus { font-size: 17px; line-height: 1; }
-    .kb-sep { width: 1px; background: rgba(127,212,255,0.2); margin: 6px 3px; }
+    .kb-plus { font-size: 1.7em; line-height: 1; }
+    .kb-sep { width: 1px; background: rgba(127,212,255,0.2); margin: 0.6em 0.3em; }
 
     /* ---- Deploy header ---- */
     .dp-header {
@@ -419,7 +466,13 @@
     }
     #dpDeploy:hover:not(:disabled) { background: rgba(127,212,255,0.32); }
     #dpDeploy:disabled { opacity: 0.35; cursor: default; border-color: var(--hud-cyan-dim); }
-    .dp-hint { position: absolute; bottom: 6px; left: 24px; font-size: 10px; letter-spacing: 2px; color: #46606f; pointer-events: none; }
+    /* Above the bar, tracking its measured height. At bottom:6px it clipped the
+       bar's lower-left corner — by 12px at 1920 and over 100px at 1366, where
+       the narrower bar starts further left. */
+    .dp-hint {
+      position: absolute; bottom: calc(22px + var(--kb-h, 174px)); left: 24px;
+      font-size: 10px; letter-spacing: 2px; color: #46606f; pointer-events: none;
+    }
 
     .dp-sector, .dp-hq {
       position: absolute; left: 0; top: 0; display: flex; align-items: center; justify-content: center;
@@ -533,13 +586,20 @@
     .lb-status { font-size: 11px; letter-spacing: 2px; color: #6e93a8; min-height: 14px; margin-top: 6px; }
     /* Raised clear of the loadout bar, same as .lb-hint. It is partly redundant
        now — the bar's tabs name the class and its cards name both weapons — but
-       it is the big readable label beside the character, so it stays. */
-    .lb-charinfo { position: absolute; right: 40px; bottom: 186px; text-align: right; pointer-events: none; }
+       it is the big readable label beside the character, so it stays.
+       --kb-h is the bar's MEASURED height, published by the component; a fixed
+       number here was correct for exactly one font size and broke the moment
+       the bar started scaling with the viewport. */
+    .lb-charinfo {
+      position: absolute; right: 40px; bottom: calc(34px + var(--kb-h, 174px));
+      text-align: right; pointer-events: none;
+    }
     .lb-ci-class { font-size: 26px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
     .lb-ci-guns { font-size: 11px; letter-spacing: 2px; color: #6e93a8; margin-top: 4px; }
-    /* Sits ABOVE the loadout bar now — at bottom:34px it was inside it. */
+    /* Sits ABOVE the loadout bar — at bottom:34px it was inside it. Tracks the
+       bar's measured height, see .lb-charinfo. */
     .lb-hint {
-      position: absolute; left: 50%; bottom: 186px; transform: translateX(-50%);
+      position: absolute; left: 50%; bottom: calc(34px + var(--kb-h, 174px)); transform: translateX(-50%);
       display: none; padding: 8px 18px; pointer-events: none;
       border: 1px solid var(--hud-cyan-dim);
       background: rgba(4, 8, 13, 0.55);
