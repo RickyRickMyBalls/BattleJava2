@@ -226,6 +226,20 @@ export class Game {
     this.hud.notePlayerAwareShot(shooter);
   }
 
+  // A beacon took a hit. Only the destruction is worth saying, and only to the
+  // two people it means something to: the squad whose spawn just went away, and
+  // whoever took it away. Routed through here rather than messaged from
+  // combat.js so the "who cares about this" question lives with the rest of the
+  // match state and not in the bullet path.
+  onBeaconHit(beacon, attacker, destroyed) {
+    if (!destroyed) return;
+    if (beacon.squad && beacon.squad === this.playerSquad) {
+      this.hud.message('RALLY BEACON DESTROYED', 3);
+    } else if (attacker && attacker.isPlayer) {
+      this.hud.message('ENEMY RALLY BEACON DESTROYED', 2.5);
+    }
+  }
+
   // Spawn the player at an exact point (the deploy screen owns spawn choice + jitter).
   deployPlayerAt(x, z) {
     if (this.playerRespawnTimer > 0 || !this.playerDead || this.gameOver) return false;
@@ -346,9 +360,19 @@ export class Game {
 
     // Team brains + squads
     const followPos = this.playerActive() ? this.player.pos : null;
+    const wasLeader = this.playerSquad && this.playerSquad.leader === this.playerSoldier;
     for (const t of this.teams) {
       t.brain.update(dt);
-      for (const sq of t.squads) sq.updateFollow(followPos);
+      for (const sq of t.squads) {
+        sq.refreshLeader();
+        sq.updateFollow(followPos);
+      }
+    }
+    // Told once, on the edge. The player inherits the job silently otherwise —
+    // usually the moment the bot ahead of them in the list goes down — and an
+    // ability you were never told you had is one nobody presses.
+    if (this.playerSquad && !wasLeader && this.playerSquad.leader === this.playerSoldier) {
+      this.hud.message('YOU ARE SQUAD LEADER — B TO PLANT A RALLY BEACON', 4);
     }
 
     // Soldiers (player's body vitals are simulated in its update too)
@@ -382,6 +406,21 @@ export class Game {
   }
 
   _respawnAI(s) {
+    // The squad's rally outranks every sector, and outranks them absolutely
+    // rather than by distance. That IS the ability: a leader planting one is
+    // saying "come back HERE", and a beacon the AI weighed against a nearer
+    // sector would be a rally that only ever worked for the player — 31 of the
+    // 32 soldiers on a side would keep trickling in from the rear.
+    const rally = s.squad && s.squad.beacon;
+    if (rally) {
+      const a = Math.random() * Math.PI * 2;
+      const r = CFG.beacon.spawnRadius * (0.45 + Math.random() * 0.55);
+      s.spawnAt(rally.pos.x + Math.cos(a) * r, rally.pos.z + Math.sin(a) * r);
+      const obj = s.squad.objective;
+      if (obj) { s.waypoint.set(obj.x, obj.y, obj.z); s.hasWaypoint = true; }
+      return;
+    }
+
     // Spawn at HQ or a safely-held sector nearest the squad objective
     const options = [{ x: this.world.hqDefs[s.team].x, z: this.world.hqDefs[s.team].z }];
     for (const sec of this.world.sectors) {

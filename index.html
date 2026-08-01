@@ -102,6 +102,9 @@
     /* Down is not dead — no strike-through, and it keeps a live colour, because
        this row is telling you someone is still worth going to. */
     #squad .mate.down { color: #ffd66e; }
+    /* Leader chevron. Same green as the rally marker on the deploy map, because
+       it marks the one person who can plant one. */
+    #squad .mate .lead { color: #2fd3a7; font-style: normal; font-size: 9px; margin-right: 3px; }
 
     /* ---- Vitals ---- */
     #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }
@@ -607,7 +610,7 @@
       font-size: 10px; letter-spacing: 2px; color: #46606f; pointer-events: none;
     }
 
-    .dp-sector, .dp-hq {
+    .dp-sector, .dp-hq, .dp-beacon {
       position: absolute; left: 0; top: 0; display: flex; align-items: center; justify-content: center;
       pointer-events: auto; user-select: none;
     }
@@ -640,7 +643,22 @@
     .dp-hq.own { border-color: var(--hud-blue); color: var(--hud-blue); cursor: pointer; }
     .dp-hq.own:hover { box-shadow: 0 0 14px rgba(127,212,255,0.5); }
     .dp-hq.enemy { border-color: var(--hud-red); color: var(--hud-red); }
-    .dp-sector.sel, .dp-hq.sel { animation: dp-pulse 1.2s infinite; border-width: 3px; }
+    /* Squad rally beacon. Its own colour, not the team blue: the point is that
+       it is YOUR SQUAD's spawn rather than the team's, and on a map already
+       carrying blue HQs and blue sectors a fourth blue thing would read as one
+       of them. Diamond so it is distinguishable from the round markers even
+       before the colour registers. */
+    .dp-beacon {
+      width: 26px; height: 26px; border: 2px solid #2fd3a7; color: #2fd3a7;
+      background: rgba(8,32,26,0.72); font-size: 11px; font-weight: 700;
+      border-radius: 5px; cursor: pointer;
+    }
+    .dp-beacon::after {
+      content: 'RALLY'; position: absolute; top: 100%; margin-top: 4px; left: 50%; transform: translateX(-50%);
+      font-size: 8px; letter-spacing: 2px; color: #2fd3a7; font-weight: 400; white-space: nowrap;
+    }
+    .dp-beacon:hover { box-shadow: 0 0 14px rgba(47,211,167,0.6); }
+    .dp-sector.sel, .dp-hq.sel, .dp-beacon.sel { animation: dp-pulse 1.2s infinite; border-width: 3px; }
     @keyframes dp-pulse {
       0%, 100% { box-shadow: 0 0 6px 2px rgba(127,212,255,0.35); }
       50% { box-shadow: 0 0 22px 6px rgba(127,212,255,0.65); }

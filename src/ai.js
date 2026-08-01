@@ -19,6 +19,8 @@ export class Squad {
     this.objective = null;   // sector ref
     this.orderType = 'MOVE';
     this.followPlayer = false;
+    this.leader = null;      // see refreshLeader — a position, never a class
+    this.beacon = null;      // live rally beacon, or null. structures.js owns it
   }
 
   addMember(soldier) {
@@ -26,6 +28,39 @@ export class Squad {
     this.members.push(soldier);
     const f = FORMATION[idx % FORMATION.length];
     soldier.formationOffset.set(f[0], 0, f[1]);
+    if (!this.leader) this.leader = soldier;
+  }
+
+  // Who leads. A POSITION, not a class and not a loadout: the leader is whoever
+  // holds the job this frame, and it moves the instant its holder cannot do it.
+  // Two rules, in order:
+  //   1. A living player leads any squad they are in. They joined it to command
+  //      it — `followPlayer` already makes the squad move on them — so a bot
+  //      nominally outranking the player would be a lie the HUD has to tell.
+  //   2. Otherwise the senior survivor: first in `members`, which is spawn
+  //      order, so leadership walks down a stable list rather than jittering
+  //      between bots as they trade damage.
+  //
+  // A DOWNED leader is not a leader, and that is the rule that earns its keep:
+  // bleeding out is precisely when a squad most needs someone able to plant a
+  // rally, and a casualty cannot. Same reason a dead one is not, which also
+  // covers the player sitting on the deploy screen — a bot leads until they
+  // are back on the field.
+  //
+  // Cheap enough to run every frame (16 squads x 4), and running it every frame
+  // is what makes it truthful: no promotion event to forget to fire.
+  refreshLeader() {
+    const fit = (m) => !!m && m.alive && !m.downed;
+    let next = null;
+    for (const m of this.members) {
+      if (m.isPlayer && fit(m)) { next = m; break; }
+      if (!next && fit(m)) next = m;
+    }
+    // Assigned unconditionally from `members`, never patched from the old
+    // value: a player who left this squad is no longer a candidate, so the
+    // stale leader cannot survive the switch.
+    this.leader = next;
+    return next;
   }
 
   aliveCount() {

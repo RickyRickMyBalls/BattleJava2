@@ -295,7 +295,15 @@ export class Hud {
 
   updateSquadList(squad) {
     const label = document.getElementById('squadLabel');
-    if (label) label.textContent = squad ? `${squad.name.toUpperCase()} SQUAD` : 'NO SQUAD';
+    // Whether the player holds the job is the one fact this panel gains by
+    // knowing about leadership — it is the only place a player can check
+    // without pressing the key and being told no.
+    const iLead = !!squad && squad.leader === this.game.playerSoldier;
+    if (label) {
+      label.textContent = squad
+        ? `${squad.name.toUpperCase()} SQUAD${iLead ? ' — YOU LEAD' : ''}`
+        : 'NO SQUAD';
+    }
     if (!squad) {
       this.el.squadList.innerHTML = '<div class="mate dead"><span>lone wolf</span></div>';
       return;
@@ -303,6 +311,7 @@ export class Hud {
     const rows = [];
     for (const m of squad.members) {
       if (m.isPlayer) continue;
+      const lead = m === squad.leader ? '<i class="lead">&#9650;</i>' : '';
       const hpPct = m.alive ? ((m.shield + m.health) / (m.maxShield + CFG.soldier.health)) * 100 : 0;
       // A downed squadmate is not a dead one — the row has to say so, because
       // this list is where you look to decide whether anyone is worth going to.
@@ -310,11 +319,11 @@ export class Hud {
       // about them.
       if (m.downed) {
         const left = Math.max(0, m.downTimer / D.bleedout) * 100;
-        rows.push(`<div class="mate down"><span>${m.name} ${m.callTimer > 0 ? '— HELP' : 'DOWN'}</span>`
+        rows.push(`<div class="mate down"><span>${lead}${m.name} ${m.callTimer > 0 ? '— HELP' : 'DOWN'}</span>`
           + `<span class="hp"><div style="width:${left}%;background:${DOWN}"></div></span></div>`);
         continue;
       }
-      rows.push(`<div class="mate${m.alive ? '' : ' dead'}"><span>${m.name}</span><span class="hp"><div style="width:${hpPct}%"></div></span></div>`);
+      rows.push(`<div class="mate${m.alive ? '' : ' dead'}"><span>${lead}${m.name}</span><span class="hp"><div style="width:${hpPct}%"></div></span></div>`);
     }
     const html = rows.join('');
     if (html !== this._squadHtml) { this._squadHtml = html; this.el.squadList.innerHTML = html; }

@@ -9,7 +9,12 @@ const _to = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _pellet = new THREE.Vector3();
 // Reused result record for traceHit — read it before the next call.
-const _trace = { t: 0, hit: null, isHead: false, blockT: 1 };
+const _trace = { t: 0, hit: null, structure: null, isHead: false, blockT: 1 };
+
+// Beacon hit shape, hoisted out of the per-bullet path: a stack of spheres at
+// [heightFraction, radius], the same test the soldier stack uses.
+const BEACON_SPHERES = CFG.beacon.hitSpheres;
+const BEACON_H = CFG.beacon.size[1];
 
 const MAX_TRACERS = 140;
 const MAX_ROCKETS = 12;
@@ -243,6 +248,24 @@ export class Combat {
       if (owner.isPlayer) this.game.hud.showHitmarker(killed);
       if (s.isPlayer) this.game.onPlayerDamaged(owner);
     }
+    // Enemy rally beacons take splash too. Measured to the head rather than the
+    // base, because a rocket at a beacon's feet is the shot anyone actually
+    // takes at one and it should be the shot that kills it. Iterated back to
+    // front: `damage` removes on death and that splices this same array.
+    const beacons = this.game.structures.beacons;
+    for (let i = beacons.length - 1; i >= 0; i--) {
+      const bc = beacons[i];
+      if (bc.team === owner.team) continue;
+      const dx = bc.pos.x - pos.x, dy = (bc.pos.y + CFG.beacon.size[1] * 0.6) - pos.y, dz = bc.pos.z - pos.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > radius + 0.5) continue;
+      const frac = Math.max(0, 1 - d / (radius + 0.5));
+      const dmg = def.dmg * Math.pow(frac, 1.4) * (owner.isPlayer ? 1 : CFG.ai.damageScale);
+      const destroyed = this.game.structures.damage(bc, dmg);
+      if (owner.isPlayer) this.game.hud.showHitmarker(destroyed);
+      this.game.onBeaconHit(bc, owner, destroyed);
+    }
+
     const b = this.booms[this.boomHead];
     this.boomHead = (this.boomHead + 1) % MAX_BOOMS;
     b.mesh.position.copy(pos);
@@ -339,8 +362,29 @@ export class Combat {
       if (t >= 0 && t / range < hitT) { hit = s; hitT = t / range; isHead = false; }
     }
 
-    _trace.t = hit ? hitT : tBlock;
+    // Rally beacons. Tested last but on the same nearest-wins compare, so one
+    // never eats a round that would have hit the soldier standing in front of
+    // it. Solid to BOTH sides — a friendly round that reaches a beacon stops
+    // there and sparks, because a prop that some bullets pass through is a prop
+    // players stop believing in. Only the damage is one-sided, and resolveRay
+    // owns that call.
+    let structure = null;
+    for (const b of this.game.structures.beacons) {
+      const dx = b.pos.x - from.x, dz = b.pos.z - from.z;
+      if (dx * dx + dz * dz > range * range) continue;
+      for (const [hf, r] of BEACON_SPHERES) {
+        _tmp.set(b.pos.x, b.pos.y + BEACON_H * hf, b.pos.z);
+        const t = raySphere(from, dir, _tmp, r, range);
+        // Clearing `hit` is the point: a beacon in front of a soldier takes the
+        // round instead of them, which is what makes shooting one a decision
+        // rather than something you do through the man guarding it.
+        if (t >= 0 && t / range < hitT) { hit = null; structure = b; hitT = t / range; isHead = false; }
+      }
+    }
+
+    _trace.t = hit || structure ? hitT : tBlock;
     _trace.hit = hit;
+    _trace.structure = structure;
     _trace.isHead = isHead;
     _trace.blockT = tBlock;
     return _trace;
@@ -357,7 +401,7 @@ export class Combat {
   resolveRay(shooter, from, dir, def, visualFrom = from) {
     const range = def.range;
     const tr = this.traceHit(shooter, from, dir, range);
-    const hit = tr.hit, isHead = tr.isHead;
+    const hit = tr.hit, isHead = tr.isHead, struck = tr.structure;
 
     const endT = tr.t;
     const endX = from.x + dir.x * range * endT;
@@ -399,6 +443,19 @@ export class Combat {
       const killed = hit.takeDamage(damage, shooter, isHead);
       if (shooter.isPlayer) this.game.hud.showHitmarker(killed);
       if (hit.isPlayer) this.game.onPlayerDamaged(shooter);
+    } else if (struck) {
+      // A round always stops here; only an ENEMY round hurts it. Friendly fire
+      // sparking off your own rally is the readable outcome — you can see you
+      // are shooting it, and you cannot dismantle your squad's spawn by
+      // accident from behind.
+      this.spawnSpark(endX, endY, endZ);
+      if (struck.team !== shooter.team) {
+        let damage = falloff(def, range * endT);
+        if (!shooter.isPlayer) damage *= CFG.ai.damageScale;
+        const destroyed = this.game.structures.damage(struck, damage);
+        if (shooter.isPlayer) this.game.hud.showHitmarker(destroyed);
+        this.game.onBeaconHit(struck, shooter, destroyed);
+      }
     } else if (endT < 1) {
       this.spawnSpark(endX, endY, endZ);
     }

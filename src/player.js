@@ -2,7 +2,7 @@
 // weapons (auto/burst/semi/pump/projectile/charge fire modes), freecam.
 
 import * as THREE from 'three';
-import { CFG, WEAPONS, CLASSES, GADGETS, GRENADES, MELEE, BIOFOAM, FP_DEFAULT, ADS_DEFAULT } from './config.js';
+import { CFG, WEAPONS, CLASSES, GADGETS, GRENADES, MELEE, BIOFOAM, BEACON, FP_DEFAULT, ADS_DEFAULT } from './config.js';
 import { weaponSlotGadget } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
@@ -112,6 +112,12 @@ export class Player {
     this.weapons = [mkWeaponState('ar'), mkWeaponState('smg')];
     this.gadgets = [];      // one state per loadout.gadgets entry, same order
     this.biofoam = null;    // universal, not a gadget — see mkBiofoamState
+    // The rally beacon. Not in `gadgets` and not rebuilt by applyLoadout: the
+    // ability comes from LEADING a squad, not from the kit, so its state has to
+    // outlive loadout changes — and its cooldown deliberately outlives death
+    // too. Planting one is a squad-level decision, and a leader who could reset
+    // the timer by dying would be taught to do exactly that.
+    this.rally = { def: BEACON, useTimer: 0, cooldown: 0, pendingPlace: false };
     this.grenade = null;    // { def, count, useTimer, cooldown, released }
     this.melee = null;      // { def, useTimer, cooldown, struck }
     this.swing = 0;         // 0..1 viewmodel dip, drives throw and bash motion
@@ -202,6 +208,7 @@ export class Player {
         if (e.code === 'KeyG') this.throwGrenade();
         if (e.code === 'KeyV') this.meleeAttack();
         if (e.code === 'KeyX') this.useBiofoam();   // universal, not a slot
+        if (e.code === 'KeyB') this.placeBeacon();  // leader's, not a slot
         if (e.code === 'KeyQ') this.switchWeapon(1 - this.active);
       }
     });
@@ -497,7 +504,8 @@ export class Player {
       || this.reviving
       || this.drawing
       || !!(this.grenade && this.grenade.useTimer > 0)
-      || !!(this.melee && this.melee.useTimer > 0);
+      || !!(this.melee && this.melee.useTimer > 0)
+      || this.rally.useTimer > 0;
   }
 
   // Which system owns a placeable. `crate` and `wall` are the two shapes one
@@ -505,8 +513,64 @@ export class Player {
   // entry plus a module, never a branch on a gadget's NAME.
   _placeSystem(def) {
     if (def.crate) return this.game.supply;
-    if (def.wall) return this.game.structures;
+    if (def.wall || def.beacon) return this.game.structures;
     return null;
+  }
+
+  // ------------------------------------------------- Squad leader ability --
+  // The rally beacon. Same committed-action shape as biofoam and the wall — pay
+  // a lockout, the thing lands at the end of it — with one difference that is
+  // the whole feature: the gate is not a charge or a class, it is whether you
+  // are currently your squad's leader. That is checked live rather than cached,
+  // because leadership moves the instant its holder goes down.
+  placeBeacon() {
+    if (this.freecam) return;
+    const s = this.soldier;
+    if (!s || !s.alive) return;
+    const squad = s.squad;
+    if (!squad) { this.game.hud.message('RALLY BEACON — NO SQUAD', 1.5); return; }
+    if (squad.leader !== s) {
+      // Names the current leader rather than just refusing: "not yours" is a
+      // rule, "Bravo-2 has it" is a fact you can do something about.
+      const who = squad.leader ? squad.leader.name : 'NOBODY';
+      this.game.hud.message(`RALLY BEACON — ${who.toUpperCase()} LEADS ${squad.name.toUpperCase()}`, 2);
+      return;
+    }
+    if (this.actionBusy()) return;
+    if (this.rally.cooldown > 0) {
+      this.game.hud.message(`RALLY BEACON — ${Math.ceil(this.rally.cooldown)}S`, 1.5);
+      return;
+    }
+    this.rally.useTimer = BEACON.useTime;
+    this.rally.pendingPlace = true;
+    this._cancelWeaponAction();
+  }
+
+  _updateRally(dt) {
+    const r = this.rally;
+    if (r.cooldown > 0) r.cooldown = Math.max(0, r.cooldown - dt);
+    if (r.useTimer <= 0) return;
+    r.useTimer -= dt;
+    if (r.useTimer > 0) return;
+    r.useTimer = 0;
+    if (!r.pendingPlace) return;
+    r.pendingPlace = false;
+
+    // Dying mid-plant loses it. The lockout is the commitment and you did not
+    // survive it — no beacon, and no cooldown either, because you never got the
+    // thing the cooldown pays for.
+    const s = this.soldier;
+    if (!s || !s.alive || s.squad !== this.game.playerSquad || !s.squad) return;
+
+    const made = this.game.structures.place(s, BEACON);
+    if (made) {
+      // Charged only on success, the same principle as the wall's refund: a
+      // placement refused by a rule you were never shown is the game's mistake.
+      r.cooldown = CFG.beacon.cooldown;
+      this.game.hud.message(`RALLY BEACON — ${s.squad.name.toUpperCase()} SPAWNS HERE`, 2.5);
+    } else {
+      this.game.hud.message(`RALLY BEACON — ${this.game.structures.lastRefusal || 'NO ROOM'}`, 2);
+    }
   }
 
   // Slot gadgets. Most of the pool is still declared rather than implemented —
@@ -1139,6 +1203,7 @@ export class Player {
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 110);
 
     this._updateGadgets(dt);
+    this._updateRally(dt);
     this._updateActions(dt);
     this._updateWeapon(dt, moving, speed);
 

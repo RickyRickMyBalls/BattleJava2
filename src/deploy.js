@@ -212,12 +212,35 @@ export class DeployScreen {
       m.onclick = () => { if (this._spawnOk(sec.id)) this._select(sec.id); };
       this.markers.push({ id: sec.id, el: m, sec, x: sec.x, z: sec.z });
     }
+    // The rally marker is built unconditionally and hidden when there is no
+    // beacon, rather than built on demand: markers are only rebuilt on show(),
+    // and a beacon can be planted or destroyed while this screen is open. One
+    // element whose visibility tracks the squad is cheaper and cannot go stale.
+    const bm = document.createElement('div');
+    bm.className = 'dp-beacon';
+    bm.textContent = 'R';
+    bm.title = 'Spawn on your squad rally beacon';
+    bm.style.display = 'none';
+    this.el.mapLayer.appendChild(bm);
+    bm.addEventListener('mousedown', (e) => e.stopPropagation());
+    bm.onclick = () => { if (this._spawnOk('beacon')) this._select('beacon'); };
+    this.markers.push({ id: 'beacon', el: bm, rally: true, x: 0, z: 0 });
   }
 
+  // Every place the player may enter the field. The single source of truth for
+  // the whole screen — markers, the canvas, the DEPLOY button and the "did my
+  // choice just fall out from under me" check in _updateMarkers all read this,
+  // which is why a rally beacon becomes a spawn option here and nowhere else.
   _spawnPoints() {
     const team = this.game.playerTeam;
     const hq = this.game.world.hqDefs[team];
     const pts = [{ id: 'hq', x: hq.x, z: hq.z }];
+    // The squad's rally, while it stands. Listed straight after HQ because it
+    // is the forward option, and it can vanish between two frames of this
+    // screen being open — the enemy can be shooting it right now — which the
+    // per-frame revalidation below already handles.
+    const rally = this.game.playerSquad && this.game.playerSquad.beacon;
+    if (rally) pts.push({ id: 'beacon', x: rally.pos.x, z: rally.pos.z });
     for (const sec of this.game.world.sectors) {
       if (sec.owner === team && !sec.contested) pts.push({ id: sec.id, x: sec.x, z: sec.z });
     }
@@ -598,7 +621,14 @@ export class DeployScreen {
     this.game.audio.resume();
     // jittered exact landing spot, kept inside the map
     const a = Math.random() * Math.PI * 2;
-    const r = 5 + Math.random() * 6;
+    // A rally lands you tight. The 5-11 m scatter is right for an HQ or a
+    // sector, where it stops a squad stacking on one pixel, and wrong for a
+    // beacon: that one was planted in cover deliberately, and 11 m from it is
+    // the open ground the leader was avoiding. Matches the radius bots use in
+    // game._respawnAI, so the whole squad arrives in the same pocket.
+    const r = this.selected === 'beacon'
+      ? CFG.beacon.spawnRadius * (0.45 + Math.random() * 0.55)
+      : 5 + Math.random() * 6;
     const x = pt.x + Math.cos(a) * r;
     const z = pt.z + Math.sin(a) * r;
     this._startTransition(x, z);
@@ -673,6 +703,15 @@ export class DeployScreen {
   _updateMarkers() {
     const team = this.game.playerTeam;
     for (const m of this.markers) {
+      if (m.rally) {
+        const b = this.game.playerSquad && this.game.playerSquad.beacon;
+        m.el.style.display = b ? 'flex' : 'none';
+        if (!b) continue;
+        // Tracked live rather than captured at build time — a squad's rally is
+        // wherever the leader last planted one, and this screen outlives that
+        // decision.
+        m.x = b.pos.x; m.z = b.pos.z;
+      }
       const p = this._project(m.x, m.z);
       m.el.style.transform = `translate(${p.sx}px, ${p.sy}px) translate(-50%, -50%)`;
       if (m.sec) {
@@ -691,6 +730,8 @@ export class DeployScreen {
         } else {
           m.el.style.setProperty('--cap', '0%');
         }
+      } else if (m.rally) {
+        m.el.className = 'dp-beacon' + (this.selected === 'beacon' ? ' sel' : '');
       } else if (m.spawnable) {
         m.el.className = 'dp-hq own' + (this.selected === 'hq' ? ' sel' : '');
       }

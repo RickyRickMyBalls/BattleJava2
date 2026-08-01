@@ -181,6 +181,48 @@ export const CFG = {
     clearRadius: 0.8,
   },
 
+  // Squad rally beacon — the leader's ability, not a gadget slot. Shared rules
+  // live here; what a beacon IS lives on the def in `BEACON` below, the same
+  // split `structure` uses.
+  //
+  // A beacon is the only placeable that DOES NOT EXPIRE. Every other prop in
+  // the game is bounded by a timer, and this one deliberately is not: a rally
+  // point that quietly evaporates is one nobody trusts, and an untrusted spawn
+  // is one nobody uses. What bounds it instead is that the enemy can shoot it,
+  // which makes it a thing on the map both sides can act on rather than a
+  // clock.
+  beacon: {
+    placeAhead: 1.8,
+    // Measured, not guessed: an AR round lands 8.5 on it at ~20 m, so this is
+    // about 21 rounds from a player — a third of the AR's 60-round magazine —
+    // or two rockets, or one rocket and a short burst. High enough that a
+    // passing shot does not erase a squad's spawn, low enough that finding one
+    // is worth stopping for. This is the number to move if beacons feel too
+    // hard or too easy to kill; nothing else in the system needs to change.
+    hp: 180,
+    // No charges — the cooldown IS the cost, since the ability is free and
+    // every leader has it. Long enough that losing a beacon hurts for a push.
+    cooldown: 45,
+    // How far from the beacon a squadmate actually lands. Larger than the
+    // deploy screen's 5-11 m HQ jitter would be suicide here: the whole point
+    // is arriving where the beacon is, and a beacon is planted in cover.
+    spawnRadius: 4,
+    // Refuse to plant one within this of a living enemy. A rally point at the
+    // feet of the people you are fighting is not a rally point, it is a
+    // teleporter, and the counterplay (shoot it) never gets a chance to happen
+    // because the spawns arrive faster than the damage.
+    enemyClear: 22,
+    // Footprint [width, height, depth]. Small — it is a pole, not cover — and
+    // it is NOT pushed into world.coverBoxes for exactly that reason. Rounds
+    // that meet it hit it; they do not stop at it for anyone standing behind.
+    size: [0.34, 1.5, 0.34],
+    // The two spheres the hit test uses, as [heightFraction, radius]. A stack
+    // of spheres rather than the box, because that is the test combat.js
+    // already runs per bullet against every soldier — a second shape in that
+    // path would be a second thing to keep honest.
+    hitSpheres: [[0.35, 0.42], [0.85, 0.36]],
+  },
+
   // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS
   // OUT lives on its gadget def in `GADGETS`, because that is what differs;
   // everything here is true of any crate.
@@ -1563,6 +1605,22 @@ export const GADGETS = {
     name: 'REPAIR TOOL', kind: 'tool', built: false, global: true,
     svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>',
   },
+};
+
+// ---------------------------------------------------------------------------
+// The squad leader's rally beacon. Shaped like a gadget def — `name`, `useTime`
+// and a kind marker — but deliberately NOT in GADGETS: it costs no slot, no
+// class carries it, and it is not chosen in the armoury. Leadership is what
+// grants it, so it is a def on its own and `player._placeSystem` recognises it
+// by its `beacon` block the same way it recognises a wall by `wall`.
+//
+// Tuning knobs live on CFG.beacon; this is only what the beacon IS.
+// ---------------------------------------------------------------------------
+export const BEACON = {
+  name: 'RALLY BEACON', kind: 'placeable', built: true,
+  svg: '<path d="M12 3v11"/><path d="M8.5 6.5L12 3l3.5 3.5"/><ellipse cx="12" cy="18" rx="6" ry="2.5"/>',
+  useTime: 1.1,
+  beacon: { color: 0x2fd3a7 },
 };
 
 // Gadgets every class sees in its pool, on top of its own list. Globals are
