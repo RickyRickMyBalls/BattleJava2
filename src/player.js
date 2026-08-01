@@ -9,6 +9,7 @@ import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scoped
 import { findMuzzle } from './soldier.js';
 
 const P = CFG.player;
+const D = CFG.downed;
 const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
 const _muzzle = new THREE.Vector3();
@@ -119,6 +120,12 @@ export class Player {
 
     this.keys = {};
     this.locked = false;
+
+    // Casualty recovery. `reviving` counts as hands-busy (see actionBusy), so
+    // holding E over a body locks the gun exactly as an injection does.
+    this.reviving = false;
+    this.reviveTarget = null;
+    this.giveUpHeld = 0;    // seconds SPACE has been held while downed
 
     // Input ownership. Listeners live on `document`, so every Player that
     // exists is handling every event — fine while there was only ever one, but
@@ -287,7 +294,7 @@ export class Player {
   syncBodyVisibility() {
     const s = this.soldier;
     if (!s || !s.mesh) return;
-    s.mesh.visible = s.alive && (this.freecam || this.thirdPerson);
+    s.mesh.visible = (s.alive || s.downed) && (this.freecam || this.thirdPerson);
   }
 
   _buildViewmodel() {
@@ -479,6 +486,7 @@ export class Player {
   // exclusivity is what stops a grenade from being free.
   actionBusy() {
     return this.gadgetBusy()
+      || this.reviving
       || !!(this.grenade && this.grenade.useTimer > 0)
       || !!(this.melee && this.melee.useTimer > 0);
   }
@@ -506,6 +514,10 @@ export class Player {
     const b = this.biofoam;
     if (!b || this.freecam) return;
     const s = this.soldier;
+    // No self-revive. Three charges would otherwise be three free self-pickups
+    // and the recovery system would never fire — the charge is what you spend
+    // on other people.
+    if (s && s.downed) { this.game.hud.message('BIOFOAM — CANNOT REACH IT', 1.5); return; }
     if (!s || !s.alive) return;
     if (this.actionBusy() || b.cooldown > 0) return;
     if (b.charges <= 0) { this.game.hud.message('BIOFOAM — EMPTY', 1.5); return; }
@@ -702,6 +714,94 @@ export class Player {
     this.game.hud.setReloading(true);
   }
 
+  // Downed. The camera drops to the ground and you can look around — that is
+  // the whole verb. No movement, no weapon, no gadgets, and the only input left
+  // is the decision to stop waiting. Deliberately NOT part of `update`: that
+  // method owns the eye height, the collision push and the weapon state, and
+  // all three are wrong for a body on the floor.
+  updateDowned(dt) {
+    const s = this.soldier;
+    this.firing = false;
+    this.ads = false;
+    this.reviving = false;
+    this.reviveTarget = null;
+    this.eye += (D.camHeight - this.eye) * Math.min(1, dt * 6);
+    this.pos.copy(s.pos);
+    this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
+    this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    this.lookSens = HIP_SENS;
+    if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
+      this.camera.fov = HIP_FOV;
+      this.camera.updateProjectionMatrix();
+    }
+    this.syncBodyVisibility();
+
+    // Hold, not tap. Giving up is irreversible, and a stray keypress should not
+    // spend sixty seconds that someone might still be running to answer.
+    if (this.keys['Space'] && this.locked) {
+      this.giveUpHeld += dt;
+      if (this.giveUpHeld >= D.giveUpHold) {
+        this.giveUpHeld = 0;
+        s.die(s.downedBy);
+      }
+    } else {
+      this.giveUpHeld = 0;
+    }
+  }
+
+  // Hold E over a downed teammate. The charge is spent on completion, so an
+  // attempt broken off — by gunfire, by walking away, by the casualty bleeding
+  // out under your hands — costs only the time.
+  _updateRevive(dt) {
+    const t = this._nearestCasualty();
+    this.reviveTarget = t;
+    if (!t) {
+      this.reviving = false;
+      this.game.hud.setPrompt(null);
+      return;
+    }
+    const b = this.biofoam;
+    if (!b || b.charges <= 0) {
+      this.reviving = false;
+      this.game.hud.setPrompt(`${t.name} DOWN — NO BIOFOAM`, 0);
+      return;
+    }
+    // `reviving` gates firing through actionBusy, so it must not latch on when
+    // the hands are already committed to something else.
+    const holding = !!this.keys['KeyE'] && this.locked && !this.freecam
+      && !this.gadgetBusy() && !(this.grenade && this.grenade.useTimer > 0)
+      && !(this.melee && this.melee.useTimer > 0);
+    this.reviving = holding;
+    if (holding && t.applyRevive(this.soldier, dt)) {
+      b.charges -= BIOFOAM.reviveCost;
+      this.game.hud.setPrompt(null);
+      this.game.hud.message(`BIOFOAM — ${b.charges} LEFT`, 1.5);
+      return;
+    }
+    this.game.hud.setPrompt(
+      holding ? `PICKING UP ${t.name}` : `HOLD E — PICK UP ${t.name}`,
+      holding ? t.reviveProgress : 0,
+    );
+  }
+
+  // Nearest downed teammate in reach. Any teammate, not just the squad — see
+  // the casualty recovery section of CLASS_AND_GADGET_PLAN.md.
+  _nearestCasualty() {
+    if (!D.enabled) return null;
+    const s = this.soldier;
+    if (!s || !s.alive || this.freecam) return null;
+    // The arena/chartest game slice has no `teams` — no sides, no casualties.
+    const team = this.game.teams && this.game.teams[s.team];
+    if (!team) return null;
+    let best = null, bestD = D.reviveRange;
+    for (const m of team.soldiers) {
+      if (m === s || !m.downed) continue;
+      const d = this.pos.distanceTo(m.pos);
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    return best;
+  }
+
   update(dt) {
     const s = this.soldier;
     if (!s.alive) return;
@@ -791,6 +891,7 @@ export class Player {
       }
     }
     this.syncBodyVisibility();
+    this._updateRevive(dt);
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon
     // owns it — a sniper comes up slower than an SMG. Tuned in /chartest.html.

@@ -226,9 +226,9 @@ export class Combat {
     // Splash damage against the owner's enemies (and the player if hostile)
     const radius = def.splash;
     for (const s of this.game.allSoldiers) {
-      if (!s.alive || s.team === owner.team) continue;
+      if ((!s.alive && !s.downed) || s.team === owner.team) continue;
       if (s.isPlayer && this.game.spectating) continue;
-      const dx = s.pos.x - pos.x, dy = (s.pos.y + 1) - pos.y, dz = s.pos.z - pos.z;
+      const dx = s.pos.x - pos.x, dy = (s.pos.y + (s.downed ? 0.3 : 1)) - pos.y, dz = s.pos.z - pos.z;
       const d = Math.hypot(dx, dy, dz);
       if (d > radius + 0.5) continue;
       const frac = Math.max(0, 1 - d / (radius + 0.5));
@@ -300,10 +300,20 @@ export class Combat {
 
     let hit = null, hitT = tBlock, isHead = false;
     for (const s of this.game.allSoldiers) {
-      if (!s.alive || s.team === shooter.team || s === shooter) continue;
+      if ((!s.alive && !s.downed) || s.team === shooter.team || s === shooter) continue;
       if (s.isPlayer && this.game.spectating) continue;
       const dx = s.pos.x - from.x, dz = s.pos.z - from.z;
       if (dx * dx + dz * dz > range * range) continue;
+
+      // A casualty is a body on the ground, not a standing silhouette: one low
+      // sphere instead of the three-part stack, and no head to find. Without
+      // this, finishing someone means shooting the air above them.
+      if (s.downed) {
+        _tmp.set(s.pos.x, s.pos.y + 0.35, s.pos.z);
+        const td = raySphere(from, dir, _tmp, 0.55, range);
+        if (td >= 0 && td / range < hitT) { hit = s; hitT = td / range; isHead = false; }
+        continue;
+      }
 
       _tmp.set(s.pos.x, s.pos.y + (s.isPlayer ? 1.7 : 1.75), s.pos.z);
       let t = raySphere(from, dir, _tmp, 0.26, range);

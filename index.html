@@ -148,6 +148,25 @@
     #hitmarker::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
     #hitmarker.kill::before, #hitmarker.kill::after { background: var(--hud-red); }
 
+    /* ---- Downed: the bleedout IS the vignette ----
+       No countdown widget anywhere. The aperture closing is the readout, which
+       makes the last ten seconds feel worse than the first ten in a way a
+       numeral cannot. It never shuts fully — see the note in hud.setDowned. */
+    #downVignette {
+      position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 10;
+      background: radial-gradient(circle at center, transparent 55%, rgba(2,6,10,0.97) 78%);
+    }
+    #prompt {
+      position: fixed; left: 50%; top: 58%; transform: translateX(-50%);
+      z-index: 12; display: none; text-align: center; pointer-events: none;
+      font-size: 13px; letter-spacing: 2px; color: var(--hud-cyan);
+      text-shadow: 0 0 12px rgba(0,0,0,0.9);
+    }
+    #promptBar {
+      display: block; height: 2px; width: 0%; margin: 6px auto 0;
+      background: var(--hud-cyan); box-shadow: 0 0 8px var(--hud-cyan);
+    }
+
     #damageVignette {
       position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 9;
       background: radial-gradient(ellipse at center, transparent 55%, rgba(255,40,20,0.55) 100%);
@@ -1087,6 +1106,8 @@
   <div id="app"></div>
 
   <div id="damageVignette"></div>
+  <div id="downVignette"></div>
+  <div id="prompt"><span id="promptText"></span><i id="promptBar"></i></div>
 
   <div class="hud" id="hud" style="display:none">
     <div id="topbar">
@@ -1137,7 +1158,7 @@
     </div>
     <div id="hitmarker"></div>
 
-    <div id="hint">WASD move · SHIFT sprint · C crouch · SPACE jump · LMB fire · RMB aim · R reload · 1/2/Q weapons · F freecam · P pause · T sim speed · M release mouse</div>
+    <div id="hint">WASD move · SHIFT sprint · C crouch · SPACE jump · LMB fire · RMB aim · R reload · 1/2/Q weapons · X biofoam · E pick up · F freecam · P pause · T sim speed · M release mouse</div>
   </div>
 
   <div id="endScreen">

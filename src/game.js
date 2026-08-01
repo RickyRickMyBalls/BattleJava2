@@ -166,10 +166,43 @@ export class Game {
     this.teams[TEAM.RED].brain.replan();
   }
 
+  // A soldier hit the ground but is not gone. No ticket, no kill feed entry and
+  // no respawn timer — all three are paid in onKill if the bleedout runs out.
+  // For the player specifically: the deploy screen must NOT open and the
+  // pointer lock must NOT be dropped. Being downed is still being in the match.
+  onDown(victim, attacker) {
+    this.hud.setPrompt(null);
+    if (victim.isPlayer) {
+      this.player.firing = false;
+      this.player.ads = false;
+      this.player.reviving = false;
+      this.player.giveUpHeld = 0;
+      this.player.viewmodel.visible = false;
+      this.hud.message('DOWNED — HOLD SPACE TO GIVE UP', 4);
+    } else if (attacker && attacker.isPlayer) {
+      this.hud.message(`${victim.name} DOWN`, 1.2);
+    }
+  }
+
+  onRevive(victim, by) {
+    if (victim.isPlayer) {
+      const p = this.player;
+      p.viewmodel.visible = !p.freecam && !p.thirdPerson;
+      p.eye = CFG.player.eyeHeight;
+      p.giveUpHeld = 0;
+      this.hud.setDowned(0, false);
+      this.hud.message(by ? `PICKED UP BY ${by.name}` : 'PICKED UP', 2.5);
+    } else if (by && by.isPlayer) {
+      this.hud.message(`${victim.name} BACK UP`, 1.5);
+    }
+  }
+
   onKill(attacker, victim) {
     this.hud.addKill(attacker, victim);
     this.teams[victim.team].tickets -= 1;
     if (victim.isPlayer) {
+      this.hud.setDowned(0, false);
+      this.hud.setPrompt(null);
       this.playerDead = true;
       this.playerRespawnTimer = CFG.player.respawnDelay;
       this.player.firing = false;
@@ -201,9 +234,11 @@ export class Game {
     else this._menuOpen = v;
   }
 
-  // True when the player's soldier is an active combatant on the field.
+  // True when the player's soldier is an active combatant on the field. A
+  // downed player is on the field but is not a combatant — squads should not
+  // form up on a casualty, so this has to say no.
   playerActive() {
-    return !this.playerDead && !this.spectating;
+    return !this.playerDead && !this.spectating && !this.playerSoldier.downed;
   }
 
   setPaused(p) {
@@ -257,12 +292,19 @@ export class Game {
     this.audio.update();
     this.world.updateAmbient(dt);
 
-    // Player / camera
+    // Player / camera. Downed is its own branch: `playerDead` is false — the
+    // player is not dead — but the full controller must not run, because
+    // `player.update` owns movement, firing and the eye height.
     if (this.spectating) {
       this.player.updateFreecam(dt);
-    } else if (!this.playerDead && !this.paused) {
-      this.player.update(dt);
+    } else if (!this.paused) {
+      if (this.playerSoldier.downed) this.player.updateDowned(dt);
+      else if (!this.playerDead) this.player.update(dt);
     }
+    this.hud.setDowned(
+      this.playerSoldier.downed ? this.playerSoldier.downTimer / CFG.downed.bleedout : 0,
+      this.playerSoldier.downed,
+    );
     if (this.playerDead) {
       this.playerRespawnTimer -= dtReal;
       if (this.deployScreen) this.deployScreen.setTimer(this.playerRespawnTimer);
@@ -301,7 +343,10 @@ export class Game {
     // Soldiers (player's body vitals are simulated in its update too)
     for (const s of this.allSoldiers) {
       s.update(dt);
-      if (!s.alive && !s.isPlayer && s.deadTimer > CFG.soldier.respawnDelay) {
+      // `downed` is the one case where a soldier is not alive and must not be
+      // recycled — the body is still recoverable, and its `deadTimer` has not
+      // started (die() resets it, so the respawn clock runs from the death).
+      if (!s.alive && !s.downed && !s.isPlayer && s.deadTimer > CFG.soldier.respawnDelay) {
         this._respawnAI(s);
       }
     }

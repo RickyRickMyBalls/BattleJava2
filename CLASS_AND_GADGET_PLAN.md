@@ -107,7 +107,7 @@ balance argument afterward becomes an argument about perks.
 | --- | --- | --- |
 | Assault | Marathon — a larger stamina pool | **Locked** |
 | Engineer | Combat Engineer — free repair tool, exclusive blueprint placement, faster build and repair | **Locked** |
-| Support | Combat Lifesaver — picks up a downed soldier in 30% of the normal time | **Locked** |
+| Support | Combat Lifesaver — picks up a downed soldier in a third of the normal time | **Locked** |
 | Spartan | MJOLNIR — 70 shield, 3 m jump, unlimited stamina, any weapon in slot 2 | **Locked** (shield/jump already implemented) |
 | Recon | — | **Open** |
 
@@ -349,7 +349,21 @@ first implementation.
 
 **Locked:** Soldiers do not die instantly. A soldier who runs out of health goes
 **down** — collapsing to the ground, out of the fight but not gone — and any
-squadmate carrying biofoam can pick them up.
+teammate carrying biofoam can pick them up.
+
+**Locked:** Any *teammate*, not any squadmate. Squads are four, the window is
+sixty seconds, and tying recovery to three specific people would leave most
+downs unanswerable on a field of thirty-two. It also gives the bot policy a
+simpler question to ask: nearest downed friendly, not nearest downed friendly in
+my squad.
+
+| | |
+| --- | --- |
+| Bleedout | 60 s |
+| Pickup time | 5 s · **1.67 s** for Support |
+| Charge cost | 1, spent **on completion** |
+| Recovered health | 50% |
+| Give up | Any time |
 
 This is the largest unbuilt feature in the plan. It touches the damage model, the
 animation set, the HUD, the ticket economy and the AI, so it is closer to a
@@ -387,6 +401,23 @@ worth being explicit about why, because the plan previously only implied it:
 Support therefore holds two *orthogonal* advantages — faster by perk, richer by
 ration — rather than one advantage counted twice.
 
+**Locked:** The charge is spent **on completion**, not on starting. An attempt
+broken off — by gunfire, by moving away, by the casualty bleeding out under your
+hands — costs nothing but the time.
+
+That makes time-under-fire the real currency of a contested pickup, and the
+charge the currency of a successful one. Trying twice is free; the danger is
+that you spent ten seconds kneeling in the open to do it. It is the softer of the
+two options, and it is the right one to ship first: spend-on-start punishes
+exactly the brave, doomed attempt the system exists to create, and it is far
+easier to tighten a rule after watching people play than to loosen one they have
+already learned to fear.
+
+The consequence to watch is that three charges now bound how many people you
+*save*, not how many times you try. If pickups turn out to be near-guaranteed in
+practice, the ration stops being a budget and the tension this section is built
+on goes quiet.
+
 ### The two recovery actions
 
 **Locked as design, deferred in build.** A squadmate can either drag a downed
@@ -415,8 +446,20 @@ that drag and carry are variations on.
 ### Class involvement
 
 **Locked:** Recovery is universal. Any soldier holding a charge can pick a downed
-squadmate up. Support's perk is that they do it in **30% of the normal time** —
-roughly three times faster, not 30% faster.
+teammate up, and it takes **5 seconds**. Support's perk is that they do it in **a
+third of the normal time** — 1.67 seconds. Three times faster, not 30% faster.
+
+Note the wording, because the plan carried both readings for a while and they are
+not the same number. `PERKS.combatLifesaver` declares `reviveRate: 3` and its own
+description already said "a third of the normal time", so a third is what the code
+does: 5 / 3 = 1.67, not the 1.5 that "30%" implies. Keeping the perk's single
+constant and quoting the number it actually produces is worth more than the 0.17 s
+— the alternative is a second constant that has to be kept in agreement with the
+first, which is exactly what deriving Support's figure was meant to avoid.
+
+Five seconds is long enough that where you kneel is a decision. Support's 1.67 is
+short enough to attempt in the open, which is the whole difference between a
+class that can recover people and a class that can recover people *now*.
 
 This is the second appearance of a pattern worth naming, because it is becoming
 the plan's house style:
@@ -444,6 +487,39 @@ hold on as long as you believe someone is coming, and you let go when you don't.
 
 Take the give-up key away and the number has to come down to somewhere near the
 respawn delay, which would delete the drama the system exists to create.
+
+### Being downed, from the inside
+
+**Locked:** A downed soldier can **look around** — the camera on the ground, free
+to turn — and the bleedout is shown as a **vignette that closes in** as the timer
+runs down.
+
+This is the best idea in the section, because it collapses two problems into one
+image. Looking around is what makes the sixty seconds playable rather than a
+loading screen: you watch the fight continue without you, you see whether anyone
+is coming, and the give-up key becomes a judgement about what you can actually
+see rather than a guess against a number.
+
+And the vignette *is* the timer. No countdown, no bar — the world narrowing until
+it closes is a readout you feel instead of read, and it does the thing a numeral
+cannot, which is make the last ten seconds worse than the first ten. It also
+means the HUD gains a shader effect rather than a widget, and the downed state
+needs no new HUD chrome at all.
+
+Two things fall out of it worth writing down now:
+
+- **The vignette must lift the moment a pickup completes,** not fade on its own
+  schedule. It is the state readout, so it has to be as truthful about being
+  saved as it is about dying.
+- **It should not close fully to black before the timer ends.** Leaving a small
+  aperture keeps the last seconds legible — the point is dread, not blindness,
+  and a player who cannot see the teammate sprinting toward them has lost the
+  only thing the state has to offer.
+
+**Locked:** A recovered soldier stands up on **50% health**, no shield, and keeps
+whatever biofoam charges they were carrying. Half a bar is enough to fight with
+and thin enough that the reviver's next instinct is to spend a second charge
+patching them — which is the pairing this whole economy is built to produce.
 
 ### Tickets
 
@@ -496,13 +572,13 @@ go down and get recovered is not running the same game the player is.
 The policy is cheaper than it sounds, because the template already exists.
 `_updateBiofoam` in `soldier.js` uses `shieldTimer` as its "am I under fire"
 signal to decide when to spend a charge on itself; the revive decision is the
-same shape with a different target — nearest downed squadmate inside a radius,
+same shape with a different target — nearest downed *teammate* inside a radius,
 calm for a couple of seconds, holding a charge, so go stand over them.
 
 ### Build order
 
 **Phase 1 — the stationary pickup. No new animation.** Hold a key over a downed
-squadmate, pay a charge, watch a timer, they stand back up on partial health.
+teammate for 5 seconds, pay a charge, and they stand back up on half health.
 
 Nothing in that needs a new clip. The downed idle is `death1`/`death2` frozen at
 its last frame, which is already how bodies lie; the first-person treatment is
@@ -512,9 +588,11 @@ and carry, which is exactly why they are phase 2.
 
 What phase 1 touches:
 
-- **`config.js`** — a `CFG.downed` block: `bleedout`, `reviveTime`,
-  `reviveHealth`, `gibMargin`, and an `enabled` flag. `BIOFOAM` gains the pickup
-  cost and the AI's revive radius.
+- **`config.js`** — a `CFG.downed` block: `bleedout: 60`, `reviveTime: 5`,
+  `reviveHealth: 0.5`, `gibMargin`, `camHeight`, and an `enabled` flag. `BIOFOAM`
+  gains the pickup cost and the AI's revive radius. Support's 1.67 s is not a
+  second constant — it is `reviveTime` divided by the existing
+  `PERKS.combatLifesaver.stats.reviveRate`, which is already 3.
 - **`soldier.js`** — `die()` branches into `goDown()`; `downed` and `downTimer`
   fields; the existing `!alive` early-return in `update()` runs the bleedout; an
   `_updateRevive` sitting alongside `_updateBiofoam`.
@@ -527,7 +605,15 @@ What phase 1 touches:
 - **`game.js`** — `onKill` splits into `onDown`, which touches neither tickets nor
   the respawn timer, and `onDeath`, which keeps the existing `tickets -= 1` and
   the respawn path unchanged. A `revive()` that stands the soldier back up.
-- **`hud.js`** — a bleedout countdown, and a prompt over nearby downed friendlies.
+- **`player.js`** — the downed camera: dropped to the ground, free to look, no
+  weapon, no movement. Plus the give-up key.
+- **The deploy screen** — the one place phase 1 touches existing screen flow, and
+  the easiest thing to get wrong. `onKill` currently sets `playerDead` and calls
+  `deployScreen.show('dead')` in the same breath. A downed player is not dead:
+  the deploy screen must stay shut, the pointer lock must stay held, and both
+  only happen when the player gives up or bleeds out.
+- **`hud.js`** — the bleedout vignette, and a prompt over nearby downed friendlies.
+  No countdown widget; the vignette is the readout.
 
 **Phase 2 — drag and carry.** The attachment between two soldiers, coupled
 movement, healing while dragging, and the clips at both ends of both actions.
@@ -539,19 +625,50 @@ fast-forwarded both ways and the ticket curves compared. Whether bot pickups are
 common or rare is not predictable on paper, and it is the difference between
 match length doubling and nothing changing.
 
+### First measurements
+
+Phase 1 is built. Demo map, 180 simulated seconds, same start, flag off then on:
+
+| | off | on |
+| --- | --- | --- |
+| Tickets lost | 210 | **144** (−31%) |
+| Deaths | 172 | 109 |
+| Downs | — | 103 |
+| Pickups | — | 21 (**20%** of downs) |
+| Alive at the end | 54 | **43** |
+
+**Match length goes up by about half, not double.** 144 against 210 puts a 400-
+ticket match at roughly 1.45× its current length. That is a re-tune, not a
+redesign, and it is the answer the ticket question was waiting on.
+
+**Two things are worth staring at.** Only one down in five gets answered, because
+a bot needs no target and two calm seconds before it will go — and in a 32v32
+grind a bot nearly always has a target. `BIOFOAM.aiReviveCalm` and the
+"fighting outranks first aid" rule in `_think` are the two knobs, and loosening
+either is a balance decision rather than a bug fix.
+
+And the field runs about 20% emptier: 43 live combatants against 54, because a
+casualty occupies a body for up to 60 seconds where a death recycled it in 5.
+The ticket saving and the thinner firefight are the same effect seen from two
+ends. Whether a quieter field is the *right* trade is a judgement to make with
+the thing running, not from this table.
+
 ### Open questions, in order of how much they change
 
-**1. Can the downed soldier act?** Crawl a short distance, look around, call out?
+**1. Can a downed soldier crawl?** Looking around is locked; moving is not.
 Crawling is the one that changes tactics — it lets a casualty close half the gap
-to cover and makes the pickup safer to attempt.
+to cover and makes the pickup safer to attempt — and it is also the one that
+needs a clip, which is why it sits closer to phase 2 than the rest of the downed
+treatment.
 
-**2. Does carrying drain stamina?** Assumed yes in the stamina section above,
+**2. Can a downed soldier call for help?** A voice line, or a marker over their
+body that the whole team can see. With pickups open to any teammate rather than a
+squad of four, being *findable* is what decides whether that generosity means
+anything in practice.
+
+**3. Does carrying drain stamina?** Assumed yes in the stamina section above,
 which is what makes the Spartan the natural evacuator. Needs confirming, since it
 is the main link between the two new systems. Phase 2.
-
-**3. What health does a recovered soldier stand up on?** Enough to matter, low
-enough that the pickup is not a full reset. It also decides whether the reviver's
-next instinct is a second charge.
 
 **4. Does a downed body still contest a sector?** Sector counts read `alive`
 today, so the default answer is no, and it is worth confirming that a squad wiped
@@ -637,11 +754,13 @@ second entity with its own camera and UI. Build it last.
 | Gadget 2 | Ammunition crate |
 | Grenade | Frag |
 | Melee | Rifle bash |
-| Perk | Combat Lifesaver — picks a downed soldier up in 30% of the normal time |
+| Perk | Combat Lifesaver — picks a downed soldier up in a third of the normal time |
 
-Support owns the casualty system. Recovery is universal, but Support is roughly
-three times faster at the pickup, which is what makes a squad want one when people
-start going down.
+Support owns the casualty system. Recovery is universal, but Support picks someone
+up in 1.67 seconds against everyone else's 5, and carries 15 biofoam charges
+against everyone else's 3. Fast enough to do it in the open, and rich enough to
+keep saying yes — which is what makes a squad want one when people start going
+down.
 
 **Open:** Both gadget slots are fixed, so Support has no loadout decision at all.
 It wants a third option to choose between. If construction supply comes from the
@@ -705,8 +824,16 @@ player-facing spectacle, rather than leaving it to be discovered later.
 a picker per slot, a `kind`-branching info panel, and one shared `validateLoadout`
 replacing the duplicated class-switch check in `menu.js` and `deploy.js`.
 
+**Landed** — casualty recovery, phase 1. `CFG.downed`, the third soldier state
+with its bleedout, the stationary pickup on both sides (player holds E, bots walk
+to their nearest casualty), the ground camera and closing vignette, give-up on a
+held SPACE, and finishing a casualty with any further damage. Behind
+`CFG.downed.enabled`. No new animation clips: the downed pose is the existing
+death clip held at its last frame.
+
 **Not started** — every gadget behaviour, grenades, melee, construction, perks,
-stamina, armor, casualty recovery, and the four unmigrated classes.
+stamina, armor, drag and carry (casualty recovery phase 2), and the four
+unmigrated classes.
 
 Three of those are new *systems* rather than content, and they are what will move
 the schedule: stamina changes the movement rules for all 64 combatants, armor
@@ -734,34 +861,35 @@ Ordered by how much each one changes if answered differently.
 
 1. Is armor carved out of the existing 100 EHP budget, or added on top? Added on
    top means re-tuning every weapon in the armory.
-2. How far does the ticket bleed rate actually move once bots pick each other up?
-   Not answerable on paper — it is what `CFG.downed.enabled` exists to measure.
+2. Measured: ticket bleed drops 31% and the field runs 20% emptier — see First
+   measurements. The open part is now a judgement, not an unknown: is a 1.45×
+   longer match with a thinner firefight the game you want, and if not, is the
+   lever the bleedout, the AI's willingness to answer, or the ticket count?
 3. Do bots repair each other's armor, and do bots model stamina?
 4. What limits blueprint placement — sector budget, Engineer cooldown, or Support
    supply? Now also: does the repair tool need a supply at all, given three jobs?
 
 **System detail**
 
-5. Can a downed soldier crawl?
-6. What health does a recovered soldier stand up on?
-7. Does a downed body still contest a sector?
-8. Does carrying drain stamina? It is the main link between the two new systems.
-9. How ineffective is a non-Engineer repairing a vehicle?
-10. Do blueprints decay if never built? Can enemies destroy them?
-11. Is stamina shown as a bar, or only felt?
+5. Can a downed soldier crawl, and can they call for help?
+6. Does a downed body still contest a sector?
+7. Does carrying drain stamina? It is the main link between the two new systems.
+8. How ineffective is a non-Engineer repairing a vehicle?
+9. Do blueprints decay if never built? Can enemies destroy them?
+10. Is stamina shown as a bar, or only felt?
 
 **Roster gaps**
 
-12. What is Recon's perk?
-13. What is Assault's second utility gadget, so webbing is a choice rather than a
+11. What is Recon's perk?
+12. What is Assault's second utility gadget, so webbing is a choice rather than a
     default? Without it, Assault never carries the Magnum.
-14. What is Engineer's utility gadget, now that construction has left the slot?
-15. Does Support get a third gadget so it has a loadout decision at all?
-16. Does anything own sector capture?
-17. Does the Spartan ship with overshield first, deferring grapple and jetpack?
-18. Is one in five too frequent for the Spartan, now that its perk includes
+13. What is Engineer's utility gadget, now that construction has left the slot?
+14. Does Support get a third gadget so it has a loadout decision at all?
+15. Does anything own sector capture?
+16. Does the Spartan ship with overshield first, deferring grapple and jetpack?
+17. Is one in five too frequent for the Spartan, now that its perk includes
     unlimited stamina on top of shield, jump and free specialist access?
-19. Does the second-primary gadget stay Assault-only, or extend to other classes?
+18. Does the second-primary gadget stay Assault-only, or extend to other classes?
 
 ---
 
@@ -810,6 +938,25 @@ Ordered by how much each one changes if answered differently.
 - Split the build in two: a phase-1 stationary pickup that needs no new animation
   clips at all, and a phase-2 drag-and-carry that carries the whole authoring
   cost. The first pass is now nearer armor's price than the system's.
+- Locked the recovery numbers: 5 seconds to pick someone up, 1.67 for Support,
+  50% health on standing back up. Support's figure is not a second constant —
+  it falls out of `reviveTime` over the `reviveRate: 3` the perk already declares,
+  which is also why the perk is now quoted as "a third" everywhere rather than
+  "30%". The two are not the same number, and the code does the former.
+- Locked the charge as spent **on completion**. A broken-off attempt costs only
+  time, which makes time-under-fire the currency of a contested pickup and the
+  charge the currency of a successful one. The softer of the two rules, chosen
+  deliberately: spend-on-start punishes exactly the brave doomed attempt the
+  system exists to create, and tightening later is easier than loosening.
+- Locked recovery as open to **any teammate**, not any squadmate. Squads are four
+  and the window is sixty seconds; most downs would otherwise be unanswerable.
+- Locked the downed player's view: free to look around, with the bleedout shown
+  as a vignette closing in rather than a countdown. The vignette *is* the timer,
+  so the state needs no new HUD chrome — and it makes the last ten seconds feel
+  worse than the first ten, which a numeral cannot do.
+- Noted the deploy screen as the one place phase 1 touches existing screen flow:
+  `onKill` currently sets `playerDead` and opens the deploy screen together, and
+  a downed player is not dead.
 - Added armor as a third damage layer between shields and health. It does not
   regenerate and is restored only by a repair tool, which gives each of the three
   layers a distinct owner — shields regenerate themselves, Engineers restore armor,

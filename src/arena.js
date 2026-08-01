@@ -27,6 +27,8 @@
 //   spectating                 [Combat: skip the player's own body]
 //   spectatedSoldier           [Soldier._updateAnim: full-rate anim for the feed]
 //   onKill(attacker, victim)   [Soldier.die]
+//   onDown(victim, attacker)   [Soldier.goDown]
+//   onRevive(victim, by)       [Soldier.revive]
 //   onPlayerDamaged(shooter)   [Combat]
 //   toggleFreecam/togglePause/cycleTimeScale   [Player hotkeys F / P / T]
 //
@@ -128,6 +130,10 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     set menuOpen(v) { if (session) session.menuOpen = v; },
 
     onKill() {},
+    // Casualty recovery has no meaning without teams to search — `teams` is
+    // absent from this slice on purpose, and both casualty scans check for it.
+    onDown() {},
+    onRevive() {},
     onPlayerDamaged() {},
 
     // No match clock to pause or scale; the lobby renders on real time.

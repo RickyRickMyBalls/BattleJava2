@@ -9,6 +9,7 @@ import { restoreBakedDisplays } from './drivenmaterial.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;
+const D = CFG.downed;
 const _v = new THREE.Vector3();
 // Second scratch, for a throw direction. Safe to pass into throwGrenade because
 // that only ever READS the direction (it copies it into the pooled grenade's
@@ -111,6 +112,19 @@ export class Soldier {
     this.shieldTimer = 0;
     this.deadTimer = 0;
     this.removeBodyTimer = 0;
+
+    // Downed state. `alive` stays FALSE while downed, deliberately: every
+    // existing "is this a live combatant" test — targeting, capture counts,
+    // squad separation, the HUD — reads `alive`, and all of them want the same
+    // answer for a casualty as for a corpse. The places that must tell the two
+    // apart opt in by asking for `downed` explicitly, and there are only four
+    // (the three hit filters in combat.js, and the AI respawn check in game.js).
+    this.downed = false;
+    this.downTimer = 0;        // bleedout remaining, seconds
+    this.downedBy = null;      // credited if the bleedout runs out
+    this.reviveProgress = 0;   // 0..1, driven by whoever is standing over us
+    this.reviveHeld = false;   // set each frame by the rescuer; decays if not
+    this.reviveTarget = null;  // AI: the casualty this soldier is walking to
 
     this.waypoint = new THREE.Vector3();
     this.hasWaypoint = false;
@@ -362,6 +376,12 @@ export class Soldier {
     this.pos.set(x, this.game.world.heightAt(x, z), z);
     this.vel.set(0, 0, 0);
     this.alive = true;
+    this.downed = false;
+    this.downTimer = 0;
+    this.downedBy = null;
+    this.reviveProgress = 0;
+    this.reviveHeld = false;
+    this.reviveTarget = null;
     this.shield = this.maxShield;
     this.health = S.health;
     this.target = null;
@@ -403,8 +423,12 @@ export class Soldier {
   }
 
   takeDamage(amount, attacker, isHead) {
-    if (!this.alive) return false;
+    if (!this.alive && !this.downed) return false;
     if (this.isPlayer && this.game.spectating) return false;
+    // Finishing a casualty needs no mechanic of its own — any further damage
+    // kills. Going down inside an enemy push should almost never survive, and
+    // this is what makes that true without a separate execute verb.
+    if (this.downed) { this.die(attacker); return true; }
     this.shieldTimer = 0;
     let dmg = amount * (isHead ? CFG.headshotMult : 1);
     if (this.shield > 0) {
@@ -418,25 +442,97 @@ export class Soldier {
       this.target = attacker;
     }
     if (this.health <= 0) {
-      this.die(attacker);
+      // One margin instead of a damage-type list: a blow that carries far past
+      // zero kills outright, anything less puts the soldier on the ground.
+      // `health` is already negative here, so the overflow is free to read.
+      if (D.enabled && -this.health < S.health * D.gibMargin) this.goDown(attacker);
+      else this.die(attacker);
       return true;
     }
     return false;
   }
 
+  // Out of the fight, not gone. Costs no ticket and no death — both are paid
+  // in `die` if the bleedout runs out, which is why `downedBy` is kept.
+  goDown(attacker) {
+    this.alive = false;
+    this.downed = true;
+    this.downTimer = D.bleedout;
+    this.downedBy = attacker || null;
+    this.reviveProgress = 0;
+    this.reviveHeld = false;
+    this.reviveTarget = null;
+    this.health = 0;
+    this.shield = 0;
+    this.target = null;
+    this.deadTimer = 0;
+    this.removeBodyTimer = 0;
+    this.speed2D = 0;
+    this.playAnim(Math.random() < 0.5 ? 'death1' : 'death2', 0.08);
+    this.game.onDown(this, attacker);
+  }
+
   die(attacker) {
+    // Already lying down: re-triggering the death clip would snap the body back
+    // to its first frame, which reads as the corpse flinching.
+    const wasDowned = this.downed;
+    this.downed = false;
     this.alive = false;
     this.deaths++;
     this.deadTimer = 0;
     this.removeBodyTimer = 0;
     this.target = null;
-    if (attacker) attacker.kills++;
-    this.playAnim(Math.random() < 0.5 ? 'death1' : 'death2', 0.08);
-    this.game.onKill(attacker, this);
+    this.reviveTarget = null;
+    const credit = attacker || this.downedBy;
+    if (credit) credit.kills++;
+    if (!wasDowned) this.playAnim(Math.random() < 0.5 ? 'death1' : 'death2', 0.08);
+    this.game.onKill(credit, this);
+  }
+
+  // Advance a pickup. Called once per frame by whoever is standing over this
+  // casualty — the player controller or an AI — and returns true on the frame
+  // it completes, which is when the rescuer pays their biofoam charge. Paying
+  // at the call site rather than in here is what keeps "spent on completion"
+  // literally true in the code.
+  applyRevive(by, dt) {
+    if (!this.downed || !by) return false;
+    const perk = classPerk(by.cls);
+    const rate = (perk && perk.stats && perk.stats.reviveRate) || 1;
+    this.reviveHeld = true;
+    this.reviver = by;
+    this.reviveProgress += (dt * rate) / D.reviveTime;
+    if (this.reviveProgress < 1) return false;
+    this.revive(by);
+    return true;
+  }
+
+  // Back on your feet on half health, no shields, and carrying whatever biofoam
+  // you had — this is not a respawn, so `spawnAt` (which re-issues the kit) is
+  // deliberately not what runs here.
+  revive(by) {
+    this.downed = false;
+    this.alive = true;
+    this.downTimer = 0;
+    this.reviveProgress = 0;
+    this.reviveHeld = false;
+    this.health = S.health * D.reviveHealth;
+    this.shield = 0;
+    this.shieldTimer = 0;
+    this.target = null;
+    if (this.mesh) {
+      this.mesh.visible = !this.isPlayer;
+      this.playAnim('idle', 0.25);
+    }
+    this.game.onRevive(this, by || null);
   }
 
   // ---- Per-frame update (AI only; the player overrides movement) --------
   update(dt) {
+    if (this.downed) {
+      this._updateDowned(dt);
+      this._updateAnim(dt);
+      return;
+    }
     if (!this.alive) {
       this.deadTimer += dt;
       this.removeBodyTimer += dt;
@@ -454,10 +550,63 @@ export class Soldier {
     if (!this.isPlayer) {
       this._updateBiofoam(dt);
       this._think(dt);
+      this._updateRevive(dt);
       this._move(dt);
       this._fire(dt);
     }
     this._updateAnim(dt);
+  }
+
+  // Bleeding out. Progress banked by a rescuer decays once they stop working,
+  // so walking away costs the attempt rather than leaving it half-saved for the
+  // next passer-by. `reviveHeld` is set by applyRevive and cleared here, which
+  // means a rescuer updating later in the soldier list is one frame late — a
+  // rounding error against a 5-second pickup, and not worth an ordering pass.
+  _updateDowned(dt) {
+    this.speed2D = 0;
+    this.moveF = 0;
+    this.moveR = 0;
+    if (!this.reviveHeld && this.reviveProgress > 0) {
+      this.reviveProgress = Math.max(0, this.reviveProgress - dt * D.reviveDecay / D.reviveTime);
+    }
+    this.reviveHeld = false;
+    this.downTimer -= dt;
+    if (this.downTimer <= 0) this.die(this.downedBy);
+  }
+
+  // AI casualty recovery. The decision of WHO to go to is made on the think
+  // tick (see `_think`); this is only the approach and the hold, which have to
+  // run every frame. Fighting outranks first aid — a bot with a target drops
+  // the errand rather than jogging across a firefight to it.
+  _updateRevive(dt) {
+    const t = this.reviveTarget;
+    if (!t) return;
+    if (!t.downed || this.target || !this.biofoam || this.biofoam.charges <= 0) {
+      this.reviveTarget = null;
+      return;
+    }
+    if (this.pos.distanceTo(t.pos) > D.reviveRange) return;
+    if (t.applyRevive(this, dt)) {
+      this.biofoam.charges -= BIOFOAM.reviveCost;
+      this.reviveTarget = null;
+    }
+  }
+
+  // Nearest downed teammate worth walking to. Any teammate, not just the squad:
+  // squads are four and the window is sixty seconds, so squad-only recovery
+  // would leave most downs unanswerable on a field of thirty-two.
+  _findCasualty() {
+    // The arena/chartest game slice has no `teams` — no sides, no casualties.
+    const t = this.game.teams && this.game.teams[this.team];
+    if (!t) return null;
+    const mates = t.soldiers;
+    let best = null, bestD = BIOFOAM.aiReviveRange;
+    for (const m of mates) {
+      if (m === this || !m.downed) continue;
+      const d = this.pos.distanceTo(m.pos);
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    return best;
   }
 
   // AI biofoam. Without this the gadget effectively does not exist in the sim:
@@ -510,6 +659,20 @@ export class Soldier {
     if (!this.target) {
       this.target = this._acquireTarget();
     }
+
+    // Casualty recovery, decided on the same tick as targeting because it is
+    // the same decision: fight, or go help. `shieldTimer` doubles as
+    // time-since-damage — the signal `_updateBiofoam` already trusts to mean
+    // "not currently being shot at".
+    if (!D.enabled) return;
+    if (this.target || !this.biofoam || this.biofoam.charges <= 0
+        || this.shieldTimer < BIOFOAM.aiReviveCalm) {
+      this.reviveTarget = null;
+      return;
+    }
+    if (!this.reviveTarget || !this.reviveTarget.downed) {
+      this.reviveTarget = this._findCasualty();
+    }
   }
 
   _acquireTarget() {
@@ -551,6 +714,17 @@ export class Soldier {
       // face target
       const ty = Math.atan2(this.target.pos.x - this.pos.x, this.target.pos.z - this.pos.z);
       this.yaw = lerpAngle(this.yaw, ty, Math.min(1, dt * 10));
+    } else if (this.reviveTarget) {
+      // Answering a down outranks the squad's waypoint but never a live target,
+      // so this sits between the two. Stop short of the body rather than on it,
+      // or the separation push and the pickup range fight each other.
+      const t = this.reviveTarget;
+      const dx = t.pos.x - this.pos.x, dz = t.pos.z - this.pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > D.reviveRange * 0.7) {
+        desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
+      }
+      if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
     } else if (this.hasWaypoint) {
       const wp = _v.copy(this.waypoint).add(this.formationOffset);
       const dx = wp.x - this.pos.x, dz = wp.z - this.pos.z;

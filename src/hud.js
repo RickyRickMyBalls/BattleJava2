@@ -25,6 +25,10 @@ export class Hud {
       gadgets: document.getElementById('hudGadgets'),
       hitmarker: document.getElementById('hitmarker'),
       damageVignette: document.getElementById('damageVignette'),
+      downVignette: document.getElementById('downVignette'),
+      prompt: document.getElementById('prompt'),
+      promptText: document.getElementById('promptText'),
+      promptBar: document.getElementById('promptBar'),
       crosshair: document.getElementById('crosshair'),
       vitals: document.getElementById('vitals'),
       ammo: document.getElementById('ammo'),
@@ -116,6 +120,49 @@ export class Hud {
   showDamage() {
     this.el.damageVignette.style.opacity = 1;
     this.vignetteTimer = 0.4;
+  }
+
+  // The bleedout readout. `frac` is time REMAINING, 1 down to 0, and it drives
+  // the aperture rather than any number on screen.
+  //
+  // The aperture floors at 14% instead of closing to black: the point is dread,
+  // not blindness, and a player who cannot see the teammate sprinting toward
+  // them has lost the only thing this state has to offer. The crosshair goes —
+  // there is nothing to aim.
+  setDowned(frac, on) {
+    if (on === this._downOn && (!on || Math.abs(frac - this._downFrac) < 0.004)) return;
+    this._downOn = on;
+    this._downFrac = frac;
+    const v = this.el.downVignette;
+    if (!on) {
+      v.style.opacity = 0;
+      this.el.crosshair.style.display = '';
+      return;
+    }
+    // Ease so the closing accelerates: the last seconds should feel worse than
+    // an even squeeze would make them.
+    const t = 1 - Math.max(0, Math.min(1, frac));
+    const inner = 55 - 41 * t * t;          // 55% open -> 14% at zero
+    v.style.opacity = 1;
+    v.style.background =
+      `radial-gradient(circle at center, transparent ${inner}%, rgba(2,6,10,0.97) ${inner + 23}%)`;
+    this.el.crosshair.style.display = 'none';
+  }
+
+  // Centred interaction prompt — "HOLD E — PICK UP <name>" — with an optional
+  // 0..1 progress bar under it. Rebuilt only on change: this runs every frame.
+  setPrompt(text, progress = 0) {
+    if (text !== this._promptText) {
+      this._promptText = text;
+      this.el.prompt.style.display = text ? 'block' : 'none';
+      if (text) this.el.promptText.textContent = text;
+    }
+    if (!text) return;
+    const pct = Math.round(Math.max(0, Math.min(1, progress)) * 100);
+    if (pct !== this._promptPct) {
+      this._promptPct = pct;
+      this.el.promptBar.style.width = `${pct}%`;
+    }
   }
 
   message(text, seconds = 3) {

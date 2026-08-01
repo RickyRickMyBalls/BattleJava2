@@ -43,6 +43,31 @@ export const CFG = {
     respawnDelay: 6,
   },
 
+  // Downed state and casualty recovery — see CLASS_AND_GADGET_PLAN.md. Phase 1
+  // is the stationary pickup: no drag, no carry, and no new animation clips.
+  //
+  // `enabled` is not decoration. Whether bots answering each other's downs
+  // halves the ticket bleed or barely moves it is not predictable on paper, so
+  // the same battle has to be runnable both ways: FC.game.setTimeScale(8) with
+  // this on, then off, and compare the ticket curves.
+  downed: {
+    enabled: true,
+    bleedout: 60,          // seconds on the ground before it becomes a death
+    reviveTime: 5,         // base pickup, in seconds. Support divides this by
+                           // PERKS.combatLifesaver.stats.reviveRate (3) -> 1.5,
+                           // so their figure is derived and never a 2nd constant
+    reviveHealth: 0.5,     // fraction of max health to stand back up on
+    reviveRange: 2.4,      // metres to reach a casualty
+    reviveDecay: 1,        // progress lost per second when nobody is working
+    // Overkill past zero, as a fraction of the health bar, that kills outright
+    // instead of downing. ONE number covering headshots, rockets and
+    // point-blank shotguns without a damage-type list to maintain. Raise it if
+    // downs feel too rare, lower it if every kill feels provisional.
+    gibMargin: 0.5,
+    camHeight: 0.45,       // eye height while lying down
+    giveUpHold: 0.8,       // hold SPACE this long to stop waiting
+  },
+
   player: {
     eyeHeight: 1.78,
     crouchEye: 1.15,
@@ -985,6 +1010,13 @@ export const BIOFOAM = {
   // number rather than CFG.soldier.shieldRegenDelay.
   aiUseBelow: 0.7,
   aiCalmTime: 2.0,
+  // Casualty recovery draws on the same ration. The charge is spent ON
+  // COMPLETION, not on starting: an attempt broken off by gunfire costs only
+  // the time, which makes time-under-fire the currency of a contested pickup
+  // and the charge the currency of a successful one.
+  reviveCost: 1,
+  aiReviveRange: 24,   // how far a bot will walk to answer a down
+  aiReviveCalm: 2.0,   // and how long it wants to be out of contact first
 };
 
 // ---------------------------------------------------------------------------
