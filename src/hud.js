@@ -88,9 +88,10 @@ export class Hud {
   show() { this.el.hud.style.display = 'block'; }
   hide() { this.el.hud.style.display = 'none'; }
 
-  setAmmo(mag, res) {
+  setAmmo(mag, res, capacity) {
     this.el.ammoMag.textContent = mag;
     this.el.ammoRes.textContent = `| ${res}`;
+    this.visor.setAmmo(mag, capacity);
   }
   setReloading(on) { this.el.reloadingTxt.style.display = on ? 'block' : 'none'; }
 
@@ -135,6 +136,8 @@ export class Hud {
   // must not be on screen at all. Passing `unlimited` (MJOLNIR) hides it
   // permanently — a bar that can never move is noise, not information.
   setStamina(stamina, maxStamina, unlimited, spent) {
+    // Ahead of the DOM bar's early-outs below, which are about that bar only.
+    this.visor.setStamina(stamina, maxStamina, unlimited, spent);
     const el = this.el.stambar;
     if (!el) return;
     const full = unlimited || !isFinite(maxStamina) || stamina >= maxStamina - 0.01;

@@ -1208,7 +1208,7 @@ export class Player {
     this._updateWeapon(dt, moving, speed);
 
     const w = this.weapon;
-    this.game.hud.setAmmo(w.mag, w.reserve);
+    this.game.hud.setAmmo(w.mag, w.reserve, w.def.mag);
     this.game.hud.setGadgets(this.biofoam, this.grenade, this.gadgets); // no-op unless changed
     if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;

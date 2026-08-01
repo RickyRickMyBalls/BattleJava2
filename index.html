@@ -129,6 +129,21 @@
     #visor .v-fill { stroke: none; }
     #visor .v-cell { opacity: 0; transition: opacity 0.12s linear; }
     #visor .v-cell.on { opacity: 1; }
+    /* Sprint pool. Full is the normal case and the case where it has nothing to
+       say, so the FILL fades and the etched outline stays — blanking the group
+       would leave a hole on the left of a visor that is still lit on the right.
+       MJOLNIR never spends, so it gets a flat dim bar: always there, rather
+       than an empty socket. Amber once the exhaust latch closes. */
+    #visor .v-boost { transition: opacity 0.25s; }
+    #visor .v-boost.full { opacity: 0; }
+    #visor .v-boost.spent path { fill: url(#v-fill-boostSpent); }
+    #visor .v-boost.limitless { opacity: 0.42; }
+    #visor .v-boost.limitless path { fill: #4e8f6d; }
+    /* The exhaust threshold: below it the sprint bonus is ramping away, and you
+       must climb back above it before Shift bites again. One mark, both facts. */
+    #visor .v-tickmark { transition: opacity 0.25s; }
+    #visor .v-tickmark.full { opacity: 0; }
+    #visor .v-tick { stroke: #06131b; stroke-width: 2px; opacity: 0.5; }
 
     /* ---- Vitals ---- */
     #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }

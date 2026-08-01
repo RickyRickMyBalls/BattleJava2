@@ -21,6 +21,7 @@
 import { CFG } from './config.js';
 
 const V = CFG.visor;
+const ST = CFG.stamina;
 
 // One fetch and one parse for the life of the page. `new Hud()` runs per match,
 // and the second match must not go back to the network for a file that cannot
@@ -151,30 +152,82 @@ export class Visor {
     this.g.health.parentNode.insertBefore(healthFill, this.g.health);
     this.cells = [...healthFill.children];
 
-    // The shield is one continuous sweep, so it wipes under a clip rather than
-    // lighting in steps. Anchored left and grown rightward.
-    const src = this.g.shield.querySelector('path');
-    const bb = this.g.shield.getBBox();
-    const clip = el('clipPath');
-    clip.setAttribute('id', `${p}clip-shield`);
+    // The other three are continuous sweeps, so they wipe under a clip rather
+    // than lighting in steps.
+    this.m = {};
+    for (const key of ['shield', 'ammo', 'boost']) this.m[key] = this._meter(key, defs);
+    this._buildTick(defs);
+
+    this._ready = true;
+    return true;
+  }
+
+  // A wiping meter: a filled copy of the outline under a clip rect whose width
+  // is the whole readout.
+  _meter(key, defs) {
+    const p = V.idPrefix;
+    const group = this.g[key];
+    const bb = group.getBBox();
+
     const rect = el('rect');
     rect.setAttribute('x', bb.x);
     rect.setAttribute('y', bb.y - 4);
     rect.setAttribute('height', bb.height + 8);
     rect.setAttribute('width', 0);
+    const clip = el('clipPath');
+    clip.setAttribute('id', `${p}clip-${key}`);
     clip.appendChild(rect);
     defs.appendChild(clip);
 
-    const shieldFill = el('g');
-    shieldFill.setAttribute('class', 'v-fill');
-    shieldFill.setAttribute('clip-path', `url(#${p}clip-shield)`);
-    shieldFill.appendChild(filled(src, `${p}fill-shield`));
-    this.g.shield.parentNode.insertBefore(shieldFill, this.g.shield);
-    this.shieldRect = rect;
-    this.shieldSpan = bb.width;
+    const g = el('g');
+    g.setAttribute('class', `v-fill v-${key}`);
+    g.setAttribute('clip-path', `url(#${p}clip-${key})`);
+    for (const path of group.querySelectorAll('path')) g.appendChild(filled(path, `${p}fill-${key}`));
+    group.parentNode.insertBefore(g, group);
 
-    this._ready = true;
-    return true;
+    return { g, rect, x0: bb.x, span: bb.width, anchor: V.anchor[key] || 'left', f: -1 };
+  }
+
+  // The exhaust mark on the boost bar. Clipped to the bar's own silhouette
+  // because the bar is a slanted parallelogram — a plain vertical rule would
+  // hang out above and below it. It sits OUTSIDE the wipe clip on purpose: the
+  // threshold does not stop existing because the pool has drained past it.
+  _buildTick(defs) {
+    const p = V.idPrefix;
+    const group = this.g.boost;
+    const bb = group.getBBox();
+
+    const shape = el('clipPath');
+    shape.setAttribute('id', `${p}shape-boost`);
+    for (const path of group.querySelectorAll('path')) shape.appendChild(path.cloneNode(false));
+    defs.appendChild(shape);
+
+    const holder = el('g');
+    holder.setAttribute('class', 'v-tickmark');
+    holder.setAttribute('clip-path', `url(#${p}shape-boost)`);
+    const line = el('line');
+    line.setAttribute('class', 'v-tick');
+    line.setAttribute('y1', bb.y - 4);
+    line.setAttribute('y2', bb.y + bb.height + 4);
+    holder.appendChild(line);
+    group.parentNode.insertBefore(holder, group);
+    this.tick = line;
+    this.tickHolder = holder;
+  }
+
+  // Where the fill edge would sit at `frac` of full.
+  _edgeX(m, frac) {
+    return m.anchor === 'right' ? m.x0 + m.span * (1 - frac) : m.x0 + m.span * frac;
+  }
+
+  // Drive a meter to `f` of full. The anchor decides which end stays put.
+  _wipe(m, f) {
+    f = clamp01(f);
+    if (Math.abs(f - m.f) < 0.002) return;
+    m.f = f;
+    const w = m.span * f;
+    m.rect.x.baseVal.value = m.anchor === 'right' ? m.x0 + m.span - w : m.x0;
+    m.rect.width.baseVal.value = w;
   }
 
   // Gated on change like the rest of the HUD: this runs every frame, and the
@@ -191,11 +244,52 @@ export class Visor {
       this.cells.forEach((c, i) => c.classList.toggle('on', i < lit));
     }
 
-    const f = clamp01(shield / maxShield);
-    if (Math.abs(f - this._shieldF) > 0.002) {
-      this._shieldF = f;
-      this.shieldRect.width.baseVal.value = this.shieldSpan * f;
+    this._wipe(this.m.shield, shield / maxShield);
+  }
+
+  // `capacity` is the magazine size. Without it there is no fraction to draw,
+  // so the bar holds rather than guessing at a denominator.
+  setAmmo(mag, capacity) {
+    if (!capacity || !this._init()) return;
+    this._wipe(this.m.ammo, mag / capacity);
+  }
+
+  // The sprint pool. Three states the fill has to carry beyond its level:
+  //
+  //   full       the fill goes, the outline stays. A meter that cannot move is
+  //              noise -- but blanking the whole group would leave a hole on
+  //              the left of a visor that is lit on the right, and asymmetry
+  //              reads as breakage. The outline is frame; the fill is the news.
+  //   limitless  MJOLNIR. Flat and dim at full rather than an empty socket:
+  //              "always there", not "nothing there".
+  //   spent      the exhaust latch is closed. Amber, same as #stambar.
+  setStamina(stamina, maxStamina, unlimited, spent) {
+    if (!this._init()) return;
+    const m = this.m.boost;
+    const limitless = !!unlimited || !isFinite(maxStamina);
+
+    // The mark is an absolute pool value (CFG.stamina.resprintAt), not a share
+    // of the bar — perks resize the pool, so where it lands moves with class.
+    if (maxStamina !== this._maxStam) {
+      this._maxStam = maxStamina;
+      const frac = limitless ? 0 : clamp01(ST.resprintAt / maxStamina);
+      this.tick.style.display = frac > 0 ? '' : 'none';
+      if (frac > 0) {
+        const x = this._edgeX(m, frac);
+        this.tick.x1.baseVal.value = x;
+        this.tick.x2.baseVal.value = x;
+      }
     }
+
+    const full = !limitless && stamina >= maxStamina - 0.01;
+    const cls = `v-fill v-boost${full ? ' full' : ''}${spent ? ' spent' : ''}${limitless ? ' limitless' : ''}`;
+    if (cls !== m.g.getAttribute('class')) {
+      m.g.setAttribute('class', cls);
+      // The mark goes with the fill. A threshold line alone in an empty socket
+      // is a fact about a meter that is deliberately saying nothing.
+      this.tickHolder.classList.toggle('full', full);
+    }
+    this._wipe(m, limitless ? 1 : stamina / maxStamina);
   }
 
   // Fire-and-forget: a HUD blocked on the network is worse than one that comes
