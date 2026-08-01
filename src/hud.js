@@ -68,7 +68,10 @@ export class Hud {
     this.spottedShooters = new Map(); // soldier -> ttl, for minimap enemy blips
     this.mmTimer = 0;
 
-    for (const s of this.game.world.sectors) {
+    // Cleared first: one `#sectors` element outlives every Hud built against
+    // it, and a host with no sectors at all (the lobby arena) is legal.
+    this.el.sectors.replaceChildren();
+    for (const s of this.game.world.sectors || []) {
       const pip = document.createElement('div');
       pip.className = 'sector-pip';
       const fill = document.createElement('div');
@@ -83,6 +86,7 @@ export class Hud {
   }
 
   show() { this.el.hud.style.display = 'block'; }
+  hide() { this.el.hud.style.display = 'none'; }
 
   setAmmo(mag, res) {
     this.el.ammoMag.textContent = mag;
@@ -355,14 +359,22 @@ export class Hud {
     if (this.el.crosshair) this.el.crosshair.style.display = on ? '' : 'none';
   }
 
-  // Toggle between map-hub chrome and first-person chrome.
+  // Map-hub chrome, first-person chrome, or the lobby range.
+  //
+  // 'range' is the lobby roam mode: a real Player on a real arena, but no
+  // match behind it. It splits the chrome along the line of what a readout
+  // actually depends on — everything you read because you are holding a gun
+  // stays, everything that reports on a match goes. Tickets, sectors, squad
+  // and the minimap have no data in the lobby; the hint is off because the
+  // lobby prints its own ("ESC RETURN TO SETUP").
   setMode(mode) {
     const fps = mode === 'fps';
+    const armed = fps || mode === 'range';
     const set = (el, on) => { if (el) el.style.display = on ? '' : 'none'; };
-    set(this.el.crosshair, fps);
-    set(this.el.visor, fps);
-    set(this.el.vitals, fps);
-    set(this.el.ammo, fps);
+    set(this.el.crosshair, armed);
+    set(this.el.visor, armed);
+    set(this.el.vitals, armed);
+    set(this.el.ammo, armed);
     set(this.el.squad, fps);
     set(this.el.order, fps);
     set(this.el.minimapWrap, fps);
@@ -399,8 +411,11 @@ export class Hud {
     // Every frame, unlike the minimap: these are screen-projected, so throttling
     // them would make markers visibly lag the camera when you turn.
     this.updateCasualties();
+    // The minimap is a match readout through and through — teams, sector
+    // ownership, the HQ list. The lobby arena has none of those, so it has
+    // nothing to draw, which is cheaper than guarding every loop inside.
     this.mmTimer -= dt;
-    if (this.mmTimer <= 0) {
+    if (this.mmTimer <= 0 && this.game.teams) {
       this.mmTimer = 0.12;
       this._drawMinimap();
     }

@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { CFG, CLASSES, WEAPONS } from './config.js';
 import { makeLobbyArena } from './arena.js';
 import { LobbyWorld } from './lobbyworld.js';
+import { Hud } from './hud.js';
 import { Player } from './player.js';
 import { Soldier } from './soldier.js';
 import { WeaponRack } from './weaponrack.js';
@@ -107,6 +108,13 @@ export class LobbyRoam {
     // scene graph or the gun never renders. The lobby camera is standalone.
     if (lb.camera.parent !== lb.scene) lb.scene.add(lb.camera);
 
+    // A real Hud in place of the arena's null-object stub. Everything player.js
+    // already pushes — ammo, gadgets, weapon name, reload, hitmarkers — starts
+    // landing somewhere visible, which is what makes this a range rather than a
+    // walk. The match-only panels are off; see Hud.setMode('range').
+    this.hud = new Hud(this.arena);
+    this.arena.hud = this.hud;
+
     this.player = new Player(this.arena, lb.camera, this.lobby.renderer.domElement);
     this.arena.player = this.player;
     this.player.setEnabled(false);
@@ -191,6 +199,7 @@ export class LobbyRoam {
     if (this.state !== 'roam' && this.state !== 'in') return;
     this.player.setEnabled(false);
     this.player.viewmodel.visible = false;
+    if (this.hud) this.hud.hide();
     this.from.pos.copy(this.lobby.camera.position);
     this.from.quat.copy(this.lobby.camera.quaternion);
     this.from.fov = this.lobby.camera.fov;
@@ -260,6 +269,13 @@ export class LobbyRoam {
       cam.getWorldDirection(this._look);
       this.rack.update(dt, this.player.pos, this._look);
       this._updatePrompt();
+      // Vitals and stamina are pushed by Game, not by Player — so on a host
+      // that is not a Game, nobody pushes them and the bars sit frozen at full.
+      // Mirrors what game.js does with the same two calls.
+      const s = this.soldier;
+      this.hud.setVitals(s.shield, s.health, s.maxShield);
+      this.hud.setStamina(s.stamina, s.maxStamina, s.staminaUnlimited, s.exhausted);
+      this.hud.update(dt);
       // Same off-screen pass Game.renderScopes does, so scope screens are live
       // here too — the lobby is meant to be the test range for exactly this.
       // Must precede the lobby's own render, which happens right after us.
@@ -313,6 +329,10 @@ export class LobbyRoam {
     if (lb.charGroup) lb.charGroup.visible = false;
     // Whatever the loadout put in your hands is off the rack.
     this.rack.syncCarried(this.player.weapons.map((w) => w.key));
+    // Raised at the handoff, not at enter(): the fly-in is a camera move, and
+    // chrome hanging over it would read as the lobby's rather than the gun's.
+    this.hud.show();
+    this.hud.setMode('range');
     this.state = 'roam';
   }
 }
