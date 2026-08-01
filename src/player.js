@@ -1475,10 +1475,12 @@ export class Player {
     // at the crosshair and the player never sees a beam at all. It has to leave
     // the tool, off to the side, so it reads as a line converging on the target.
     //
-    // `ref_muzzle` is the authored empty every weapon carries and is the right
-    // answer; the tool GLB does not have one yet. Until it does, the gun holder
-    // is the honest approximation — it is literally where the tool is drawn on
-    // screen, so the beam leaves the model rather than the face.
+    // `ref_muzzle` is the authored empty every weapon carries, and the repair
+    // tool has one at its nozzle tip. The gun holder is the fallback for a tool
+    // GLB that does not — it is roughly where the model is drawn on screen, so
+    // the beam still leaves the tool rather than the face, just not from the
+    // nozzle. Worth keeping: it is the difference between an unauthored empty
+    // being a blemish and being a beam fired out of the player's eye.
     const origin = this.vmMuzzle
       ? this.vmMuzzle.getWorldPosition(_muzzle)
       : this.gunHolder.getWorldPosition(_muzzle);
