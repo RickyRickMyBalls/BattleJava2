@@ -20,7 +20,8 @@ secondary - mag, pistol
 1.2.3 - Stim pack
 1.2.4 - 
 
-global gadget
+global gadgets
  - repair tool (engineer has by perk)
-
+ - 
+global perk
  [ ] every soilder gets a BioFoam - equivilenet to bandainds
