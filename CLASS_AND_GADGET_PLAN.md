@@ -613,14 +613,33 @@ calm for a couple of seconds, holding a charge, so go stand over them.
 
 ### Build order
 
-**Phase 1 — the stationary pickup. No new animation.** Hold a key over a downed
-teammate for 5 seconds, pay a charge, and they stand back up on half health.
+**Phase 1 — the stationary pickup.** Hold a key over a downed teammate for 5
+seconds, pay a charge, and they stand back up on half health.
 
-Nothing in that needs a new clip. The downed idle is `death1`/`death2` frozen at
-its last frame, which is already how bodies lie; the first-person treatment is
-the camera dropped to roughly 0.4 m with a limited yaw; the reviver plays its
-normal idle. Every animation this section originally called for belongs to drag
-and carry, which is exactly why they are phase 2.
+It needs **one** clip, not the five this section originally called for. The
+downed idle is `death1`/`death2` frozen at its last frame, which is already how
+bodies lie, and the first-person treatment is the camera dropped to 0.45 m. Only
+the rescuer needed something new, and a generic **CPR** clip covers it as a
+blockout — a purpose-authored one can replace it by swapping a single path in
+`ASSET_PATHS.animations`.
+
+Two things make the pose read rather than just play:
+
+- **Both weapons stow for the duration.** Hands are on the casualty, so
+  `_setHeldWeapon(null)` parents every gun to the back mount. A rescuer kneeling
+  over a body while still shouldering a rifle is the tell that would give the
+  whole thing away as an animation rather than an action.
+- **The first-person viewmodel hides too.** Without that half, a pickup in first
+  person is a rifle held steady at nothing for five seconds — the third-person
+  body would be the only one telling the truth.
+
+The clip loops at natural speed rather than being stretched to `reviveTime`. It
+runs 8.7 s against a 5 s pickup, so only part of the motion plays — deliberate,
+because stretching it to fit would make Support's 1.67 s pickup a frantic blur.
+The progress bar is the timing readout; this is the body language.
+
+Every remaining animation this section called for belongs to drag and carry,
+which is exactly why they are phase 2.
 
 What phase 1 touches:
 
@@ -869,8 +888,9 @@ replacing the duplicated class-switch check in `menu.js` and `deploy.js`.
 with its bleedout, the stationary pickup on both sides (player holds E, bots walk
 to their nearest casualty), the ground camera and closing vignette, give-up on a
 held SPACE, and finishing a casualty with any further damage. Behind
-`CFG.downed.enabled`. No new animation clips: the downed pose is the existing
-death clip held at its last frame.
+`CFG.downed.enabled`. One new clip only — a placeholder CPR pose for the rescuer,
+with both weapons stowed while it plays; the downed pose is the existing death
+clip held at its last frame.
 
 **Not started** — every gadget behaviour, grenades, melee, construction, perks,
 stamina, armor, drag and carry (casualty recovery phase 2), and the four
@@ -1009,6 +1029,10 @@ Ordered by how much each one changes if answered differently.
   nearer silent ones. Calls expire after 8 s and bots raise one automatically a
   beat after going down, so a busy field sorts into fresh casualties shouting and
   older ones quiet.
+- Gave the rescuer a CPR pose, with both weapons stowed and the first-person
+  viewmodel hidden for the duration. A blockout clip, swappable by one path in
+  `ASSET_PATHS.animations`. It loops at natural speed rather than stretching to
+  `reviveTime`, since stretching would make Support's 1.67 s a blur.
 - Re-measured over three runs per condition and corrected the First measurements
   table. The single-run 31% ticket drop reported earlier does not survive; the
   clean result is that the field runs ~30% emptier. Record ranges, not points.

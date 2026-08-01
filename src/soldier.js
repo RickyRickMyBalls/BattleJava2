@@ -126,6 +126,11 @@ export class Soldier {
     this.reviveHeld = false;   // set each frame by the rescuer; decays if not
     this.reviveTarget = null;  // AI: the casualty this soldier is walking to
     this.callTimer = 0;        // seconds left on a call for help
+    // True on any frame this soldier is working on a casualty. Drives the CPR
+    // pose and stows the rifle. The player controller writes it from its own
+    // state, the same way it writes `crouching`/`aiming`; AI set it in
+    // `_updateRevive`.
+    this.reviving = false;
 
     this.waypoint = new THREE.Vector3();
     this.hasWaypoint = false;
@@ -304,6 +309,11 @@ export class Soldier {
   _locomotionAnim() {
     const moving = this.speed2D > 0.4;
     if (this.airborne) return 'jump';
+    // Working on a casualty outranks the whole locomotion set, including the
+    // gait: this is a committed action, and showing a run over it would be the
+    // body lying about what the soldier is doing. It loops until the pickup
+    // completes or is broken off.
+    if (this.reviving) return 'cpr';
     if (this.crouching) {
       if (!moving) return 'crouchIdle';
       return this._dirAnim('crouchFwd', 'crouchBack', 'crouchLeft', 'crouchRight');
@@ -383,6 +393,7 @@ export class Soldier {
     this.reviveProgress = 0;
     this.reviveHeld = false;
     this.reviveTarget = null;
+    this.reviving = false;
     this.callTimer = 0;
     this._called = false;
     this.shield = this.maxShield;
@@ -465,6 +476,7 @@ export class Soldier {
     this.reviveProgress = 0;
     this.reviveHeld = false;
     this.reviveTarget = null;
+    this.reviving = false;
     this.callTimer = 0;
     this._called = false;
     this.health = 0;
@@ -488,6 +500,7 @@ export class Soldier {
     this.removeBodyTimer = 0;
     this.target = null;
     this.reviveTarget = null;
+    this.reviving = false;   // or the corpse keeps both guns stowed on its back
     this.callTimer = 0;
     this._called = false;
     const credit = attacker || this.downedBy;
@@ -609,16 +622,21 @@ export class Soldier {
   // run every frame. Fighting outranks first aid — a bot with a target drops
   // the errand rather than jogging across a firefight to it.
   _updateRevive(dt) {
+    this.reviving = false;
     const t = this.reviveTarget;
     if (!t) return;
     if (!t.downed || this.target || !this.biofoam || this.biofoam.charges <= 0) {
       this.reviveTarget = null;
       return;
     }
+    // Facing is already handled: `_move`'s reviveTarget branch turns the body
+    // toward the casualty both on approach and once standing over it.
     if (this.pos.distanceTo(t.pos) > D.reviveRange) return;
+    this.reviving = true;
     if (t.applyRevive(this, dt)) {
       this.biofoam.charges -= BIOFOAM.reviveCost;
       this.reviveTarget = null;
+      this.reviving = false;
     }
   }
 
@@ -905,7 +923,11 @@ export class Soldier {
     // it. `aiming` is set by the player controller only; AI have no such flag,
     // so their behaviour is unchanged.
     if (this.alive) this.playAnim(this._locomotionAnim());
-    if (this.activeWeapon && this.heldKey !== this.activeWeapon.key) {
+    // Both hands are on the casualty during a pickup, so both guns go to the
+    // back — `_setHeldWeapon(null)` matches nothing, which parents every gun to
+    // the back mount. The branch below re-equips the instant the pickup ends.
+    if (this.reviving) this._setHeldWeapon(null);
+    else if (this.activeWeapon && this.heldKey !== this.activeWeapon.key) {
       this._setHeldWeapon(this.activeWeapon.key);
     }
 

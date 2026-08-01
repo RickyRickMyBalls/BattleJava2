@@ -724,6 +724,7 @@ export class Player {
     this.firing = false;
     this.ads = false;
     this.reviving = false;
+    s.reviving = false;
     this.reviveTarget = null;
     this.eye += (D.camHeight - this.eye) * Math.min(1, dt * 6);
     this.pos.copy(s.pos);
@@ -765,35 +766,48 @@ export class Player {
   // attempt broken off — by gunfire, by walking away, by the casualty bleeding
   // out under your hands — costs only the time.
   _updateRevive(dt) {
+    this.reviving = this._stepRevive(dt);
+    // The third-person body kneels over the casualty, and the first-person
+    // hands put the rifle away — without the second half, a pickup in first
+    // person is a rifle held steady at nothing for five seconds.
+    //
+    // This is now the per-frame writer for both, which is why it recomputes the
+    // camera-mode terms rather than just toggling: setFreecam/setThirdPerson
+    // also write `viewmodel.visible`, and the two must not disagree.
+    this.soldier.reviving = this.reviving;
+    this.viewmodel.visible = !this.reviving && !this.freecam && !this.thirdPerson;
+  }
+
+  // Returns whether the player is working on a casualty this frame. Split out
+  // so every early exit still lands on the single writer above.
+  _stepRevive(dt) {
     const t = this._nearestCasualty();
     this.reviveTarget = t;
     if (!t) {
-      this.reviving = false;
       this.game.hud.setPrompt(null);
-      return;
+      return false;
     }
     const b = this.biofoam;
     if (!b || b.charges <= 0) {
-      this.reviving = false;
       this.game.hud.setPrompt(`${t.name} DOWN — NO BIOFOAM`, 0);
-      return;
+      return false;
     }
     // `reviving` gates firing through actionBusy, so it must not latch on when
     // the hands are already committed to something else.
     const holding = !!this.keys['KeyE'] && this.locked && !this.freecam
       && !this.gadgetBusy() && !(this.grenade && this.grenade.useTimer > 0)
       && !(this.melee && this.melee.useTimer > 0);
-    this.reviving = holding;
     if (holding && t.applyRevive(this.soldier, dt)) {
       b.charges -= BIOFOAM.reviveCost;
       this.game.hud.setPrompt(null);
       this.game.hud.message(`BIOFOAM — ${b.charges} LEFT`, 1.5);
-      return;
+      return false;                       // done: hands back on the rifle
     }
     this.game.hud.setPrompt(
       holding ? `PICKING UP ${t.name}` : `HOLD E — PICK UP ${t.name}`,
       holding ? t.reviveProgress : 0,
     );
+    return holding;
   }
 
   // Nearest downed teammate in reach. Any teammate, not just the squad — see

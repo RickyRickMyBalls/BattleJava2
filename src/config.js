@@ -1537,6 +1537,11 @@ export const ASSET_PATHS = {
     crouchRight: { url: '/animations/crouch_walk_right_aim/crouch_walk_right_aim.glb', clip: 'walk-crouching-right' },
     death1: '/animations/dying_normal-with-rifle.glb',
     death2: '/animations/death_1.glb',
+    // Casualty recovery. Loops for as long as the pickup takes, so its length
+    // does not have to match `CFG.downed.reviveTime` — the progress bar is the
+    // timing readout, this is the body language. Placeholder: a generic CPR
+    // clip standing in until a purpose-authored one exists.
+    cpr: '/animations/CPR/CPR.glb',
   },
   audio: {
     shot: '/UNSC/weapons/battle-rifle/audio/battle-rifle-shot-1.mp3',
