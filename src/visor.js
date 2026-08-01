@@ -79,10 +79,123 @@ function prepare(text) {
   return svg;
 }
 
+const NS = 'http://www.w3.org/2000/svg';
+const el = (name) => document.createElementNS(NS, name);
+const clamp01 = (v) => (v > 1 ? 1 : v < 0 ? 0 : v);
+
+// A top-to-bottom gradient over each filled shape's own box, so one definition
+// serves both the single shield sweep and ten separate health cells.
+function gradient(id, stops) {
+  const g = el('linearGradient');
+  g.setAttribute('id', id);
+  g.setAttribute('x1', 0); g.setAttribute('y1', 0);
+  g.setAttribute('x2', 0); g.setAttribute('y2', 1);
+  for (const [offset, color] of stops) {
+    const s = el('stop');
+    s.setAttribute('offset', offset);
+    s.setAttribute('stop-color', color);
+    g.appendChild(s);
+  }
+  return g;
+}
+
+// A filled copy of an outline path. The class goes because it carries the
+// export's stroke — left on, the copy would redraw the outline under the real
+// one and every edge would read double-weight.
+function filled(path, fillId, cls) {
+  const copy = path.cloneNode(false);
+  copy.removeAttribute('class');
+  copy.setAttribute('fill', `url(#${fillId})`);
+  copy.setAttribute('stroke', 'none');
+  if (cls) copy.setAttribute('class', cls);
+  return copy;
+}
+
 export class Visor {
   constructor() {
     this.svg = null;
     this.g = null;      // { shield, health, ammo, boost } — the meter groups
+    this.cells = null;  // health, left to right
+    this._ready = false;
+    this._lit = -1;
+    this._shieldF = -1;
+  }
+
+  // Geometry has to be measured, and `getBBox` reports zeros inside a
+  // display:none subtree — which `#hud` is until the match starts. So this runs
+  // on the first setter that arrives after the HUD is actually up, not at mount,
+  // and reports false until the numbers are real.
+  _init() {
+    if (this._ready) return true;
+    if (!this.svg || !this.g.health) return false;
+    const probe = this.g.health.getBBox();
+    if (probe.width < 1) return false;
+
+    const p = V.idPrefix;
+    const defs = this.svg.querySelector('defs') || this.svg.insertBefore(el('defs'), this.svg.firstChild);
+    for (const [key, stops] of Object.entries(V.fill)) defs.appendChild(gradient(`${p}fill-${key}`, stops));
+
+    // Ten discrete pips, not a bar with ten notches drawn on it. `Z` is what
+    // separates a cell from the thin connector stroke sharing the group, and
+    // the sort is by geometry because a re-export is under no obligation to
+    // keep document order.
+    const cells = [...this.g.health.querySelectorAll('path')]
+      .filter((n) => /[zZ]\s*$/.test(n.getAttribute('d') || ''))
+      .sort((a, b) => a.getBBox().x - b.getBBox().x);
+    if (cells.length !== V.healthCells) {
+      console.warn(`[visor] health: art has ${cells.length} cells, config says ${V.healthCells}`);
+    }
+    const healthFill = el('g');
+    healthFill.setAttribute('class', 'v-fill');
+    for (const c of cells) healthFill.appendChild(filled(c, `${p}fill-health`, 'v-cell'));
+    this.g.health.parentNode.insertBefore(healthFill, this.g.health);
+    this.cells = [...healthFill.children];
+
+    // The shield is one continuous sweep, so it wipes under a clip rather than
+    // lighting in steps. Anchored left and grown rightward.
+    const src = this.g.shield.querySelector('path');
+    const bb = this.g.shield.getBBox();
+    const clip = el('clipPath');
+    clip.setAttribute('id', `${p}clip-shield`);
+    const rect = el('rect');
+    rect.setAttribute('x', bb.x);
+    rect.setAttribute('y', bb.y - 4);
+    rect.setAttribute('height', bb.height + 8);
+    rect.setAttribute('width', 0);
+    clip.appendChild(rect);
+    defs.appendChild(clip);
+
+    const shieldFill = el('g');
+    shieldFill.setAttribute('class', 'v-fill');
+    shieldFill.setAttribute('clip-path', `url(#${p}clip-shield)`);
+    shieldFill.appendChild(filled(src, `${p}fill-shield`));
+    this.g.shield.parentNode.insertBefore(shieldFill, this.g.shield);
+    this.shieldRect = rect;
+    this.shieldSpan = bb.width;
+
+    this._ready = true;
+    return true;
+  }
+
+  // Gated on change like the rest of the HUD: this runs every frame, and the
+  // pip count moves a handful of times a life.
+  setVitals(shield, health, maxShield, maxHealth) {
+    if (!this._init()) return;
+
+    // Ceil, with a floor of one while anything is left: a last sliver of health
+    // that reads as an empty bar is a lie about whether you are still standing.
+    const lit = health <= 0 ? 0
+      : Math.max(1, Math.min(this.cells.length, Math.ceil((health / maxHealth) * this.cells.length)));
+    if (lit !== this._lit) {
+      this._lit = lit;
+      this.cells.forEach((c, i) => c.classList.toggle('on', i < lit));
+    }
+
+    const f = clamp01(shield / maxShield);
+    if (Math.abs(f - this._shieldF) > 0.002) {
+      this._shieldF = f;
+      this.shieldRect.width.baseVal.value = this.shieldSpan * f;
+    }
   }
 
   // Fire-and-forget: a HUD blocked on the network is worse than one that comes

@@ -122,6 +122,13 @@
        export does not set it, so it is applied here rather than waited for. */
     #visor svg path, #visor svg polyline, #visor svg line, #visor svg rect
       { vector-effect: non-scaling-stroke; }
+    /* Meter fills, built by visor.js and painted UNDER the export's own
+       outlines so the etched edge stays the crisp thing on screen. A dark pip
+       is an unlit pip: the outline is frame and stays put either way, so the
+       strip never loses its shape as health goes. */
+    #visor .v-fill { stroke: none; }
+    #visor .v-cell { opacity: 0; transition: opacity 0.12s linear; }
+    #visor .v-cell.on { opacity: 1; }
 
     /* ---- Vitals ---- */
     #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }

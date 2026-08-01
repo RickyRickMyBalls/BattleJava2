@@ -202,6 +202,20 @@ export const CFG = {
     // 16:9. The cap only bites wider than 16:9, where it would otherwise march
     // the frame down the screen instead of leaving it a hat.
     heightVh: 17,
+
+    // How many cells the health strip is cut into. The art draws them; this is
+    // the number the readout is quantised to, and the two are checked against
+    // each other on load rather than assumed to agree.
+    healthCells: 10,
+
+    // Meter fills, as [offset, colour] stops running top to bottom. The export
+    // is stroke-only — these are lifted from the older hud4-top.svg, which
+    // carried them in its <defs> and never used them, so they are the artist's
+    // own values rather than a guess at them.
+    fill: {
+      shield: [[0, '#d4f7ff'], [0.28, '#83d9f7'], [1, '#2b87ba']],
+      health: [[0, '#6fc8e7'], [0.48, '#276e9d'], [1, '#102f50']],
+    },
   },
 
   // Squad rally beacon — the leader's ability, not a gadget slot. Shared rules

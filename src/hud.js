@@ -127,6 +127,7 @@ export class Hud {
   setVitals(shield, health, maxShield = CFG.soldier.shield) {
     this.el.shieldbar.firstElementChild.style.width = `${Math.max(0, (shield / maxShield) * 100)}%`;
     this.el.healthbar.firstElementChild.style.width = `${Math.max(0, (health / CFG.soldier.health) * 100)}%`;
+    this.visor.setVitals(shield, health, maxShield, CFG.soldier.health);
   }
 
   // Stamina gets its own setter rather than more arguments on setVitals: it is
