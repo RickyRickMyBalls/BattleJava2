@@ -89,6 +89,16 @@ export class Hud {
     this.el.ammoRes.textContent = `| ${res}`;
     this.visor.setAmmo(mag, capacity);
   }
+  // A held tool has no magazine, so the ammo readout carries its heat instead.
+  // The visor bar is fed the INVERSE — a full bar means a cold tool with all its
+  // working time ahead of it, which is the same thing a full magazine means.
+  // Draining-as-you-work is the read every player already has.
+  setToolHeat(heat, vented) {
+    this.el.ammoMag.textContent = `${Math.round(heat * 100)}%`;
+    this.el.ammoRes.textContent = vented ? '| VENTING' : '| HEAT';
+    this.visor.setAmmo(1 - heat, 1);
+  }
+
   setReloading(on) { this.el.reloadingTxt.style.display = on ? 'block' : 'none'; }
 
   // Consumable gadget charges. Rebuilt only when the readout actually changes —

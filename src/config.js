@@ -1236,6 +1236,66 @@ export const WEAPONS = {
     snd: { key: 'pistolShot2', rate: 1.0, vol: 0.55 },
     ai: { aiMin: 0, range: 55, burst: [1, 2], interval: 0.28, pause: [0.6, 1.2], spread: 0.010 },
   },
+
+  // --- Tools ---------------------------------------------------------------
+  // Not a weapon, and in WEAPONS on purpose. This registry is not "guns" — it is
+  // everything that mounts in a pair of hands, and four systems already walk it:
+  // assets.js loads and length-normalizes it, player._mountGun reads `fp`,
+  // soldier._setHeldWeapon reads `grip`, and /chartest.html's GRIP and VIEWMODEL
+  // tabs enumerate Object.keys(WEAPONS). A tool defined outside it would need all
+  // four written a second time, and — the part that actually matters — its hold
+  // pose would have to be GUESSED instead of tuned on the range.
+  //
+  // Membership grants a MOUNT, not a loadout slot. The armoury pickers read the
+  // pools (STANDARD_POOL / SIDEARM_POOL / ALL_WEAPONS), never Object.keys, so
+  // nothing here can be selected as a weapon. What puts it in your hands is
+  // GADGETS.repairtool naming it in `held`.
+  //
+  // Everything downstream branches on the `tool` block, never on the key — the
+  // same rule structures.js follows with `def.wall` / `def.beacon`.
+  repairtool: {
+    name: 'REPAIR TOOL', model: '/UNSC/gadgets/repair_tool.glb', len: 0.36,
+    // Slower than any sidearm and slower than the rifles. Reaching for the tool
+    // is meant to be a decision you make between engagements, not a thing you
+    // flick to mid-fight — `swapTime` is the only place that can be stated.
+    swapTime: 0.75,
+    // `fp` was blocked out on the demo map rather than guessed: the GLB is
+    // authored with its nozzle down +X and the canister down -Y, so it needs a
+    // yaw of about -90 degrees before it points anywhere near the crosshair, and
+    // a scale nudge because a 0.36 m torch seen nose-on barely reads. `grip` is
+    // still a seed from the Magnum's. Both want a /chartest.html pass — GRIP tab
+    // -> `grip`, VIEWMODEL tab -> `fp`.
+    //
+    // There is no `ads` block and there never will be: a welder has no sights,
+    // and player.js refuses to aim one.
+    grip: { pos: [-0.03, 0.28, 0.02], rot: [-1.57, -0.2, -1.5] },
+    fp: { pos: [0.12, -0.14, 0.18], rot: [0, -1.271, -0.15], scale: 1.2 },
+    tool: {
+      // How far the beam reaches. Deliberately short: the tool's cost is that
+      // using it puts you next to the thing you are working on.
+      range: 6,
+      // Fuel is unlimited and HEAT is the limiter instead, which is the right
+      // shape for something that does three jobs — a charge pool would have to
+      // be split three ways and re-tuned every time a job was added.
+      //
+      // Stated as DURATIONS rather than rates because that is what they are
+      // tuned against: seconds of continuous beam to overheat, seconds from
+      // full heat back to cold.
+      heatUp: 4.5,
+      coolDown: 3.0,
+      // Cooling does not start the instant you release. Without this, tapping
+      // the trigger is strictly better than holding it, and the limiter stops
+      // limiting anything.
+      ventDelay: 0.5,
+      // Overheating locks the beam until heat reaches ZERO, not until it dips
+      // under some threshold. A partial recovery invites you to ride the top of
+      // the gauge, which is exactly the behaviour heat exists to punish.
+      // `radius` is the beam's FAR end — the near end is tapered down from it,
+      // so the beam holds a steady width on screen instead of flaring into a
+      // cone at the nozzle. See BEAM_TAPER in repairtool.js.
+      beam: { color: 0x5ad1ff, radius: 0.03 },
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1273,9 +1333,13 @@ export const ALL_WEAPONS = [...SIDEARM_POOL, ...STANDARD_POOL, ...SPECIALIST_POO
 // to be different carry the number.
 for (const [k, def] of Object.entries(WEAPONS)) {
   def.key = k;
-  def.slot = SIDEARM_POOL.includes(k) ? 'sidearm'
-    : SPECIALIST_POOL.includes(k) ? 'specialist'
-      : 'primary';
+  // Tools are in this registry for the mount, not for the armoury, so they get
+  // their own tier rather than falling through to 'primary'. Without this line
+  // a welder would be labelled a primary weapon by anything that reads `slot`.
+  def.slot = def.tool ? 'tool'
+    : SIDEARM_POOL.includes(k) ? 'sidearm'
+      : SPECIALIST_POOL.includes(k) ? 'specialist'
+        : 'primary';
   if (def.swapTime === undefined) def.swapTime = CFG.player.swapTime;
 }
 
@@ -1751,8 +1815,13 @@ export const GADGETS = {
   // contribute to fortifications. The Engineer carries it free via their perk,
   // which is why it is REMOVED from their pool rather than offered twice —
   // stated plainly, that removal is the perk.
+  // `held` is the seam between the two registries: a tool gadget names the
+  // WEAPONS entry it draws, and player.js mounts that. It is what makes the
+  // repair tool a piece of EQUIPMENT rather than a button — pressing its slot
+  // key draws and stows it instead of spending a charge, and while it is out it
+  // is simply what your hands are holding.
   repairtool: {
-    name: 'REPAIR TOOL', kind: 'tool', built: false, global: true,
+    name: 'REPAIR TOOL', kind: 'tool', built: true, global: true, held: 'repairtool',
     svg: '<path d="M15 4a5 5 0 0 0-6 6.5L4.5 15 9 19.5l4.5-4.5A5 5 0 0 0 20 9l-3 3-4-4z"/>',
   },
 };

@@ -3,10 +3,11 @@
 
 import * as THREE from 'three';
 import { CFG, WEAPONS, CLASSES, GADGETS, GRENADES, MELEE, BIOFOAM, BEACON, FP_DEFAULT, ADS_DEFAULT } from './config.js';
-import { weaponSlotGadget } from './loadout.js';
+import { weaponSlotGadget, classPerk } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { findMuzzle } from './soldier.js';
+import { createRepairBeam } from './repairtool.js';
 
 const P = CFG.player;
 const D = CFG.downed;
@@ -25,6 +26,13 @@ const HIP_SENS = 0.0021;
 const TAN_HIP = Math.tan(THREE.MathUtils.degToRad(HIP_FOV) / 2);
 const ZERO3 = [0, 0, 0];
 
+// A third held slot, past the two weapons. It is NOT a third weapon: nothing
+// cycles into it, the armoury cannot put anything in it, and what lands here is
+// whatever tool the loadout's gadgets grant. Named rather than written as a bare
+// 2 because `1 - this.active` is the two-gun toggle all over this file, and a
+// magic index would make every one of those sites ambiguous.
+const TOOL_SLOT = 2;
+
 function mkWeaponState(key) {
   const def = WEAPONS[key];
   return {
@@ -35,6 +43,12 @@ function mkWeaponState(key) {
     reloadTimer: 0,
     burstLeft: 0,
     chargeT: 0,
+    // A tool carries heat where a gun carries a magazine. Both live on the same
+    // state object on purpose: `this.weapon` is read from a dozen places and
+    // none of them should have to ask which kind of thing is in the hands.
+    heat: 0,        // 0..1, full is an overheat
+    vented: false,  // overheated — locked out until heat is back to zero
+    idle: 0,        // seconds since the beam last ran, against tool.ventDelay
   };
 }
 
@@ -122,6 +136,11 @@ export class Player {
     this.melee = null;      // { def, useTimer, cooldown, struck }
     this.swing = 0;         // 0..1 viewmodel dip, drives throw and bash motion
     this.active = 0;
+    // Which GUN to come back to when the tool is stowed. Without it, putting the
+    // tool away would always drop you on the primary, silently undoing a switch
+    // you made before you drew it.
+    this.lastGun = 0;
+    this.beam = null;       // repair beam, built on first use — see _updateBeam
     this.switchTimer = 0;
     this.fireTimer = 0;
     this.firing = false;
@@ -184,6 +203,7 @@ export class Player {
 
   dispose() {
     this.setEnabled(false);
+    if (this.beam) { this.beam.dispose(); this.beam = null; }
     for (const [target, type, fn] of this._listeners) target.removeEventListener(type, fn);
     this._listeners.length = 0;
   }
@@ -209,7 +229,8 @@ export class Player {
         if (e.code === 'KeyV') this.meleeAttack();
         if (e.code === 'KeyX') this.useBiofoam();   // universal, not a slot
         if (e.code === 'KeyB') this.placeBeacon();  // leader's, not a slot
-        if (e.code === 'KeyQ') this.switchWeapon(1 - this.active);
+        if (e.code === 'Digit6') this.drawTool();   // carried kit, not a slot
+        if (e.code === 'KeyQ') this.switchWeapon(this._cycleTarget());
       }
     });
     this._on(document, 'keyup', (e) => { this.keys[e.code] = false; });
@@ -218,7 +239,7 @@ export class Player {
       if (this.freecam) {
         this.fcSpeed = Math.max(5, Math.min(200, this.fcSpeed * (e.deltaY > 0 ? 0.8 : 1.25)));
       } else if (this.locked) {
-        this.switchWeapon(1 - this.active);
+        this.switchWeapon(this._cycleTarget());
       }
     });
 
@@ -264,6 +285,9 @@ export class Player {
     this.freecam = on;
     this.firing = false;
     this.ads = false;
+    // Freecam skips _updateWeapon entirely, so a beam alight at the moment you
+    // detach would hang in the world with nobody holding it.
+    if (this.beam) this.beam.hide();
     this.viewmodel.visible = !on;
     const s = this.soldier;
     if (on) {
@@ -416,6 +440,12 @@ export class Player {
     this.loadout = loadout;
     this.weapons = [mkWeaponState(loadout.primary), mkWeaponState(loadout.secondary)]
       .map((w) => this._applyReservePenalty(w));
+    // The third hand slot, empty unless a gadget grants a tool. `null` rather
+    // than absent so `weapons[TOOL_SLOT]` is a question every path can ask.
+    this.weapons[TOOL_SLOT] = null;
+    const held = this._heldToolKey(loadout);
+    if (held) this.weapons[TOOL_SLOT] = mkWeaponState(held);
+    this.lastGun = 0;
     this.gadgets = (loadout.gadgets || []).map(mkGadgetState);
     this.biofoam = mkBiofoamState(loadout.cls);
     const gdef = GRENADES[loadout.grenade];
@@ -454,6 +484,27 @@ export class Player {
     if (i === this.active) this._mountGun();
   }
 
+  // Which WEAPONS entry, if any, this loadout puts in the tool slot. Two paths
+  // reach it and both are legitimate: a tool taken in a utility slot, and the
+  // Engineer's, which the perk grants for free and which is therefore absent
+  // from `loadout.gadgets` entirely. Grants are checked first so a class that
+  // carries one by perk never depends on the slot it was removed from.
+  _heldToolKey(lo) {
+    const perk = classPerk(lo.cls);
+    for (const key of [...((perk && perk.grants) || []), ...(lo.gadgets || [])]) {
+      const g = GADGETS[key];
+      if (g && g.kind === 'tool' && g.held && WEAPONS[g.held]) return g.held;
+    }
+    return null;
+  }
+
+  // Q and the mouse wheel toggle between the two GUNS. The tool is drawn from
+  // its own slot key and never cycled into — from the tool, "cycle" can only
+  // sensibly mean "put it away", which is what returning `lastGun` does.
+  _cycleTarget() {
+    return this.active === TOOL_SLOT ? this.lastGun : 1 - this.active;
+  }
+
   switchWeapon(i) {
     if (i === this.active || !this.weapons[i]) return;
     if (this.actionBusy()) return;          // hands occupied
@@ -461,7 +512,12 @@ export class Player {
     w.reloading = false;
     w.burstLeft = 0;
     w.chargeT = 0;
+    // Stowing a tool kills its beam with it. A beam still drawing off a tool
+    // that is no longer in the player's hands is the kind of bug that survives
+    // for weeks, because nothing else about the frame looks wrong.
+    if (w.def.tool) { w.idle = 0; if (this.beam) this.beam.hide(); }
     this.game.hud.setReloading(false);
+    if (this.active !== TOOL_SLOT) this.lastGun = this.active;
     this.active = i;
     // The cost is drawing the weapon you are switching TO, so it comes off that
     // weapon's def. This was a flat 0.4 for everything, which left the Magnum
@@ -584,6 +640,11 @@ export class Player {
     if (g.def.kind === 'weaponSlot') return;   // spent at the armoury, not in play
     if (!g.def.built) { this.game.hud.message(`${g.def.name} — NOT IMPLEMENTED`, 1.5); return; }
     if (this.actionBusy() || g.cooldown > 0) return;
+    // A tool is EQUIPMENT, not a charge. Its slot key DRAWS it and pressing
+    // again stows it — nothing below this line applies, because there is no
+    // lockout to pay and nothing to spend. Having it in your hands, and giving
+    // up your rifle to do it, is the whole of the cost.
+    if (g.def.kind === 'tool') { this.toggleTool(g.def); return; }
     if (g.charges <= 0) { this.game.hud.message(`${g.def.name} — EMPTY`, 1.5); return; }
     g.charges--;
     g.useTimer = g.def.useTime || 0;
@@ -592,6 +653,38 @@ export class Player {
     // here so `_updateGadgets` stays the single place a lockout resolves.
     if (g.def.kind === 'placeable' && this._placeSystem(g.def)) g.pendingPlace = true;
     this._cancelWeaponAction();
+  }
+
+  // Draw the tool, or put it away. Routed through switchWeapon rather than
+  // writing `active` here, so a tool draw pays the same swap time, cancels the
+  // same reload and honours the same hands-busy rule as reaching for a sidearm.
+  //
+  // Two keys reach this, and both have to, because there are two ways to be
+  // carrying a tool. A class that SPENDS a utility slot on one reaches it by
+  // that slot's number key. The Engineer's is a PERK grant and occupies no slot
+  // at all — so without a key of its own, the one class the tool was designed
+  // around would be the one class unable to draw it. 6 is that key, on the same
+  // principle as biofoam on X and the beacon on B: universal kit gets a key,
+  // not a slot.
+  drawTool() {
+    if (!this.weapons[TOOL_SLOT]) {
+      this.game.hud.message('NO TOOL CARRIED', 1.5);
+      return;
+    }
+    if (this.actionBusy() || this.freecam) return;
+    this.switchWeapon(this.active === TOOL_SLOT ? this.lastGun : TOOL_SLOT);
+  }
+
+  toggleTool(def) {
+    const t = this.weapons[TOOL_SLOT];
+    // A gadget slot can name a tool this loadout never resolved a model for.
+    // Say so rather than eating the keypress — a key that does nothing at all
+    // reads as a broken control.
+    if (!t || (def.held && t.key !== def.held)) {
+      this.game.hud.message(`${def.name} — NOT CARRIED`, 1.5);
+      return;
+    }
+    this.drawTool();
   }
 
   // Biofoam. Universal, on its own key, and the same shape as every other
@@ -814,6 +907,9 @@ export class Player {
   startReload() {
     const w = this.weapon;
     if (this.actionBusy()) return;
+    // A tool has no magazine, so every test below reads `undefined` and passes.
+    // Heat is what bounds it — see _updateTool.
+    if (w.def.tool) return;
     if (w.reloading || w.mag >= w.def.mag || w.reserve <= 0) return;
     w.reloading = true;
     w.reloadTimer = w.def.reload;
@@ -831,6 +927,8 @@ export class Player {
     const s = this.soldier;
     this.firing = false;
     this.ads = false;
+    // Runs INSTEAD of update, so nothing else will retire the beam this frame.
+    if (this.beam) this.beam.hide();
     this.reviving = false;
     s.reviving = false;
     this.reviveTarget = null;
@@ -1153,7 +1251,9 @@ export class Player {
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon
     // owns it — a sniper comes up slower than an SMG. Tuned in /chartest.html.
-    const aim = this.ads;
+    // A welder has no sights, so RMB does nothing while one is held rather than
+    // zooming the camera on a tool with no `ads` block to zoom to.
+    const aim = this.ads && !this.weapon.def.tool;
     const ads = this.weapon.def.ads || ADS_DEFAULT;
     const k = Math.min(1, dt * (ads.speed || ADS_DEFAULT.speed));
 
@@ -1208,15 +1308,26 @@ export class Player {
     this._updateWeapon(dt, moving, speed);
 
     const w = this.weapon;
-    this.game.hud.setAmmo(w.mag, w.reserve, w.def.mag);
+    // A tool has no rounds to count, so the ammo readout carries its heat
+    // instead of printing `undefined` over the magazine.
+    if (w.def.tool) {
+      this.game.hud.setToolHeat(w.heat, w.vented);
+    } else {
+      this.game.hud.setAmmo(w.mag, w.reserve, w.def.mag);
+      if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
+    }
     this.game.hud.setGadgets(this.biofoam, this.grenade, this.gadgets); // no-op unless changed
-    if (this.ammoDisplay) this.ammoDisplay.set(w.mag); // no-op unless changed
     this.prevFiring = this.firing;
   }
 
   _updateWeapon(dt, moving, speed) {
     const w = this.weapon;
     const def = w.def;
+
+    // A tool shares none of the fire path below — no magazine, no cadence, no
+    // recoil, no tracer, no round. Branch before any of it, and before the
+    // hands-busy return, so the beam gets a frame to shut itself off.
+    if (def.tool) { this._updateTool(dt, w); return; }
 
     // Hands busy — injecting, throwing or swinging. Bleed the fire timer down
     // so the gun is ready the instant the lockout ends rather than adding a
@@ -1296,6 +1407,82 @@ export class Player {
 
     this._dischargeRound(moving, speed);
     this.fireTimer = 60 / def.rpm;
+  }
+
+  // The held tool. Fuel is unlimited and HEAT is the limiter, which is the right
+  // shape for a device that does three jobs — a charge pool would have to be
+  // divided between build, vehicle and armour and re-tuned every time a job was
+  // added, and would make the tool's usefulness a question of inventory rather
+  // than of where you are standing.
+  //
+  // There is no target system here yet. This runs the heat rules and draws the
+  // beam; what the beam DOES lands at the single site below where `working` is
+  // true, once armour, vehicles or blueprints exist to receive it.
+  _updateTool(dt, w) {
+    const T = w.def.tool;
+    this.fireTimer -= dt;    // the draw — a tool cannot work before it is up
+
+    // Third person is excluded for the same reason firing is: the ray starts at
+    // a camera sitting metres behind the body, so the beam would leave from
+    // somewhere the player is not.
+    const wants = this.firing && this.locked && !this.freecam && !this.thirdPerson
+      && !this.actionBusy() && this.fireTimer <= 0;
+    const working = wants && !w.vented;
+
+    if (working) {
+      w.idle = 0;
+      w.heat = Math.min(1, w.heat + dt / T.heatUp);
+      if (w.heat >= 1 && !w.vented) {
+        w.vented = true;
+        this.game.audio.playUI('empty');
+        this.game.hud.message(`${w.def.name} — OVERHEATED`, 1.5);
+      }
+    } else {
+      // Cooling waits out `ventDelay` first. Without that pause, tapping the
+      // trigger beats holding it and the ceiling stops being a ceiling.
+      w.idle += dt;
+      if (w.idle >= T.ventDelay) {
+        w.heat = Math.max(0, w.heat - dt / T.coolDown);
+        // The lockout clears at ZERO, not at some threshold — a partial
+        // recovery would invite riding the top of the gauge, which is exactly
+        // the behaviour heat exists to punish.
+        if (w.vented && w.heat <= 0) {
+          w.vented = false;
+          this.game.hud.message(`${w.def.name} — READY`, 1.2);
+        }
+      }
+    }
+
+    this._updateBeam(dt, w, working);
+  }
+
+  // Where the beam starts and where the world stops it.
+  _updateBeam(dt, w, working) {
+    if (!working) { if (this.beam) this.beam.hide(); return; }
+    if (!this.beam) this.beam = createRepairBeam(this.game.scene, w.def.tool.beam);
+
+    const range = w.def.tool.range;
+    this.camera.getWorldDirection(_dir);
+    _from.copy(this.camera.position).addScaledVector(_dir, 0.3);
+    // Aim is the camera ray — the crosshair tells the truth for a beam exactly
+    // as it does for a round — but the beam is DRAWN leaving the nozzle.
+    // `ref_muzzle` is the same authored empty every weapon in the armoury
+    // carries; a tool GLB without one falls back to the eye, which reads as a
+    // beam emitted from the middle of the screen.
+    this.game.combat.aimPoint(this.soldier, _from, _dir, range, _aim);
+    // The origin CANNOT be the eye, and that is not a detail. A beam sent along
+    // the camera ray from the camera itself is seen end-on — it renders as a dot
+    // at the crosshair and the player never sees a beam at all. It has to leave
+    // the tool, off to the side, so it reads as a line converging on the target.
+    //
+    // `ref_muzzle` is the authored empty every weapon carries and is the right
+    // answer; the tool GLB does not have one yet. Until it does, the gun holder
+    // is the honest approximation — it is literally where the tool is drawn on
+    // screen, so the beam leaves the model rather than the face.
+    const origin = this.vmMuzzle
+      ? this.vmMuzzle.getWorldPosition(_muzzle)
+      : this.gunHolder.getWorldPosition(_muzzle);
+    this.beam.set(origin, _aim, dt);
   }
 
   _dryFire() {

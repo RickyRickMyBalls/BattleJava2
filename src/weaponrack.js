@@ -42,7 +42,10 @@ export class WeaponRack {
 
   _build(assets, stage, origin, forward) {
     const markers = (stage && stage.markers) || {};
-    const keys = Object.keys(WEAPONS).filter((k) => assets.weaponModels[k]);
+    // Weapons only. Tools live in WEAPONS for the hand mount, not because they
+    // are pickable — a rack is a weapon swap, and swapping a rifle for a welder
+    // is a loadout decision made in the armoury.
+    const keys = Object.keys(WEAPONS).filter((k) => assets.weaponModels[k] && !WEAPONS[k].tool);
 
     // Fallback row: centred behind the character, laid out along the axis
     // perpendicular to the view direction.
