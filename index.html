@@ -244,87 +244,122 @@
     }
     .dp-bottom > * { pointer-events: auto; }
     /* ---- Bottom-center loadout strip ---- */
+    /* Bar wrapper on the deploy screen. The lobby positions its own copy. */
     .dp-load2 {
       position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-      display: flex; flex-direction: column; align-items: center; gap: 7px;
     }
-    .dp-classtabs { display: flex; gap: 3px; }
-    .dp-classtabs button {
+    /* Centred in the space to the RIGHT of the settings panel, not on the
+       viewport — .lb-panels is 400px and full height, so a viewport-centred bar
+       runs under it. Anchoring to both edges and centring inside keeps the bar
+       clear at any width without hardcoding its own size. */
+    .lb-loadoutbar {
+      position: absolute; bottom: 18px; left: 400px; right: 0;
+      display: flex; justify-content: center; z-index: 3;
+      pointer-events: none;   /* the gaps between cards should not eat drags */
+    }
+    .lb-loadoutbar > * { pointer-events: auto; }
+
+    /* ---- LoadoutBar (shared: deploy screen + lobby) ----------------------
+       One component, mounted twice. These styles are deliberately screen
+       agnostic — nothing here may assume the deploy map behind it or the
+       lobby stage, or the two copies start drifting apart again. */
+    .kb { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+    .kb-tabs { display: flex; gap: 3px; }
+    .kb-tabs button {
       cursor: pointer; background: rgba(8,18,28,0.85); color: #7c96a8;
       border: 1px solid #24404f; border-bottom: none; padding: 7px 20px;
       font-size: 11px; letter-spacing: 3px;
     }
-    .dp-classtabs button:hover { color: var(--hud-cyan); }
-    .dp-classtabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
+    .kb-tabs button:hover { color: var(--hud-cyan); }
+    .kb-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
     /* Kit list and slot cards share one panel, list on the left. `stretch` is
-       what makes the two columns the same height whichever is taller, so the
-       panel has no ragged edge as the card row changes width per class. */
-    .dp-kitrow {
+       what makes the two columns the same height whichever is taller. */
+    .kb-panel {
       display: flex; align-items: stretch;
       background: rgba(6,14,22,0.88); border: 1px solid var(--hud-cyan-dim);
     }
-    /* Kept deliberately tight. The kit column is what sets the panel's height —
-       every pixel here becomes a pixel of card, and cards that grow past about
-       square stop reading as weapon tiles and start reading as columns. */
-    .dp-kits {
+    /* Width LOCKED: a flex item defaults to min-width:auto, so a long
+       unbreakable kit name (QUARTERMASTER) would push the column wider and
+       shrink every card, which reads as the row jumping when you switch class.
+       Sized to fit the longest name, pinned, with an ellipsis as a backstop. */
+    .kb-kits {
       display: flex; flex-direction: column; justify-content: center; gap: 1px;
       flex: 0 0 156px; min-width: 0; padding: 7px;
       border-right: 1px solid rgba(127,212,255,0.22);
     }
-    /* Two lines per entry: what the slot HOLDS on top — the preset it still
-       matches, or CUSTOM once edited — with the slot number beneath it at
-       caption size. The kit is the thing you are choosing between; the number
-       is only its address. */
-    .dp-kit {
+    /* Two lines: what the slot HOLDS on top, the slot number beneath at caption
+       size. The kit is what you are choosing between; the number is its address. */
+    .kb-kit {
       cursor: pointer; text-align: left; background: none; color: #7c96a8;
-      border: 1px solid transparent; border-left: 2px solid transparent;
+      border: none; border-left: 2px solid transparent;
       padding: 2px 8px; line-height: 1.15;
       transition: color 0.12s, background 0.12s, border-color 0.12s;
     }
-    /* Same lock as the armoury column — see the note there. */
-    .dp-kit .n {
+    .kb-kit .n {
       display: block; font-size: 9.5px; letter-spacing: 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .dp-kit .s { display: block; font-size: 7px; letter-spacing: 1px; color: #55707f; }
-    .dp-kit:hover { color: #dceaf5; background: rgba(127,212,255,0.06); }
-    .dp-kit.sel {
+    .kb-kit .s { display: block; font-size: 7px; letter-spacing: 1px; color: #55707f; }
+    .kb-kit:hover { color: #dceaf5; background: rgba(127,212,255,0.06); }
+    .kb-kit.sel {
       color: var(--hud-cyan); background: rgba(127,212,255,0.10);
       border-left-color: var(--hud-cyan);
     }
-    .dp-kit.sel .s { color: var(--hud-cyan-dim); }
-    .dp-kit-reset {
+    .kb-kit.sel .s { color: var(--hud-cyan-dim); }
+    .kb-reset {
       cursor: pointer; background: none; color: #55707f;
       border: 1px solid #1e3543; margin-top: 4px; padding: 2px 8px;
       font-size: 7.5px; letter-spacing: 2px;
       transition: color 0.12s, border-color 0.12s;
     }
-    .dp-kit-reset:hover { color: #ffb15e; border-color: #6b4a28; }
-    /* No border of its own any more — .dp-kitrow owns the panel edge.
-       `stretch` so the cards fill whatever height the kit list sets, rather
-       than sitting as a thin band of 52px tiles floating in a 140px panel. */
-    .dp-slotrow {
-      display: flex; gap: 8px; align-items: stretch; padding: 9px 12px;
+    .kb-reset:hover { color: #ffb15e; border-color: #6b4a28; }
+    .kb-slots { display: flex; gap: 8px; align-items: stretch; padding: 9px 12px; }
+    /* Three stacked parts like the armoury card: slot name, art, item name.
+       The strip used to show the item name alone, so you could not tell which
+       slot a gadget sat in without knowing the order. */
+    .kb-card {
+      position: relative; width: 96px; min-height: 52px; max-height: 104px;
+      border: 1px solid #24404f; background: rgba(8,20,32,0.6);
+      display: flex; flex-direction: column; align-items: center;
+      padding: 5px 4px 4px; cursor: pointer;
+      color: rgba(127,212,255,0.75);
+      transition: border-color 0.12s, background 0.12s;
     }
-    /* Height comes from the row now (see .dp-slotrow's stretch), so the card
-       grows with the kit list beside it instead of being pinned at 52px. */
-    .dp-slot2 {
-      position: relative; width: 92px; min-height: 52px; max-height: 96px; border: 1px solid #24404f;
-      background: rgba(8,20,32,0.6); display: flex; align-items: center; justify-content: center;
-      color: rgba(127,212,255,0.75); cursor: pointer;
+    .kb-card:hover { border-color: var(--hud-cyan); background: rgba(12,28,44,0.75); }
+    .kb-slotname {
+      font-size: 6.5px; letter-spacing: 2px; color: #55707f;
+      line-height: 1; white-space: nowrap;
     }
-    .dp-slot2:hover { border-color: var(--hud-cyan); }
-    .dp-slot2 img { max-width: 86%; max-height: 54%; opacity: 0.9; margin-bottom: 8px; }
-    .dp-slot2 svg { width: 32px; height: 32px; margin-bottom: 8px; }
-    .dp-slot2.gadget { width: 62px; cursor: default; color: rgba(127,212,255,0.45); }
-    .dp-slot2.gadget:hover { border-color: #2c4a5c; }
-    .dp-slot2.customize { width: 62px; font-size: 17px; color: var(--hud-cyan); background: rgba(127,212,255,0.08); padding-bottom: 8px; }
-    .dp-slot2-tag {
-      position: absolute; bottom: 2px; left: 0; right: 0; text-align: center;
-      font-size: 6.5px; letter-spacing: 1px; color: #55707f; white-space: nowrap; overflow: hidden;
+    .kb-art {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      width: 100%; min-height: 0; padding: 3px 0;
     }
-    .dp-slot2-fb { font-size: 10px; letter-spacing: 1px; color: #6e93a8; margin-bottom: 8px; }
-    .dp-slot2-sep { width: 1px; background: rgba(127,212,255,0.2); margin: 2px 3px; }
+    .kb-art img { max-width: 92%; max-height: 100%; opacity: 0.9; object-fit: contain; }
+    .kb-art svg { width: 30px; height: 30px; }
+    .kb-fallback { font-size: 10px; letter-spacing: 1px; color: #6e93a8; }
+    /* Two lines rather than one clipped one — BREACHING CHARGE and SMOKE
+       LAUNCHER both truncated mid-word on a single line at this width. */
+    .kb-itemname {
+      font-size: 6.5px; letter-spacing: 0.6px; color: #7fa0b4;
+      line-height: 1.25; text-align: center; width: 100%;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    /* Declared but not implemented. Most of the gadget roster is still inert,
+       so a card that looks exactly as real as a working one misleads. */
+    .kb-card.wip { border-color: #4a3a24; }
+    .kb-card.wip .kb-art { opacity: 0.45; }
+    .kb-card.wip .kb-itemname { color: #8a7350; }
+    .kb-card.wip::after {
+      content: ''; position: absolute; top: 3px; right: 3px;
+      width: 4px; height: 4px; border-radius: 50%; background: #ffb15e; opacity: 0.8;
+    }
+    .kb-customize {
+      width: 62px; justify-content: center; gap: 4px;
+      color: var(--hud-cyan); background: rgba(127,212,255,0.08);
+    }
+    .kb-plus { font-size: 17px; line-height: 1; }
+    .kb-sep { width: 1px; background: rgba(127,212,255,0.2); margin: 6px 3px; }
 
     /* ---- Deploy header ---- */
     .dp-header {
@@ -496,11 +531,15 @@
     #lbStart:hover:not(:disabled) { background: rgba(127,212,255,0.32); }
     #lbStart:disabled { opacity: 0.5; cursor: default; }
     .lb-status { font-size: 11px; letter-spacing: 2px; color: #6e93a8; min-height: 14px; margin-top: 6px; }
-    .lb-charinfo { position: absolute; right: 40px; bottom: 34px; text-align: right; pointer-events: none; }
+    /* Raised clear of the loadout bar, same as .lb-hint. It is partly redundant
+       now — the bar's tabs name the class and its cards name both weapons — but
+       it is the big readable label beside the character, so it stays. */
+    .lb-charinfo { position: absolute; right: 40px; bottom: 186px; text-align: right; pointer-events: none; }
     .lb-ci-class { font-size: 26px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
     .lb-ci-guns { font-size: 11px; letter-spacing: 2px; color: #6e93a8; margin-top: 4px; }
+    /* Sits ABOVE the loadout bar now — at bottom:34px it was inside it. */
     .lb-hint {
-      position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%);
+      position: absolute; left: 50%; bottom: 186px; transform: translateX(-50%);
       display: none; padding: 8px 18px; pointer-events: none;
       border: 1px solid var(--hud-cyan-dim);
       background: rgba(4, 8, 13, 0.55);
@@ -1011,6 +1050,8 @@
       <button id="lbStart">START GAME</button>
     </div>
     <div class="lb-charinfo" id="lbCharInfo"></div>
+    <!-- Same LoadoutBar component the deploy screen mounts. -->
+    <div class="lb-loadoutbar" id="lbLoadoutBar"></div>
     <div class="lb-hint" id="lbHint"></div>
     <div class="lb-prompt" id="lbPrompt"></div>
   </div>

@@ -8,6 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CFG, MAPS, GAME_TYPES, CLASSES, WEAPONS } from './config.js';
 import { makeWeaponMount, setHeldWeapon } from './soldier.js';
 import { LobbyRoam } from './lobbyroam.js';
+import { LoadoutBar } from './loadoutbar.js';
 import { prewarm, weaponClones, characterClones } from './assets.js';
 
 const LOBBY_IDLE = CFG.lobbyIdle;
@@ -70,12 +71,26 @@ export class Lobby {
       start: document.getElementById('lbStart'),
       status: document.getElementById('lbStatus'),
       charInfo: document.getElementById('lbCharInfo'),
+      loadoutBar: document.getElementById('lbLoadoutBar'),
       back: document.getElementById('lbBack'),
     };
     this.el.customize.onclick = () => {
       if (this.session.armory) this.session.armory.show('apply');
     };
     this.el.start.onclick = () => this.onStart && this.onStart();
+
+    // The same bar the deploy screen mounts, with full parity — class tabs,
+    // the three kits and every slot. The lobby is where you are waiting anyway,
+    // so it is the natural place to set a kit up rather than a read-only echo
+    // of one. `onChange` re-renders the character so the preview follows the
+    // class and weapons you just picked.
+    const sess = this.session;
+    this.bar = new LoadoutBar({
+      get session() { return sess; },
+      get armory() { return sess.armory; },
+      get loadout() { return sess.playerLoadout; },
+      onChange: () => this.refreshPreview(),
+    }).mount(this.el.loadoutBar);
 
     this._buildScene(envTexture);
     this.roam = new LobbyRoam(this);
@@ -450,6 +465,9 @@ export class Lobby {
     this.el.charInfo.innerHTML =
       `<div class="lb-ci-class">${CLASSES[lo.cls].name.toUpperCase()}</div>` +
       `<div class="lb-ci-guns">${WEAPONS[lo.primary].name} · ${WEAPONS[lo.secondary].name}</div>`;
+    // The bar edits the loadout this preview is drawn from, so it has to be
+    // rebuilt too — a class switch from the bar changes the body on the stage.
+    if (this.bar) this.bar.refresh();
   }
 
   // ------------------------------------------------------------------ UI --
