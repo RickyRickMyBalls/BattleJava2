@@ -324,6 +324,12 @@ export class Soldier {
         this.guns[def.key] = gun;
       }
     }
+    // The repair tool is a THIRD pre-clone for whoever carries one, and it has
+    // to happen here rather than when a repair starts. `ensureGun` exists for
+    // the runtime-loadout cases and would work — but a bot decides to weld in
+    // the middle of a battle, which is precisely when this file refuses to
+    // clone. Paid once at spawn, like the two guns, for the same reason.
+    if (this.hasRepairTool) this.ensureGun('repairtool');
     if (this.activeWeapon) this._setHeldWeapon(this.activeWeapon.key);
   }
 
@@ -488,6 +494,13 @@ export class Soldier {
     const perk = classPerk(this.cls);
     this.hasRepairTool = [...((perk && perk.grants) || []), ...this.gadgetKeys]
       .some((k) => GADGETS[k] && GADGETS[k].kind === 'tool' && GADGETS[k].held === 'repairtool');
+    // BOTH ends of the spawn have to clone it, because the two halves of a
+    // soldier are built in the wrong order for either one alone: the character
+    // (and with it the weapon mount) is set in the constructor, and the kit
+    // arrives here afterwards. This call covers the normal spawn; the matching
+    // one in `_initWeaponMount` covers a character set or changed later.
+    // `ensureGun` no-ops when the mount is not up yet, so the pair is safe.
+    if (this.hasRepairTool) this.ensureGun('repairtool');
     const gdef = GRENADES[grenadeKey];
     this.grenade = gdef ? { def: gdef, count: gdef.count } : null;
     // A grenade with no `ai` block is one the AI never throws — that is how an
@@ -1340,6 +1353,12 @@ export class Soldier {
     // back — `_setHeldWeapon(null)` matches nothing, which parents every gun to
     // the back mount. The branch below re-equips the instant the pickup ends.
     if (this.reviving) this._setHeldWeapon(null);
+    // Welding: the tool comes out and BOTH guns go to the back, which the same
+    // `_setHeldWeapon` already does for free — anything that is not the held key
+    // is parented to the back mount. Sits above the re-equip below so the rifle
+    // comes back the instant the plate is full, and reads as the reason the bot
+    // is standing still: hands full, not idling.
+    else if (this.repairing) this._setHeldWeapon('repairtool');
     else if (this.activeWeapon && this.heldKey !== this.activeWeapon.key) {
       this._setHeldWeapon(this.activeWeapon.key);
     }
