@@ -22,3 +22,5 @@ secondary - mag, pistol
 
 global gadget
  - repair tool (engineer has by perk)
+
+ [ ] every soilder gets a BioFoam - equivilenet to bandainds
