@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
 import { MapCollision, buildMapCollision, extractWorldGeometry } from './collision.js';
+import { raycastCoverBoxes, pushOutCoverBoxes } from './cover.js';
 
 // The exclusions the GLB map height bake uses: spinning/drifting sky nodes and
 // backdrop shells are scenery, not ground.
@@ -98,46 +99,16 @@ export class LobbyWorld {
     v.z = Math.max(this.minZ, Math.min(this.maxZ, v.z));
   }
 
-  // Cover AABB push-out, mirroring World.collideCircle. No-op until a
-  // Collision_cover_parent is authored.
+  // Cover push-out and segment tests. Both were private copies of World's until
+  // cover.js took the math over — see the note at the top of that file. The
+  // lobby gains the degenerate-overlap shove World always had, and orientation
+  // it has no use for yet, at the cost of nothing.
   collideCircle(pos, radius) {
-    for (const b of this.coverBoxes) {
-      if (pos.y > b.maxY || pos.y + 1.6 < b.minY) continue;
-      const cx = Math.max(b.minX, Math.min(b.maxX, pos.x));
-      const cz = Math.max(b.minZ, Math.min(b.maxZ, pos.z));
-      const dx = pos.x - cx, dz = pos.z - cz;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < radius * radius && d2 > 1e-9) {
-        const d = Math.sqrt(d2);
-        const push = (radius - d) / d;
-        pos.x += dx * push;
-        pos.z += dz * push;
-      }
-    }
+    pushOutCoverBoxes(this.coverBoxes, pos, radius);
   }
 
-  // Segment vs cover AABBs (slab method); t in [0,1] of the nearest hit.
   raycastCover(ax, ay, az, bx, by, bz) {
-    if (!this.coverBoxes.length) return Infinity;
-    const dx = bx - ax, dy = by - ay, dz = bz - az;
-    let best = Infinity;
-    for (const b of this.coverBoxes) {
-      let tmin = 0, tmax = 1;
-      let ok = true;
-      const slab = (o, d, lo, hi) => {
-        if (Math.abs(d) < 1e-9) return o >= lo && o <= hi;
-        let t0 = (lo - o) / d, t1 = (hi - o) / d;
-        if (t0 > t1) { const s = t0; t0 = t1; t1 = s; }
-        if (t0 > tmin) tmin = t0;
-        if (t1 < tmax) tmax = t1;
-        return tmin <= tmax;
-      };
-      ok = slab(ax, dx, b.minX, b.maxX)
-        && slab(ay, dy, b.minY, b.maxY)
-        && slab(az, dz, b.minZ, b.maxZ);
-      if (ok && tmin < best) best = tmin;
-    }
-    return best;
+    return raycastCoverBoxes(this.coverBoxes, ax, ay, az, bx, by, bz);
   }
 
   // Segment vs the stage surface; t in [0,1] of the hit, else Infinity. This is

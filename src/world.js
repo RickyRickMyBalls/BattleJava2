@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { fbm } from './noise.js';
 import { CFG, TEAM } from './config.js';
+import { makeCoverBox, raycastCoverBoxes, pushOutCoverBoxes } from './cover.js';
 
 const FLAT_SPOTS = []; // {x, z, r0, r1, h}
 
@@ -210,12 +211,20 @@ export class World {
     }
   }
 
-  _addCoverAABB(cx, cz, halfX, halfZ, height, groundY) {
-    this.coverBoxes.push({
-      minX: cx - halfX, maxX: cx + halfX,
-      minZ: cz - halfZ, maxZ: cz + halfZ,
-      minY: groundY - 0.5, maxY: groundY + height,
-    });
+  // `minY` reaches 0.5 m under the ground so a box still blocks on a slope,
+  // where the surface under one end sits below the surface under the other.
+  //
+  // `yaw` is optional and every caller in this file leaves it off — the scatter
+  // is close enough to square that turning it would cost more than it buys. It
+  // is here for placed structures, which are long and thin and aimed. The demo
+  // crates DO carry a rotation (`c.rot` in _buildCover) that is currently
+  // thrown away in favour of a max-extent box; passing it through is now a
+  // one-word change, but it would tighten cover across the whole demo map, so
+  // it is a balance decision rather than a cleanup.
+  _addCoverAABB(cx, cz, halfX, halfZ, height, groundY, yaw = 0) {
+    this.coverBoxes.push(
+      makeCoverBox(cx, cz, halfX, halfZ, groundY - 0.5, groundY + height, yaw),
+    );
   }
 
   _buildCover() {
@@ -317,39 +326,9 @@ export class World {
     v.z = Math.max(-this.mapD / 2 + 3, Math.min(this.mapD / 2 - 3, v.z));
   }
 
-  // Segment vs cover AABBs (slab method). Returns t in [0,1] of nearest hit or Infinity.
+  // Segment vs cover volumes. Returns t in [0,1] of nearest hit or Infinity.
   raycastCover(ax, ay, az, bx, by, bz) {
-    const dx = bx - ax, dy = by - ay, dz = bz - az;
-    let best = Infinity;
-    for (const b of this.coverBoxes) {
-      let tmin = 0, tmax = 1;
-      // X slab
-      if (Math.abs(dx) < 1e-9) { if (ax < b.minX || ax > b.maxX) continue; }
-      else {
-        let t1 = (b.minX - ax) / dx, t2 = (b.maxX - ax) / dx;
-        if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
-        tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
-        if (tmin > tmax) continue;
-      }
-      // Y slab
-      if (Math.abs(dy) < 1e-9) { if (ay < b.minY || ay > b.maxY) continue; }
-      else {
-        let t1 = (b.minY - ay) / dy, t2 = (b.maxY - ay) / dy;
-        if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
-        tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
-        if (tmin > tmax) continue;
-      }
-      // Z slab
-      if (Math.abs(dz) < 1e-9) { if (az < b.minZ || az > b.maxZ) continue; }
-      else {
-        let t1 = (b.minZ - az) / dz, t2 = (b.maxZ - az) / dz;
-        if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
-        tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
-        if (tmin > tmax) continue;
-      }
-      if (tmin < best) best = tmin;
-    }
-    return best;
+    return raycastCoverBoxes(this.coverBoxes, ax, ay, az, bx, by, bz);
   }
 
   // Terrain intersection along a segment; returns t or Infinity. Sampled march.
@@ -373,23 +352,9 @@ export class World {
     return true;
   }
 
-  // Resolve a moving capsule (circle in XZ) against cover boxes; mutates pos.
+  // Resolve a moving capsule (circle in XZ) against cover volumes; mutates pos.
   collideCircle(pos, radius) {
-    for (const b of this.coverBoxes) {
-      if (pos.y > b.maxY || pos.y + 1.6 < b.minY) continue;
-      const cx = Math.max(b.minX, Math.min(b.maxX, pos.x));
-      const cz = Math.max(b.minZ, Math.min(b.maxZ, pos.z));
-      const dx = pos.x - cx, dz = pos.z - cz;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < radius * radius && d2 > 1e-9) {
-        const d = Math.sqrt(d2);
-        const push = (radius - d) / d;
-        pos.x += dx * push;
-        pos.z += dz * push;
-      } else if (d2 <= 1e-9) {
-        pos.x += radius; // degenerate: standing exactly on a box face
-      }
-    }
+    pushOutCoverBoxes(this.coverBoxes, pos, radius);
   }
 }
 
