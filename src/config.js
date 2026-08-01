@@ -181,6 +181,30 @@ export const CFG = {
     clearRadius: 0.8,
   },
 
+  // The visor — the helmet frame across the top of the screen, drawn from the
+  // CAD export at `source/UI/hud4-top.svg` rather than from DOM boxes. What the
+  // rewrites on load are defending against is written up in src/visor.js.
+  visor: {
+    enabled: true,
+    src: '/UI/hud4-top.svg',
+    // Host element id, and the prefix stamped onto every id in the file. The
+    // SVG and index.html both use `ammo`, and hud.js binds its elements by id.
+    host: 'visor',
+    idPrefix: 'v-',
+    // The art is authored on a 2560x1440 screen, with the origin offset so that
+    // x=298.5 lands on screen centre. Only the top band carries anything, and
+    // this crop is that band: the full authored width, and y from the top edge
+    // (-299.1) down past the lowest point of the visor wings (-61.6). The extra
+    // few units are bleed — strokes are centred on their path and do not scale,
+    // so a band that stops exactly at the geometry shaves the wing tips in half.
+    band: [-981.5, -299.1, 2560, 242],
+    // The band's height as a share of the screen. 238/1440 = 16.5% is what the
+    // art was drawn for, and width-driven sizing reproduces that exactly at
+    // 16:9. The cap only bites wider than 16:9, where it would otherwise march
+    // the frame down the screen instead of leaving it a hat.
+    heightVh: 17,
+  },
+
   // Squad rally beacon — the leader's ability, not a gadget slot. Shared rules
   // live here; what a beacon IS lives on the def in `BEACON` below, the same
   // split `structure` uses.

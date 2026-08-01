@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { CFG, TEAM } from './config.js';
+import { Visor } from './visor.js';
 
 const BLUE = '#3aa0ff', RED = '#ff5a4d', NEUTRAL = '#9ab4c4';
 const DOWN = '#ffd66e';
@@ -49,7 +50,12 @@ export class Hud {
       tcPause: document.getElementById('tcPause'),
       timeCtrl: document.getElementById('timeCtrl'),
       modeTag: document.getElementById('modeTag'),
+      visor: document.getElementById('visor'),
     };
+    // Not awaited — see Visor.mount. The DOM vitals stack is the readout until
+    // the frame lands, so nothing is missing in the meantime.
+    this.visor = new Visor();
+    this.visor.mount(this.el.visor);
     this.el.tcPause.onclick = () => this.game.togglePause();
     for (const btn of this.el.timeCtrl.querySelectorAll('[data-speed]')) {
       btn.onclick = () => this.game.setTimeScale(Number(btn.dataset.speed));
@@ -354,6 +360,7 @@ export class Hud {
     const fps = mode === 'fps';
     const set = (el, on) => { if (el) el.style.display = on ? '' : 'none'; };
     set(this.el.crosshair, fps);
+    set(this.el.visor, fps);
     set(this.el.vitals, fps);
     set(this.el.ammo, fps);
     set(this.el.squad, fps);

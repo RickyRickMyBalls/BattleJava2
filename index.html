@@ -106,6 +106,16 @@
        it marks the one person who can plant one. */
     #squad .mate .lead { color: #2fd3a7; font-style: normal; font-size: 9px; margin-right: 3px; }
 
+    /* ---- Visor frame ---- */
+    /* Sized off WIDTH, not height: the frame has to reach both screen edges on
+       every monitor, and its own aspect ratio (2560x238, from CFG.visor.band)
+       decides how far down it hangs. At 16:9 that lands on the 16.5% the art
+       was drawn for. `max-height` is the ultrawide backstop — past that the
+       frame squashes vertically instead of growing into the play space, which
+       is what preserveAspectRatio="none" buys us. */
+    #visor { position: absolute; top: 0; left: 0; width: 100%; }
+    #visor svg { display: block; width: 100%; height: auto; }
+
     /* ---- Vitals ---- */
     #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }
     #shieldbar { height: 10px; background: #10202c; border: 1px solid var(--hud-cyan-dim); margin-bottom: 4px; }
@@ -1175,6 +1185,7 @@
   <div id="prompt"><span id="promptText"></span><i id="promptBar"></i></div>
 
   <div class="hud" id="hud" style="display:none">
+    <div id="visor"></div>
     <div id="topbar">
       <div id="tickets" class="panel">
         <span class="t blue" id="ticketsBlue">400</span>
