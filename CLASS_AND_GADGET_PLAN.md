@@ -516,6 +516,42 @@ Two things fall out of it worth writing down now:
   and a player who cannot see the teammate sprinting toward them has lost the
   only thing the state has to offer.
 
+**Locked:** A downed soldier can **call for help**, and it is not a cosmetic
+shout — a live call makes bots travel `callRangeMult` further to answer it, so a
+casualty who calls genuinely improves their own odds. It is the only agency the
+state has, and without a mechanical payload it would be a button that plays a
+noise.
+
+Calls expire after 8 seconds. That is deliberate: bots call out automatically a
+beat after they go down, so a busy field sorts itself into fresh casualties who
+are shouting and older ones who are not, and the loudest marker on screen is
+always the most recent. A permanent call would make every body shout equally,
+which is the same as none of them shouting.
+
+### Finding the casualties
+
+**Locked:** Recovery being open to the whole team is worth nothing if you cannot
+tell who is down. The pickup prompt only reaches `reviveRange` — 2.4 m — so
+without this a player finds a casualty by tripping over one, and the generosity
+of "any teammate" is theoretical.
+
+Three readouts, each answering a different question:
+
+| Readout | Answers |
+| --- | --- |
+| World marker, drawn through geometry | *Where do I go?* |
+| Minimap cross, ringed while calling | *Is anyone down near me at all?* |
+| Squad row, bar showing bleedout | *Do I have time, and who is it?* |
+
+The markers deliberately ignore line of sight. A marker you can only see when
+you already have eyes on the body tells you nothing you did not know, and the
+entire job here is finding people you *cannot* see. They clamp to the screen
+edge when off-view, so a marker degrades into a direction rather than vanishing,
+and cap at `markerMax` — with 25 bodies on the ground in a heavy push, drawing
+every one of them would be wallpaper rather than information. Calls sort above
+distance for that cap, so a soldier shouting is never the one culled for a
+silent body two metres nearer.
+
 **Locked:** A recovered soldier stands up on **50% health**, no shield, and keeps
 whatever biofoam charges they were carrying. Half a bar is enough to fight with
 and thin enough that the reviver's next instinct is to spend a second charge
@@ -627,31 +663,41 @@ match length doubling and nothing changing.
 
 ### First measurements
 
-Phase 1 is built. Demo map, 180 simulated seconds, same start, flag off then on:
+Phase 1 is built. Demo map, 150 simulated seconds, **three runs per condition**,
+means with the spread across runs:
 
 | | off | on |
 | --- | --- | --- |
-| Tickets lost | 210 | **144** (−31%) |
-| Deaths | 172 | 109 |
-| Downs | — | 103 |
-| Pickups | — | 21 (**20%** of downs) |
-| Alive at the end | 54 | **43** |
+| Live combatants at the end | 53 (51–56) | **37** (31–41) |
+| Deaths | 172 (130–204) | **130** (123–140) |
+| Tickets lost | 215 (159–254) | 180 (173–190) |
+| Downs | — | 129 |
+| Pickups | — | 28 (**22%** of downs) |
 
-**Match length goes up by about half, not double.** 144 against 210 puts a 400-
-ticket match at roughly 1.45× its current length. That is a re-tune, not a
-redesign, and it is the answer the ticket question was waiting on.
+**Read the spread before the means.** This sim is stochastic and the run-to-run
+variation is large — a single run per condition says almost nothing, which an
+earlier draft of this table learned the hard way by reporting a 31% ticket drop
+that three runs will not support. State ranges here, always.
 
-**Two things are worth staring at.** Only one down in five gets answered, because
-a bot needs no target and two calm seconds before it will go — and in a 32v32
-grind a bot nearly always has a target. `BIOFOAM.aiReviveCalm` and the
-"fighting outranks first aid" rule in `_think` are the two knobs, and loosening
+**The one clean result: the field runs about 30% emptier.** 37 live combatants
+against 53, and the two ranges do not overlap. A casualty occupies a body for up
+to 60 seconds where a death recycled it in 5, so at any moment a third of each
+army is on the ground. That is the real change this system makes, and it is a
+change to what a firefight *feels* like, not just to arithmetic.
+
+**Tickets: directionally down, not yet separable.** The means say −16%, but the
+off-condition range (159–254) swallows the on-condition range (173–190). What
+can be said is that the bleed does not *rise*, and that it is far steadier with
+the system on — which makes sense, since downs put a 60-second buffer between a
+firefight and the ticket it eventually costs. Worth re-measuring over more runs
+before any match-length re-tune leans on it.
+
+**One down in five gets answered**, and that held steady at 22% before and after
+calling for help was added — calls change *who* gets picked up, not how many. The
+ceiling is that a bot needs no target and two calm seconds before it will go, and
+in a 32v32 grind a bot nearly always has a target. `BIOFOAM.aiReviveCalm` and the
+"fighting outranks first aid" rule in `_think` are the two knobs. Loosening
 either is a balance decision rather than a bug fix.
-
-And the field runs about 20% emptier: 43 live combatants against 54, because a
-casualty occupies a body for up to 60 seconds where a death recycled it in 5.
-The ticket saving and the thinner firefight are the same effect seen from two
-ends. Whether a quieter field is the *right* trade is a judgement to make with
-the thing running, not from this table.
 
 ### Open questions, in order of how much they change
 
@@ -661,16 +707,11 @@ to cover and makes the pickup safer to attempt — and it is also the one that
 needs a clip, which is why it sits closer to phase 2 than the rest of the downed
 treatment.
 
-**2. Can a downed soldier call for help?** A voice line, or a marker over their
-body that the whole team can see. With pickups open to any teammate rather than a
-squad of four, being *findable* is what decides whether that generosity means
-anything in practice.
-
-**3. Does carrying drain stamina?** Assumed yes in the stamina section above,
+**2. Does carrying drain stamina?** Assumed yes in the stamina section above,
 which is what makes the Spartan the natural evacuator. Needs confirming, since it
 is the main link between the two new systems. Phase 2.
 
-**4. Does a downed body still contest a sector?** Sector counts read `alive`
+**3. Does a downed body still contest a sector?** Sector counts read `alive`
 today, so the default answer is no, and it is worth confirming that a squad wiped
 inside a capture zone loses the point before its bleedout runs out.
 
@@ -861,17 +902,18 @@ Ordered by how much each one changes if answered differently.
 
 1. Is armor carved out of the existing 100 EHP budget, or added on top? Added on
    top means re-tuning every weapon in the armory.
-2. Measured: ticket bleed drops 31% and the field runs 20% emptier — see First
-   measurements. The open part is now a judgement, not an unknown: is a 1.45×
-   longer match with a thinner firefight the game you want, and if not, is the
-   lever the bleedout, the AI's willingness to answer, or the ticket count?
+2. Measured: the field runs ~30% emptier, and ticket bleed is directionally down
+   but not separable from run-to-run noise at three runs — see First
+   measurements. Two things left: re-measure tickets over more runs, and decide
+   whether a thinner firefight is the game you want. If not, the levers are the
+   bleedout length, the AI's willingness to answer, and the ticket count.
 3. Do bots repair each other's armor, and do bots model stamina?
 4. What limits blueprint placement — sector budget, Engineer cooldown, or Support
    supply? Now also: does the repair tool need a supply at all, given three jobs?
 
 **System detail**
 
-5. Can a downed soldier crawl, and can they call for help?
+5. Can a downed soldier crawl? (Calling for help is answered — it is built.)
 6. Does a downed body still contest a sector?
 7. Does carrying drain stamina? It is the main link between the two new systems.
 8. How ineffective is a non-Engineer repairing a vehicle?
@@ -957,6 +999,19 @@ Ordered by how much each one changes if answered differently.
 - Noted the deploy screen as the one place phase 1 touches existing screen flow:
   `onKill` currently sets `playerDead` and opens the deploy screen together, and
   a downed player is not dead.
+- Added findability, without which "any teammate can pick you up" was theory: a
+  world marker drawn through geometry, a minimap cross, and a squad row showing
+  bleedout rather than health. Markers clamp to the screen edge so an off-view
+  casualty degrades into a direction, and cap at `markerMax` so 25 bodies do not
+  become wallpaper.
+- Locked calling for help, with a mechanical payload rather than a noise: a live
+  call makes bots travel `callRangeMult` further, and sorts that casualty above
+  nearer silent ones. Calls expire after 8 s and bots raise one automatically a
+  beat after going down, so a busy field sorts into fresh casualties shouting and
+  older ones quiet.
+- Re-measured over three runs per condition and corrected the First measurements
+  table. The single-run 31% ticket drop reported earlier does not survive; the
+  clean result is that the field runs ~30% emptier. Record ranges, not points.
 - Added armor as a third damage layer between shields and health. It does not
   regenerate and is restored only by a repair tool, which gives each of the three
   layers a distinct owner — shields regenerate themselves, Engineers restore armor,

@@ -736,6 +736,18 @@ export class Player {
     }
     this.syncBodyVisibility();
 
+    // The two things a casualty can still do, held on screen the whole time
+    // rather than flashed once as a message — sixty seconds is long enough to
+    // forget what the keys were.
+    if (this.keys['KeyE'] && this.locked && s.callForHelp()) {
+      this.game.audio.playUI('callHelp');
+    }
+    const call = s.callTimer > 0;
+    this.game.hud.setPrompt(
+      call ? 'CALLING FOR HELP · HOLD SPACE — GIVE UP' : 'E — CALL FOR HELP · HOLD SPACE — GIVE UP',
+      call ? s.callTimer / D.callTime : 0,
+    );
+
     // Hold, not tap. Giving up is irreversible, and a stray keypress should not
     // spend sixty seconds that someone might still be running to answer.
     if (this.keys['Space'] && this.locked) {

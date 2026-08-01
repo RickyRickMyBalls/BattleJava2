@@ -178,7 +178,9 @@ export class Game {
       this.player.reviving = false;
       this.player.giveUpHeld = 0;
       this.player.viewmodel.visible = false;
-      this.hud.message('DOWNED — HOLD SPACE TO GIVE UP', 4);
+      // The key prompts live in the persistent prompt line while downed (see
+      // player.updateDowned), so this only has to name the state.
+      this.hud.message('DOWNED', 2.5);
     } else if (attacker && attacker.isPlayer) {
       this.hud.message(`${victim.name} DOWN`, 1.2);
     }
@@ -191,9 +193,12 @@ export class Game {
       p.eye = CFG.player.eyeHeight;
       p.giveUpHeld = 0;
       this.hud.setDowned(0, false);
+      this.hud.setPrompt(null);
       this.hud.message(by ? `PICKED UP BY ${by.name}` : 'PICKED UP', 2.5);
+      this.audio.playUI('revived');
     } else if (by && by.isPlayer) {
       this.hud.message(`${victim.name} BACK UP`, 1.5);
+      this.audio.playUI('revived');
     }
   }
 

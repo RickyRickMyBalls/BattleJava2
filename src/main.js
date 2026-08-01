@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MAPS } from './config.js';
+import { CFG, MAPS } from './config.js';
 import { loadBook, selectClass } from './loadout.js';
 import { loadAssets } from './assets.js';
 import { loadMap } from './maps.js';
@@ -184,6 +184,12 @@ loop();
 
 // Debug handle for tooling/console
 window.FC = {
+  // The LIVE config object, for scripted A/B runs (`FC.cfg.downed.enabled`).
+  // Reaching it with a dynamic `import('/src/config.js')` from the console is
+  // not equivalent: after an HMR pass that resolves to a second module instance
+  // whose CFG the running sim has never read, so the flag silently does nothing
+  // and the "off" run quietly measures the "on" behaviour.
+  cfg: CFG,
   get game() { return game; },
   get menu() { return menu; },
   get deploy() { return deploy; },

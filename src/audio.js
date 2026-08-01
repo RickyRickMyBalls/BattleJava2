@@ -64,19 +64,24 @@ export class GameAudio {
     else if (kind === 'hit') this._blip(1400, 0.06, 0.12);
     else if (kind === 'kill') this._blip(700, 0.12, 0.2);
     else if (kind === 'shieldLow') this._blip(220, 0.2, 0.15);
+    // Two-tone pairs, so casualty cues are audibly a different family from the
+    // single-blip combat feedback above. Synthesized — no new audio asset.
+    else if (kind === 'callHelp') { this._blip(520, 0.1, 0.16); this._blip(760, 0.13, 0.16, 0.11); }
+    else if (kind === 'revived') { this._blip(560, 0.09, 0.15); this._blip(880, 0.15, 0.17, 0.09); }
   }
 
-  _blip(freq, dur, vol) {
+  _blip(freq, dur, vol, delay = 0) {
     if (!this.ctx) return;
+    const t = this.ctx.currentTime + delay;
     const o = this.ctx.createOscillator();
     o.type = 'square';
     o.frequency.value = freq;
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(vol, this.ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g).connect(this.master);
-    o.start();
-    o.stop(this.ctx.currentTime + dur);
+    o.start(t);
+    o.stop(t + dur);
   }
 
   _distPan(pos, maxDist) {

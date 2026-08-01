@@ -99,6 +99,9 @@
     #squad .mate .hp { width: 54px; height: 4px; background: #1a2a36; margin-left: auto; }
     #squad .mate .hp > div { height: 100%; background: var(--hud-blue); }
     #squad .mate.dead { color: #55707f; text-decoration: line-through; }
+    /* Down is not dead — no strike-through, and it keeps a live colour, because
+       this row is telling you someone is still worth going to. */
+    #squad .mate.down { color: #ffd66e; }
 
     /* ---- Vitals ---- */
     #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }
@@ -165,6 +168,37 @@
     #promptBar {
       display: block; height: 2px; width: 0%; margin: 6px auto 0;
       background: var(--hud-cyan); box-shadow: 0 0 8px var(--hud-cyan);
+    }
+
+    /* ---- Casualty markers ----
+       Drawn through geometry on purpose. A marker you can only see with line of
+       sight tells you nothing you did not already know, and the whole point is
+       finding people you cannot see. */
+    #casualties { position: absolute; inset: 0; pointer-events: none; }
+    #casualties .cas {
+      position: absolute; transform: translate(-50%, -50%);
+      text-align: center; white-space: nowrap;
+      font-size: 10px; letter-spacing: 1.4px; color: #ffd66e;
+      text-shadow: 0 0 10px rgba(0,0,0,0.95);
+      opacity: 0.85;
+    }
+    #casualties .cas .ico {
+      display: block; font-size: 15px; line-height: 1; margin-bottom: 2px;
+    }
+    #casualties .cas .d { opacity: 0.7; }
+    /* Clamped to the screen edge — the casualty is off-view, so the marker
+       becomes a direction rather than a position. */
+    #casualties .cas.edge { opacity: 0.55; font-size: 9px; }
+    #casualties .cas.edge .n { display: none; }
+    /* Calling for help. Brighter, larger, and it pulses — this is the one
+       marker state that should pull an eye across the screen. */
+    #casualties .cas.calling {
+      color: #fff1c2; opacity: 1; font-size: 11px;
+      animation: casPulse 0.9s ease-in-out infinite;
+    }
+    @keyframes casPulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50%      { transform: translate(-50%, -50%) scale(1.18); }
     }
 
     #damageVignette {
@@ -1157,6 +1191,7 @@
       <div class="dot"></div><div class="l top"></div><div class="l bot"></div><div class="l lft"></div><div class="l rgt"></div>
     </div>
     <div id="hitmarker"></div>
+    <div id="casualties"></div>
 
     <div id="hint">WASD move · SHIFT sprint · C crouch · SPACE jump · LMB fire · RMB aim · R reload · 1/2/Q weapons · X biofoam · E pick up · F freecam · P pause · T sim speed · M release mouse</div>
   </div>

@@ -125,6 +125,7 @@ export class Soldier {
     this.reviveProgress = 0;   // 0..1, driven by whoever is standing over us
     this.reviveHeld = false;   // set each frame by the rescuer; decays if not
     this.reviveTarget = null;  // AI: the casualty this soldier is walking to
+    this.callTimer = 0;        // seconds left on a call for help
 
     this.waypoint = new THREE.Vector3();
     this.hasWaypoint = false;
@@ -382,6 +383,8 @@ export class Soldier {
     this.reviveProgress = 0;
     this.reviveHeld = false;
     this.reviveTarget = null;
+    this.callTimer = 0;
+    this._called = false;
     this.shield = this.maxShield;
     this.health = S.health;
     this.target = null;
@@ -462,6 +465,8 @@ export class Soldier {
     this.reviveProgress = 0;
     this.reviveHeld = false;
     this.reviveTarget = null;
+    this.callTimer = 0;
+    this._called = false;
     this.health = 0;
     this.shield = 0;
     this.target = null;
@@ -483,6 +488,8 @@ export class Soldier {
     this.removeBodyTimer = 0;
     this.target = null;
     this.reviveTarget = null;
+    this.callTimer = 0;
+    this._called = false;
     const credit = attacker || this.downedBy;
     if (credit) credit.kills++;
     if (!wasDowned) this.playAnim(Math.random() < 0.5 ? 'death1' : 'death2', 0.08);
@@ -515,6 +522,11 @@ export class Soldier {
     this.downTimer = 0;
     this.reviveProgress = 0;
     this.reviveHeld = false;
+    // `_updateDowned` is the only thing that decays a call, so leaving one set
+    // here would strand it: the soldier is back on their feet still flagged as
+    // shouting, forever.
+    this.callTimer = 0;
+    this._called = false;
     this.health = S.health * D.reviveHealth;
     this.shield = 0;
     this.shieldTimer = 0;
@@ -570,8 +582,26 @@ export class Soldier {
       this.reviveProgress = Math.max(0, this.reviveProgress - dt * D.reviveDecay / D.reviveTime);
     }
     this.reviveHeld = false;
+    if (this.callTimer > 0) this.callTimer = Math.max(0, this.callTimer - dt);
+    // Bots call out once, a beat after they go down. Without this the `calling`
+    // state would be unreachable in practice — the player never sees their own
+    // marker, so every pulsing marker on screen belongs to a bot. It also
+    // sorts the field usefully: a fresh casualty shouts, an old one is quiet.
+    if (!this.isPlayer && !this._called && this.downTimer < D.bleedout - 1.5) {
+      this._called = true;
+      this.callForHelp();
+    }
     this.downTimer -= dt;
     if (this.downTimer <= 0) this.die(this.downedBy);
+  }
+
+  // The one thing a casualty can still do. It is not decoration: a live call
+  // widens the radius a bot will travel (see `_findCasualty`) and puts the
+  // marker at the top of the pile, so shouting genuinely improves your odds.
+  callForHelp() {
+    if (!this.downed || this.callTimer > 0) return false;
+    this.callTimer = D.callTime;
+    return true;
   }
 
   // AI casualty recovery. The decision of WHO to go to is made on the think
@@ -600,11 +630,15 @@ export class Soldier {
     const t = this.game.teams && this.game.teams[this.team];
     if (!t) return null;
     const mates = t.soldiers;
-    let best = null, bestD = BIOFOAM.aiReviveRange;
+    // Scored, not just nearest: a casualty who is calling reads as closer than
+    // they are, so a shout wins against a silent body slightly nearer by. That
+    // is the whole mechanical payload of calling for help.
+    let best = null, bestScore = BIOFOAM.aiReviveRange;
     for (const m of mates) {
       if (m === this || !m.downed) continue;
       const d = this.pos.distanceTo(m.pos);
-      if (d < bestD) { bestD = d; best = m; }
+      const score = m.callTimer > 0 ? d / D.callRangeMult : d;
+      if (score < bestScore) { bestScore = score; best = m; }
     }
     return best;
   }

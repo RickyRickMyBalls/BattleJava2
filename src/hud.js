@@ -1,8 +1,12 @@
 // DOM HUD: vitals, ammo, tickets, sector pips, minimap, kill feed, death/end screens.
 
+import * as THREE from 'three';
 import { CFG, TEAM } from './config.js';
 
 const BLUE = '#3aa0ff', RED = '#ff5a4d', NEUTRAL = '#9ab4c4';
+const DOWN = '#ffd66e';
+const D = CFG.downed;
+const _p = new THREE.Vector3();
 
 export class Hud {
   constructor(game) {
@@ -24,6 +28,7 @@ export class Hud {
       reloadingTxt: document.getElementById('reloadingTxt'),
       gadgets: document.getElementById('hudGadgets'),
       hitmarker: document.getElementById('hitmarker'),
+      casualties: document.getElementById('casualties'),
       damageVignette: document.getElementById('damageVignette'),
       downVignette: document.getElementById('downVignette'),
       prompt: document.getElementById('prompt'),
@@ -165,6 +170,69 @@ export class Hud {
     }
   }
 
+  // Casualty markers. Recovery being open to the whole team is worth nothing if
+  // you cannot tell who is down — the pickup prompt only reaches `reviveRange`,
+  // so without these a player finds a casualty by tripping over one.
+  //
+  // A pool of divs reused in place. 26 bodies on the ground at once is a normal
+  // reading in a heavy push, and rebuilding innerHTML per frame at that count
+  // would restart the pulse animation on every marker every frame.
+  updateCasualties() {
+    const g = this.game;
+    const cam = g.camera;
+    const pool = this._casPool || (this._casPool = []);
+    const me = g.playerSoldier;
+    const team = g.teams && g.teams[g.playerTeam];
+    let n = 0;
+
+    if (team && cam && !g.spectating) {
+      const found = [];
+      for (const s of team.soldiers) {
+        if (!s.downed || s === me) continue;
+        const d = cam.position.distanceTo(s.pos);
+        if (d > D.markerRange) continue;
+        found.push({ s, d });
+      }
+      // Calls first, then nearest. With a cap on how many draw at once, this is
+      // what decides who gets dropped — and a soldier shouting should never be
+      // the one culled for a silent body two metres closer.
+      found.sort((a, b) => (b.s.callTimer > 0) - (a.s.callTimer > 0) || a.d - b.d);
+      n = Math.min(found.length, D.markerMax);
+
+      const w = window.innerWidth, h = window.innerHeight;
+      for (let i = 0; i < n; i++) {
+        const { s, d } = found[i];
+        let el = pool[i];
+        if (!el) {
+          el = document.createElement('div');
+          el.innerHTML = '<span class="ico">✚</span><span class="n"></span><span class="d"></span>';
+          this.el.casualties.appendChild(el);
+          pool[i] = el;
+        }
+        _p.set(s.pos.x, s.pos.y + 0.7, s.pos.z).project(cam);
+        // Behind the camera, `project` mirrors x/y through the origin, so a
+        // casualty at your back would draw on the wrong side of the screen.
+        const behind = _p.z > 1;
+        let x = (behind ? -_p.x : _p.x) * 0.5 + 0.5;
+        let y = (behind ? _p.y : -_p.y) * 0.5 + 0.5;
+        const edge = behind || x < 0.03 || x > 0.97 || y < 0.06 || y > 0.94;
+        if (behind) y = 0.94;               // pin to the bottom: it is behind you
+        x = Math.max(0.03, Math.min(0.97, x));
+        y = Math.max(0.06, Math.min(0.94, y));
+        const cls = `cas${edge ? ' edge' : ''}${s.callTimer > 0 ? ' calling' : ''}`;
+        if (el.className !== cls) el.className = cls;
+        el.style.left = `${(x * w).toFixed(0)}px`;
+        el.style.top = `${(y * h).toFixed(0)}px`;
+        const nm = s.callTimer > 0 ? `${s.name} — HELP` : s.name;
+        if (el.children[1].textContent !== nm) el.children[1].textContent = nm;
+        const dm = ` ${Math.round(d)}m`;
+        if (el.children[2].textContent !== dm) el.children[2].textContent = dm;
+        el.style.display = '';
+      }
+    }
+    for (let i = n; i < pool.length; i++) pool[i].style.display = 'none';
+  }
+
   message(text, seconds = 3) {
     this.el.msg.textContent = text;
     this.el.msg.style.opacity = 1;
@@ -217,9 +285,20 @@ export class Hud {
     for (const m of squad.members) {
       if (m.isPlayer) continue;
       const hpPct = m.alive ? ((m.shield + m.health) / (m.maxShield + CFG.soldier.health)) * 100 : 0;
+      // A downed squadmate is not a dead one — the row has to say so, because
+      // this list is where you look to decide whether anyone is worth going to.
+      // The bar shows bleedout remaining, which is the only number that matters
+      // about them.
+      if (m.downed) {
+        const left = Math.max(0, m.downTimer / D.bleedout) * 100;
+        rows.push(`<div class="mate down"><span>${m.name} ${m.callTimer > 0 ? '— HELP' : 'DOWN'}</span>`
+          + `<span class="hp"><div style="width:${left}%;background:${DOWN}"></div></span></div>`);
+        continue;
+      }
       rows.push(`<div class="mate${m.alive ? '' : ' dead'}"><span>${m.name}</span><span class="hp"><div style="width:${hpPct}%"></div></span></div>`);
     }
-    this.el.squadList.innerHTML = rows.join('');
+    const html = rows.join('');
+    if (html !== this._squadHtml) { this._squadHtml = html; this.el.squadList.innerHTML = html; }
   }
 
   updateSectors(sectors) {
@@ -252,6 +331,7 @@ export class Hud {
     set(this.el.squad, fps);
     set(this.el.order, fps);
     set(this.el.minimapWrap, fps);
+    set(this.el.casualties, fps);
     set(this.el.hint, fps);
     set(this.el.topbar, fps); // deploy screen has its own header
   }
@@ -281,6 +361,9 @@ export class Hud {
       if (ttl - dt <= 0) this.spottedShooters.delete(s);
       else this.spottedShooters.set(s, ttl - dt);
     }
+    // Every frame, unlike the minimap: these are screen-projected, so throttling
+    // them would make markers visibly lag the camera when you turn.
+    this.updateCasualties();
     this.mmTimer -= dt;
     if (this.mmTimer <= 0) {
       this.mmTimer = 0.12;
@@ -333,6 +416,25 @@ export class Hud {
     for (const [s] of this.spottedShooters) {
       if (!s.alive) continue;
       ctx.fillRect(X(s.pos.x) - 1.5, Z(s.pos.z) - 1.5, 3, 3);
+    }
+    // Downed friendlies. Drawn after the living so a casualty is never painted
+    // over by a squadmate standing on top of them, and as a cross rather than a
+    // dot so it reads at 3 px. A live call gets a ring — findable at a glance
+    // is the entire job of this marker.
+    for (const s of this.game.teams[this.game.playerTeam].soldiers) {
+      if (!s.downed) continue;
+      const x = X(s.pos.x), z = Z(s.pos.z);
+      ctx.strokeStyle = DOWN;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - 2.5, z); ctx.lineTo(x + 2.5, z);
+      ctx.moveTo(x, z - 2.5); ctx.lineTo(x, z + 2.5);
+      ctx.stroke();
+      if (s.callTimer > 0) {
+        ctx.beginPath();
+        ctx.arc(x, z, 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
     // Player arrow (camera position while spectating)
     const p = this.game.player;

@@ -66,6 +66,17 @@ export const CFG = {
     gibMargin: 0.5,
     camHeight: 0.45,       // eye height while lying down
     giveUpHold: 0.8,       // hold SPACE this long to stop waiting
+
+    // Findability. Recovery is open to the whole team, which is worth nothing
+    // if nobody can tell who is down — the pickup prompt only fires at
+    // `reviveRange`, so without markers a player would never find a casualty
+    // except by walking over one.
+    markerRange: 90,       // metres a casualty marker carries
+    markerMax: 8,          // most markers drawn at once, nearest first
+    // Calling for help. The downed soldier's one piece of agency: it does not
+    // just brighten a marker, it makes bots come further for you.
+    callTime: 8,           // seconds a call stays live
+    callRangeMult: 1.6,    // how much further a bot will travel for a call
   },
 
   player: {
