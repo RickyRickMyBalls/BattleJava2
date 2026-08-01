@@ -319,7 +319,7 @@ export class DeployScreen {
     this.visible = false;
     this.unwatch();
     this.el.root.style.display = 'none';
-    this.game.menuOpen = this.game.armory ? this.game.armory.visible : false;
+    this.game.refreshMenuOpen();
     const fog = this.game.scene.fog;
     if (fog && this._fogFar) { fog.near = this._fogNear; fog.far = this._fogFar; }
     this._applyMapStyle(false);

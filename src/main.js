@@ -8,6 +8,8 @@ import { Game } from './game.js';
 import { LoadoutMenu } from './menu.js';
 import { DeployScreen } from './deploy.js';
 import { Lobby, TeamSelect } from './lobby.js';
+import { PauseMenu } from './pausemenu.js';
+import { loadSettings, getSetting, onSettingChange } from './settings.js';
 
 const app = document.getElementById('app');
 const loadbar = document.querySelector('#loadbar > div');
@@ -71,6 +73,21 @@ let deploy = null;
 let lobby = null;
 let teamSelect = null;
 let launching = false;
+
+// Restored before anything reads a setting. The ESC menu is built once for the
+// page rather than per match — it reaches the current game through a getter, so
+// launching a second match does not leave it pointed at the first.
+loadSettings();
+const pauseMenu = new PauseMenu({ get game() { return game; } });
+
+// Settings that live on objects rather than being read where they are used.
+// Audio is the only one today: the mixer gain is a node, so it has to be written
+// when it changes and again whenever a new context is created.
+onSettingChange((key, value) => {
+  if (key === 'volume' && game && game.audio && game.audio.master) {
+    game.audio.master.gain.value = value;
+  }
+});
 
 async function boot() {
   try {
@@ -138,6 +155,7 @@ async function startGame() {
     deploy = new DeployScreen(game);
     game.armory = menu;
     game.deployScreen = deploy;
+    game.pauseMenu = pauseMenu;
     session.deployScreen = deploy;
     // Last, deliberately: the deploy screen touches the scene, and three keys
     // its program cache on light counts, so warming before it means warming a
@@ -195,6 +213,7 @@ window.FC = {
   get deploy() { return deploy; },
   get lobby() { return lobby; },
   get session() { return session; },
+  get pauseMenu() { return pauseMenu; },
   launchMap: async (id) => {
     session.mapId = id;
     if (startScreen.style.display !== 'none') { startScreen.style.display = 'none'; lobby.show(); }

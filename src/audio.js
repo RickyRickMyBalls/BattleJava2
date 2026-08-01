@@ -2,6 +2,7 @@
 // and a throttled distance-attenuated pool for the 63 AI rifles.
 
 import { CFG } from './config.js';
+import { getSetting } from './settings.js';
 
 export class GameAudio {
   constructor(game) {
@@ -15,7 +16,11 @@ export class GameAudio {
   init(buffers) {
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.5;
+    // Seeded from the setting rather than a constant. The context is created on
+    // the player's first interaction, which is long after the menu could have
+    // moved the slider — so this is the second half of the write in main.js,
+    // not a duplicate of it.
+    this.master.gain.value = getSetting('volume');
     this.master.connect(this.ctx.destination);
     this.buffers = buffers;
     this.noise = this._makeNoiseBuffer();

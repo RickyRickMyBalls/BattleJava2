@@ -52,7 +52,13 @@ function makeGlowTexture() {
   return tex;
 }
 
-export function createRepairBeam(scene, cfg = {}) {
+// `lit` decides whether this beam gets a PointLight at all, and it is not a
+// cosmetic switch. Scene light COUNT is part of three's program cache key, so a
+// beam that adds one costs a full material recompile the first time that count
+// is seen — measured at 60 new programs on the demo map. Building the light
+// conditionally, rather than adding one and hiding it, is what keeps the count
+// at zero for a player who has turned them off.
+export function createRepairBeam(scene, cfg = {}, lit = true) {
   const color = cfg.color ?? 0x5ad1ff;
   // Radius of the FAR end — the near end is BEAM_TAPER of it.
   const radius = cfg.radius ?? 0.03;
@@ -79,9 +85,11 @@ export function createRepairBeam(scene, cfg = {}) {
   // A second light source that actually lights the work. Cheap and short-range:
   // it exists so the surface being welded brightens, which is the only feedback
   // that reads at a distance in third person.
-  const light = new THREE.PointLight(color, 0, 4.5);
-  light.visible = false;
-  scene.add(light);
+  const light = lit ? new THREE.PointLight(color, 0, 4.5) : null;
+  if (light) {
+    light.visible = false;
+    scene.add(light);
+  }
 
   let flicker = 0;
 
@@ -111,21 +119,23 @@ export function createRepairBeam(scene, cfg = {}) {
       glow.scale.setScalar(0.22 * jitter);
       glowMat.opacity = 0.6 + Math.random() * 0.3;
 
-      light.visible = true;
-      light.position.copy(to);
-      light.intensity = 5 + Math.random() * 3;
+      if (light) {
+        light.visible = true;
+        light.position.copy(to);
+        light.intensity = 5 + Math.random() * 3;
+      }
     },
 
     hide() {
       beam.visible = false;
       glow.visible = false;
-      light.visible = false;
+      if (light) light.visible = false;
     },
 
     dispose() {
       scene.remove(beam);
       scene.remove(glow);
-      scene.remove(light);
+      if (light) scene.remove(light);
       mat.dispose();
       glowMat.dispose();
       glowTex.dispose();

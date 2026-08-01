@@ -8,6 +8,7 @@ import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { findMuzzle } from './soldier.js';
 import { createRepairBeam } from './repairtool.js';
+import { getSetting, onSettingChange } from './settings.js';
 
 const P = CFG.player;
 const D = CFG.downed;
@@ -177,6 +178,16 @@ export class Player {
 
     this._bindInput();
     this._buildViewmodel();
+    // Whether the beam carries a light is baked in when it is built, because the
+    // alternative — adding a light and hiding it — leaves the count raised.
+    // Dropping the beam is therefore how the setting takes effect; it rebuilds
+    // on the next trigger pull. The recompile that costs lands while the menu is
+    // still open, which is exactly where a hitch is free.
+    this._unsubSettings = onSettingChange((key) => {
+      if (key !== 'beamLights' || !this.beam) return;
+      this.beam.dispose();
+      this.beam = null;
+    });
   }
 
   get soldier() { return this.game.playerSoldier; }
@@ -204,6 +215,7 @@ export class Player {
 
   dispose() {
     this.setEnabled(false);
+    if (this._unsubSettings) { this._unsubSettings(); this._unsubSettings = null; }
     if (this.beam) { this.beam.dispose(); this.beam = null; }
     for (const [target, type, fn] of this._listeners) target.removeEventListener(type, fn);
     this._listeners.length = 0;
@@ -1509,7 +1521,13 @@ export class Player {
   // Where the beam starts and where the world stops it.
   _updateBeam(dt, w, working) {
     if (!working) { if (this.beam) this.beam.hide(); return; }
-    if (!this.beam) this.beam = createRepairBeam(this.game.scene, w.def.tool.beam);
+    // Built on first use, and rebuilt if the lighting setting changes — see the
+    // subscription in the constructor. `beamLights` 0 means the beam still
+    // draws, it just carries no light: the mesh is ~3 draw calls and free, and
+    // the light is the whole cost.
+    if (!this.beam) {
+      this.beam = createRepairBeam(this.game.scene, w.def.tool.beam, getSetting('beamLights') > 0);
+    }
 
     const range = w.def.tool.range;
     this.camera.getWorldDirection(_dir);

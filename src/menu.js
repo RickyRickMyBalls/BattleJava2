@@ -1597,7 +1597,7 @@ export class LoadoutMenu {
 
   hide() {
     this.visible = false;
-    this.game.menuOpen = this.game.deployScreen ? this.game.deployScreen.visible : false;
+    this.game.refreshMenuOpen();
     this.el.overlay.style.display = 'none';
   }
 

@@ -261,6 +261,21 @@ export class Game {
     else this._menuOpen = v;
   }
 
+  // "Is any screen holding the keyboard?", derived rather than remembered.
+  //
+  // Each screen used to recompute the flag from the OTHER one on the way out —
+  // deploy.hide asked the armoury, menu.hide asked deploy. That works for
+  // exactly two screens and silently breaks at three: whichever one closed last
+  // would clear a flag the third still needs. Asking all of them, in one place,
+  // is the version that survives a fourth.
+  refreshMenuOpen() {
+    this.menuOpen = !!(
+      (this.armory && this.armory.visible)
+      || (this.deployScreen && this.deployScreen.visible)
+      || (this.pauseMenu && this.pauseMenu.visible)
+    );
+  }
+
   // True when the player's soldier is an active combatant on the field. A
   // downed player is on the field but is not a combatant — squads should not
   // form up on a casualty, so this has to say no.

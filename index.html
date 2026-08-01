@@ -20,6 +20,71 @@
     .hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
     .panel { background: var(--hud-bg); border: 1px solid var(--hud-cyan-dim); border-radius: 4px; backdrop-filter: blur(2px); }
 
+    /* ---- ESC menu ----
+       Sits UNDER the armoury (93) and the deploy map (70 chrome) is below it:
+       the ESC menu can be open over the match, but the armoury opened from the
+       deploy screen must still come out on top. It does NOT dim to black — the
+       sim keeps running behind it and the battle is worth still seeing. */
+    #pause {
+      position: fixed; inset: 0; z-index: 92; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(4, 10, 16, 0.55); backdrop-filter: blur(3px);
+    }
+    .pm-panel {
+      width: min(760px, 82vw); max-height: 78vh; display: flex; flex-direction: column;
+      background: rgba(8, 20, 32, 0.92); border: 1px solid var(--hud-cyan-dim);
+      border-radius: 4px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    }
+    .pm-head {
+      display: flex; align-items: baseline; gap: 16px;
+      padding: 16px 22px 12px; border-bottom: 1px solid var(--hud-cyan-dim);
+    }
+    .pm-title { font-size: 18px; letter-spacing: 6px; font-weight: 300; color: #e8f4fc; }
+    .pm-sub { font-size: 11px; letter-spacing: 3px; color: var(--hud-cyan); opacity: 0.75; }
+    /* Tabs are a COLUMN of rows on the left, content on the right. min-height:0
+       is what lets the content column scroll instead of the panel growing past
+       its max-height. */
+    .pm-body { display: flex; flex: 1; min-height: 0; }
+    .pm-tabs {
+      flex: 0 0 168px; display: flex; flex-direction: column;
+      border-right: 1px solid var(--hud-cyan-dim); padding: 12px 0;
+    }
+    .pm-tab {
+      appearance: none; background: none; border: 0; cursor: pointer;
+      font-family: inherit; font-size: 12px; letter-spacing: 3px; text-align: left;
+      color: #7e9cb0; padding: 11px 22px; border-left: 2px solid transparent;
+    }
+    .pm-tab:hover { color: #cfe8f7; }
+    .pm-tab.sel { color: #e8f4fc; border-left-color: var(--hud-cyan); background: rgba(127, 212, 255, 0.07); }
+    .pm-content { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 22px; }
+    .pm-row { padding: 0 0 22px; }
+    .pm-row + .pm-row { border-top: 1px solid rgba(127, 212, 255, 0.14); padding-top: 20px; }
+    .pm-label { font-size: 12px; letter-spacing: 3px; color: #e8f4fc; }
+    .pm-hint { font-size: 12px; color: #7e9cb0; letter-spacing: 0.3px; margin-top: 5px; line-height: 1.45; }
+    /* Segmented, not a dropdown: three options that each need a sentence are a
+       choice to read, not a list to pick from blind. */
+    .pm-seg { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .pm-opt {
+      appearance: none; cursor: pointer; font-family: inherit;
+      font-size: 11px; letter-spacing: 2px; padding: 8px 14px;
+      color: #9ab4c4; background: rgba(127, 212, 255, 0.05);
+      border: 1px solid var(--hud-cyan-dim); border-radius: 3px;
+    }
+    .pm-opt:hover { color: #e8f4fc; }
+    .pm-opt.sel { color: #06121c; background: var(--hud-cyan); border-color: var(--hud-cyan); }
+    .pm-note { font-size: 12px; color: var(--hud-cyan); opacity: 0.8; margin-top: 10px; min-height: 16px; }
+    .pm-slider { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+    .pm-slider input { flex: 1; accent-color: var(--hud-cyan); cursor: pointer; }
+    .pm-val { font-size: 12px; letter-spacing: 1px; color: #e8f4fc; min-width: 46px; text-align: right; }
+    .pm-empty { font-size: 12px; letter-spacing: 3px; color: #5d7a8c; }
+    .pm-foot { padding: 14px 22px; border-top: 1px solid var(--hud-cyan-dim); text-align: right; }
+    .pm-resume {
+      appearance: none; cursor: pointer; font-family: inherit;
+      font-size: 12px; letter-spacing: 3px; padding: 10px 26px;
+      color: #06121c; background: var(--hud-cyan); border: 0; border-radius: 3px;
+    }
+    .pm-resume:hover { filter: brightness(1.12); }
+
     /* ---- Loading ---- */
     #loading {
       position: fixed; inset: 0; z-index: 100; background: #060b12;
@@ -1247,7 +1312,7 @@
     <div id="hitmarker"></div>
     <div id="casualties"></div>
 
-    <div id="hint">WASD move · SHIFT sprint · C crouch · SPACE jump · LMB fire · RMB aim · R reload · 1/2/Q weapons · X biofoam · E pick up · F freecam · P pause · T sim speed · M release mouse</div>
+    <div id="hint">WASD move · SHIFT sprint · C crouch · SPACE jump · LMB fire · RMB aim · R reload · 1/2/Q weapons · X biofoam · E pick up · F freecam · P pause · T sim speed · ESC settings</div>
   </div>
 
   <div id="endScreen">

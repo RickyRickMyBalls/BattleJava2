@@ -133,6 +133,14 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     get menuOpen() { return session ? session.menuOpen : false; },
     set menuOpen(v) { if (session) session.menuOpen = v; },
 
+    // The armoury calls this on the way out, and it reaches whichever host it
+    // was opened from. In the lobby the armoury is the ONLY screen that can hold
+    // the keyboard — there is no deploy map and the ESC menu is match-only — so
+    // the derived answer is simply whether it is still up.
+    refreshMenuOpen() {
+      arena.menuOpen = !!(session && session.armory && session.armory.visible);
+    },
+
     onKill() {},
     // Casualty recovery has no meaning without teams to search — `teams` is
     // absent from this slice on purpose, and both casualty scans check for it.
