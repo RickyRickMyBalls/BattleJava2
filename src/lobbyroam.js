@@ -253,8 +253,9 @@ export class LobbyRoam {
       this.player.update(dt);
       this.soldier.update(dt);
       this.arena.combat.update(dt);
-      // Refills the per-frame budget that caps positional shot sounds. The
-      // player's own gun does not use it, but target dummies will.
+      // Spends the per-frame voice budget on the positional shot sounds queued
+      // above. The player's own gun does not use it, but target dummies will —
+      // and without this call they would queue and never be heard.
       this.arena.audio.update();
       cam.getWorldDirection(this._look);
       this.rack.update(dt, this.player.pos, this._look);

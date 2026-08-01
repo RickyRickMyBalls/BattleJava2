@@ -1,13 +1,15 @@
 // WebAudio: raw buffer-source playback for the player's gun (overlapping shots)
 // and a throttled distance-attenuated pool for the 63 AI rifles.
 
+import { CFG } from './config.js';
+
 export class GameAudio {
   constructor(game) {
     this.game = game;
     this.ctx = null;
     this.master = null;
     this.buffers = {};
-    this.aiShotBudget = 0; // refilled per frame, limits concurrent AI bangs
+    this._pending = []; // AI shots queued this frame, spent by update()
   }
 
   init(buffers) {
@@ -34,21 +36,38 @@ export class GameAudio {
     return buf;
   }
 
-  _play(buffer, volume, rate = 1, pan = 0) {
+  // `lp` is a lowpass cutoff in Hz — 0 (or anything past `lpBypass`) skips the
+  // filter node, so the player's own gun and the UI blips cost exactly what they
+  // did before. connect() returns its destination, so the chain builds by
+  // reassignment and every optional stage is one `if`.
+  _play(buffer, volume, rate = 1, pan = 0, lp = 0) {
     if (!this.ctx || !buffer) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.playbackRate.value = rate;
     const g = this.ctx.createGain();
     g.gain.value = volume;
+    let node = src.connect(g);
+    if (lp > 0 && lp < CFG.audio.lpBypass) {
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = lp;
+      node = node.connect(f);
+    }
     if (pan !== 0) {
       const p = this.ctx.createStereoPanner();
       p.pan.value = pan;
-      src.connect(g).connect(p).connect(this.master);
-    } else {
-      src.connect(g).connect(this.master);
+      node = node.connect(p);
     }
+    node.connect(this.master);
     src.start();
+  }
+
+  // Cutoff for a sound `d` metres off. See the CFG.audio comment: the ear reads
+  // distance off the MISSING top end more than off the level, which is why a
+  // 300 m firefight at the same gain still has to sound 300 m away.
+  _lpFor(d, near, far, falloff) {
+    return far + (near - far) * Math.exp(-d / falloff);
   }
 
   // Player weapon fire — def.snd selects buffer/rate/volume.
@@ -92,29 +111,57 @@ export class GameAudio {
     return { d, pan: this._panFor(pos) };
   }
 
-  // Distance-attenuated AI gunfire, budget-limited.
+  // AI gunfire. QUEUED, not played: which shots are worth a voice depends on
+  // what else fires this frame, and the answer is not known yet. `update()`
+  // spends the budget — see _flushShots.
   playShotAt(pos, def) {
-    if (!this.ctx || this.aiShotBudget <= 0) return;
-    const dp = this._distPan(pos, 260);
+    if (!this.ctx) return;
+    const A = CFG.audio;
+    if (this._pending.length >= A.queueMax) return;
+    const dp = this._distPan(pos, A.shotMaxDist);
     if (!dp) return;
-    this.aiShotBudget--;
-    const s = def ? def.snd : { key: 'shot', rate: 1, vol: 0.4 };
-    const vol = Math.min(s.vol * 0.8, (9 / Math.max(10, dp.d)) * s.vol * 2);
-    this._play(this.buffers[s.key], vol, s.rate * (0.92 + Math.random() * 0.12), dp.pan);
+    this._pending.push({ d: dp.d, pan: dp.pan, def });
+  }
+
+  _playShotNow(c) {
+    const A = CFG.audio;
+    const s = c.def ? c.def.snd : { key: 'shot', rate: 1, vol: 0.4 };
+    // Inverse distance: flat inside shotRef, ref/(ref + rolloff*(d-ref)) beyond.
+    const atten = A.shotRef / (A.shotRef + A.shotRolloff * Math.max(0, c.d - A.shotRef));
+    this._play(this.buffers[s.key], s.vol * A.shotPeak * atten,
+      s.rate * (0.92 + Math.random() * 0.12), c.pan,
+      this._lpFor(c.d, A.lpNear, A.lpFar, A.lpFalloff));
+  }
+
+  _flushShots() {
+    const q = this._pending;
+    if (!q.length) return;
+    const A = CFG.audio;
+    const near = [], far = [];
+    for (const c of q) (c.d <= A.farBand ? near : far).push(c);
+    near.sort((a, b) => a.d - b.d);
+    for (let i = 0; i < A.nearSlots && i < near.length; i++) this._playShotNow(near[i]);
+    // The far slots pick at RANDOM rather than nearest-first: with the cull out
+    // at 600 m, nearest-first would replay the same mid-range firefight every
+    // frame and the far half of the map would never be heard at all.
+    for (let i = 0; i < A.farSlots && far.length; i++) {
+      this._playShotNow(far.splice(Math.floor(Math.random() * far.length), 1)[0]);
+    }
   }
 
   // Rocket detonation: filtered noise boom, audible far away.
   playExplosionAt(pos) {
     if (!this.ctx || !this.noise) return;
-    const dp = this._distPan(pos, 500);
+    const A = CFG.audio;
+    const dp = this._distPan(pos, A.boomMaxDist);
     if (!dp) return;
-    const vol = Math.min(0.9, 45 / Math.max(15, dp.d));
+    const vol = A.boomPeak * (A.boomRef / (A.boomRef + A.boomRolloff * Math.max(0, dp.d - A.boomRef)));
     const src = this.ctx.createBufferSource();
     src.buffer = this.noise;
     src.playbackRate.value = 0.55 + Math.random() * 0.2;
     const f = this.ctx.createBiquadFilter();
     f.type = 'lowpass';
-    f.frequency.value = 420;
+    f.frequency.value = this._lpFor(dp.d, A.boomLpNear, A.boomLpFar, A.boomLpFalloff);
     const g = this.ctx.createGain();
     g.gain.value = vol;
     const p = this.ctx.createStereoPanner();
@@ -133,7 +180,13 @@ export class GameAudio {
     return Math.max(-1, Math.min(1, (dx * rx + dz * rz) / len));
   }
 
+  // Per-frame audio tick: spend the budget on the shots queued since the last
+  // one, then start over. Whether this runs before or after the sim's own update
+  // only decides whether the queue is same-frame or one frame stale — and a
+  // frame of latency is 16 ms, which sound covers in 5 m. Any loop driving a
+  // GameAudio must call this or nothing positional is ever heard.
   update() {
-    this.aiShotBudget = 3; // per-frame cap on new AI shot sounds
+    this._flushShots();
+    this._pending.length = 0;
   }
 }

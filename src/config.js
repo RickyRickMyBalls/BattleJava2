@@ -400,6 +400,51 @@ export const CFG = {
     cullRadius: 2.2,   // soldier bounding sphere for the manual frustum test
   },
 
+  // Combat audio, distance side. Level alone is a weak distance cue: what tells
+  // you how far a gun is, is how much of its crack survived the trip. Air eats
+  // the top end far faster than it eats the level, so every world-placed sound
+  // runs through a lowpass whose cutoff decays with range —
+  //   fc = far + (near - far) * exp(-d / falloff)
+  // Gunfire and detonations get their own curve: a rifle report is mostly top
+  // end and dulls fast, a boom is already bottom end and carries.
+  audio: {
+    // Distance falloff for AI gunfire: flat inside `shotRef`, then the standard
+    // inverse-distance curve, ref / (ref + rolloff * (d - ref)), out to the cull.
+    // The old curve went abruptly silent at 260 m — fine on the demo map, whose
+    // five sectors sit 185-220 m apart and whose whole battle therefore fits
+    // inside that bubble, but map 3's objectives are 320-630 m apart, so the
+    // rest of the war was simply switched off. 600 m reaches across map 3
+    // without dragging in its far corners.
+    shotRef: 12,       // metres. Below this the level stops changing...
+    shotRolloff: 0.55, // ...above it, how steeply it falls. 1 = pure ref/d.
+    shotMaxDist: 600,
+    shotPeak: 0.8,     // loudest an AI shot gets; the player's own gun is 1.0
+    // Voice budget, spent per frame by `update()`. Shots are QUEUED as they are
+    // fired and picked over a frame later, because a shot cannot know at the
+    // moment it fires whether a closer one is about to be queued behind it.
+    queueMax: 64,      // one per soldier; a hard stop, never normally reached
+    nearSlots: 3,      // nearest-first, inside `farBand`
+    farBand: 200,
+    farSlots: 2,       // ...and this many RESERVED for everything beyond it, so
+                       // a close scrap cannot silence the rest of the battle
+    lpNear: 20000,     // cutoff with the shot in your face — past the sample's
+    lpFar: 1000,       // own content, so effectively unfiltered. Floor it decays
+    lpFalloff: 120,    // toward. Metres of e-folding: smaller dulls off sooner.
+    lpBypass: 18000,   // above this, skip building the filter node at all
+    // Detonations get the same inverse-distance treatment as gunfire, on a much
+    // longer curve: a rocket going off is the one sound on the field that should
+    // carry across the whole map, and the 500 m cull cut it off well short of
+    // map 3's 723 m HQ-to-HQ. Gentler rolloff too — a boom that halves every
+    // time you double the distance stops reading as a boom.
+    boomRef: 25,
+    boomRolloff: 0.35,
+    boomMaxDist: 900,
+    boomPeak: 0.9,
+    boomLpNear: 900,   // the old fixed 420 Hz now sits around 300 m, with closer
+    boomLpFar: 180,    // blasts brighter and far ones pure thud
+    boomLpFalloff: 250,
+  },
+
   // One of each weapon, laid out in the hangar for the firing range. Placement
   // prefers authored FC_WEAPON_<KEY> empties; these only drive the fallback
   // layout and the pickup feel.
