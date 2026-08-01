@@ -115,6 +115,13 @@
        is what preserveAspectRatio="none" buys us. */
     #visor { position: absolute; top: 0; left: 0; width: 100%; }
     #visor svg { display: block; width: 100%; height: auto; }
+    /* What makes the stretch safe. Under a non-uniform scale an ordinary stroke
+       distorts by axis — horizontal edges thicken while vertical ones stay put,
+       and the frame goes lopsided exactly where the clamp bites hardest. This
+       pins every line to its authored pixel width instead. The Illustrator
+       export does not set it, so it is applied here rather than waited for. */
+    #visor svg path, #visor svg polyline, #visor svg line, #visor svg rect
+      { vector-effect: non-scaling-stroke; }
 
     /* ---- Vitals ---- */
     #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }
