@@ -47,6 +47,22 @@ export const CFG = {
     // and it applies to every soldier, AI included.
     jumpHeight: 1.17,
     respawnDelay: 6,
+    // Posture. Every height measured up from a soldier's feet — their eye, the
+    // point an enemy aims at, the hit spheres — is authored as a STANDING
+    // figure, and a crouched soldier is that same silhouette folded toward the
+    // ground by this one multiplier. One scale rather than a second set of
+    // numbers: the standing values stay the single authored truth, and a height
+    // added later cannot forget to handle the crouch.
+    //
+    // 0.65 is the crouch the CAMERA already does (crouchEye / eyeHeight =
+    // 1.15 / 1.78), so the body an enemy shoots at matches the view the player
+    // is ducking behind. That agreement is the entire point. With a fixed
+    // silhouette there is no cover height that works: anything tall enough to
+    // hide a crouched soldier also hides a standing one, so they can shoot over
+    // it and never be seen — and anything short enough to leave a standing
+    // soldier exposed leaves the crouched one exposed too, so ducking does
+    // nothing. Cover only becomes a decision once posture moves the target.
+    crouchScale: 0.65,
   },
 
   // Downed state and casualty recovery — see CLASS_AND_GADGET_PLAN.md. Phase 1
@@ -1334,10 +1350,10 @@ export const LOADOUTS = {
 //   movement    — changes how the carrier moves
 //   deployable  — a controllable second entity
 //
-// ONLY `webbing` has behaviour behind it. Everything else is declared so the
-// armoury shows the true shape of all five classes before any of it is built —
-// `built: false` marks which, so the UI can say so rather than implying a
-// gadget works.
+// Most of this list is declared and not yet wired — `built: true` marks the
+// ones that are. The rest exist so the armoury shows the true shape of all
+// five classes before any of it is built, and the flag is what lets the UI say
+// so rather than implying a gadget works.
 //
 // weaponSlot gadgets carry:
 //   upgrades  'primary' | 'secondary' — which slot they replace
@@ -1367,8 +1383,11 @@ export const GADGETS = {
   },
   // Additive rather than committing: the launcher rides in slot 2 and the
   // Engineer keeps a standard rifle, because a rocket is a tool you swap to.
+  // No `reserveMult`: the webbing's penalty exists because two rifles cover
+  // every range, and a two-round tube covers exactly one situation. Its own
+  // 2/8 and the laser's 5/5 are the scarcity.
   launcher_kit: {
-    name: 'HEAVY WEAPON', kind: 'weaponSlot', built: false,
+    name: 'HEAVY WEAPON', kind: 'weaponSlot', built: true,
     svg: '<path d="M3 13h11l6-3v5l-6 2H3z"/><path d="M7 17v3"/>',
     upgrades: 'secondary', weapons: ['rocket', 'laser'],
   },

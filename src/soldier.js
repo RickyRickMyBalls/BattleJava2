@@ -12,9 +12,11 @@ const AI = CFG.ai;
 const D = CFG.downed;
 const ST = CFG.stamina;
 const _v = new THREE.Vector3();
-// Second scratch, for a throw direction. Safe to pass into throwGrenade because
-// that only ever READS the direction (it copies it into the pooled grenade's
-// velocity) — see the all-bullets-miss note in combat.js for why that matters.
+// Second scratch: a throw direction, and the LOS body point in `_canSee`. The
+// two never overlap — the grenade block writes it and hands it straight to
+// throwGrenade, which only READS it (it copies the direction into the pooled
+// grenade's velocity). See the all-bullets-miss note in combat.js for why that
+// distinction is the one that matters.
 const _v2 = new THREE.Vector3();
 
 // Held-weapon grip transform relative to the right-hand bone (meters / radians).
@@ -509,9 +511,22 @@ export class Soldier {
     }
   }
 
+  // Multiplier on every height measured up from this soldier's feet — see
+  // CFG.soldier.crouchScale. Inert on bots today (they never crouch), but it is
+  // what the player's own body is measured by, and the player is who ducks.
+  get postureScale() { return this.crouching ? S.crouchScale : 1; }
+
   eyePos(out) {
-    return out.set(this.pos.x, this.pos.y + 1.62, this.pos.z);
+    return out.set(this.pos.x, this.pos.y + 1.62 * this.postureScale, this.pos.z);
   }
+
+  // A point ON this soldier, `h` metres up when standing: what someone else
+  // tests line of sight against and aims at. Never the eye — that is where they
+  // look FROM, and the two only coincide by accident.
+  bodyPoint(out, h) {
+    return out.set(this.pos.x, this.pos.y + h * this.postureScale, this.pos.z);
+  }
+
   // Barrel tip of the gun actually being held, so a rocket launcher and a
   // pistol no longer fire from the same nominal chest point. Falls back to that
   // point when there is no model (arena stubs, a soldier before its mesh loads).
@@ -939,9 +954,19 @@ export class Soldier {
     return null;
   }
 
+  // Sampled against the target's CHEST, and it moves with their posture — that
+  // is what turns a wall into cover. Crouching drops this sample below the top
+  // of one and the crouched soldier stops being a target at all; standing back
+  // up to shoot puts it over the top and they can be seen again. The exchange
+  // that makes placed cover worth a gadget slot lives in this one height.
+  //
+  // Two scratches rather than a clone: `hasLOS` reads components immediately
+  // and never writes either vector, and `_v`/`_v2` are distinct — so the
+  // all-bullets-miss aliasing trap in combat.js does not apply here.
   _canSee(enemy) {
-    const a = this.eyePos(_v).clone();
-    return this.game.world.hasLOS(a.x, a.y, a.z, enemy.pos.x, enemy.pos.y + 1.3, enemy.pos.z);
+    const a = this.eyePos(_v);
+    const b = enemy.bodyPoint(_v2, 1.3);
+    return this.game.world.hasLOS(a.x, a.y, a.z, b.x, b.y, b.z);
   }
 
   _move(dt) {

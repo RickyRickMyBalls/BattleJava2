@@ -114,7 +114,13 @@ export class Combat {
   // ---- AI shot at a soldier target -------------------------------------
   fireShot(shooter, target, def, spreadRad) {
     shooter.muzzlePos(_from);
-    _to.set(target.pos.x, target.pos.y + (target.isPlayer ? 1.5 : 1.25), target.pos.z);
+    // Aimed at the chest, scaled by the target's posture so a crouched soldier
+    // is shot at where they actually are. Without the scale a bot keeps aiming
+    // at a standing chest that is no longer there, and every round sails over a
+    // wall the target is ducking behind — cover that only works by accident.
+    _to.set(target.pos.x,
+      target.pos.y + (target.isPlayer ? 1.5 : 1.25) * target.postureScale,
+      target.pos.z);
     _dir.subVectors(_to, _from).normalize();
     this._firePellets(shooter, _from, _dir, def, spreadRad);
     this.game.audio.playShotAt(_from, def);
@@ -315,13 +321,20 @@ export class Combat {
         continue;
       }
 
-      _tmp.set(s.pos.x, s.pos.y + (s.isPlayer ? 1.7 : 1.75), s.pos.z);
+      // The three-sphere stack, folded toward the ground when the soldier is
+      // crouched. Only the OFFSETS scale — a crouched soldier is folded, not
+      // thinner, so the radii stand and the spheres simply overlap more. This
+      // is the half of the posture rule that stops a wall lying: without it a
+      // player ducked fully behind 1.4 m of cover still owns a head sphere at
+      // 1.7 m, floating above the wall for any round crossing that space.
+      const ps = s.postureScale;
+      _tmp.set(s.pos.x, s.pos.y + (s.isPlayer ? 1.7 : 1.75) * ps, s.pos.z);
       let t = raySphere(from, dir, _tmp, 0.26, range);
       if (t >= 0 && t / range < hitT) { hit = s; hitT = t / range; isHead = true; continue; }
-      _tmp.set(s.pos.x, s.pos.y + 1.15, s.pos.z);
+      _tmp.set(s.pos.x, s.pos.y + 1.15 * ps, s.pos.z);
       t = raySphere(from, dir, _tmp, 0.42, range);
       if (t >= 0 && t / range < hitT) { hit = s; hitT = t / range; isHead = false; continue; }
-      _tmp.set(s.pos.x, s.pos.y + 0.55, s.pos.z);
+      _tmp.set(s.pos.x, s.pos.y + 0.55 * ps, s.pos.z);
       t = raySphere(from, dir, _tmp, 0.4, range);
       if (t >= 0 && t / range < hitT) { hit = s; hitT = t / range; isHead = false; }
     }
