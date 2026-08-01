@@ -7,8 +7,6 @@ import { weaponSlotGadget, classPerk } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { findMuzzle } from './soldier.js';
-import { createRepairBeam } from './repairtool.js';
-import { getSetting, onSettingChange } from './settings.js';
 
 const P = CFG.player;
 const D = CFG.downed;
@@ -141,7 +139,6 @@ export class Player {
     // tool away would always drop you on the primary, silently undoing a switch
     // you made before you drew it.
     this.lastGun = 0;
-    this.beam = null;       // repair beam, built on first use — see _updateBeam
     this.repairTarget = null; // who the beam is currently working on, if anyone
     this.switchTimer = 0;
     this.fireTimer = 0;
@@ -178,16 +175,6 @@ export class Player {
 
     this._bindInput();
     this._buildViewmodel();
-    // Whether the beam carries a light is baked in when it is built, because the
-    // alternative — adding a light and hiding it — leaves the count raised.
-    // Dropping the beam is therefore how the setting takes effect; it rebuilds
-    // on the next trigger pull. The recompile that costs lands while the menu is
-    // still open, which is exactly where a hitch is free.
-    this._unsubSettings = onSettingChange((key) => {
-      if (key !== 'beamLights' || !this.beam) return;
-      this.beam.dispose();
-      this.beam = null;
-    });
   }
 
   get soldier() { return this.game.playerSoldier; }
@@ -215,8 +202,6 @@ export class Player {
 
   dispose() {
     this.setEnabled(false);
-    if (this._unsubSettings) { this._unsubSettings(); this._unsubSettings = null; }
-    if (this.beam) { this.beam.dispose(); this.beam = null; }
     for (const [target, type, fn] of this._listeners) target.removeEventListener(type, fn);
     this._listeners.length = 0;
   }
@@ -298,9 +283,6 @@ export class Player {
     this.freecam = on;
     this.firing = false;
     this.ads = false;
-    // Freecam skips _updateWeapon entirely, so a beam alight at the moment you
-    // detach would hang in the world with nobody holding it.
-    if (this.beam) this.beam.hide();
     this.viewmodel.visible = !on;
     const s = this.soldier;
     if (on) {
@@ -528,7 +510,7 @@ export class Player {
     // Stowing a tool kills its beam with it. A beam still drawing off a tool
     // that is no longer in the player's hands is the kind of bug that survives
     // for weeks, because nothing else about the frame looks wrong.
-    if (w.def.tool) { w.idle = 0; if (this.beam) this.beam.hide(); }
+    if (w.def.tool) w.idle = 0;
     this.game.hud.setReloading(false);
     if (this.active !== TOOL_SLOT) this.lastGun = this.active;
     this.active = i;
@@ -940,8 +922,6 @@ export class Player {
     const s = this.soldier;
     this.firing = false;
     this.ads = false;
-    // Runs INSTEAD of update, so nothing else will retire the beam this frame.
-    if (this.beam) this.beam.hide();
     this.reviving = false;
     s.reviving = false;
     this.reviveTarget = null;
@@ -1518,17 +1498,14 @@ export class Player {
     return best;
   }
 
-  // Where the beam starts and where the world stops it.
+  // Where the beam starts and where the world stops it. The pool draws it — not
+  // requesting is how a beam goes away, so there is nothing to hide here.
+  //
+  // The pool may be absent: the lobby range runs on the `arena` host slice,
+  // which has no match and therefore no beam pool, exactly as it has no crates.
+  // Checking beats assuming, the same way the casualty scans check `teams`.
   _updateBeam(dt, w, working) {
-    if (!working) { if (this.beam) this.beam.hide(); return; }
-    // Built on first use, and rebuilt if the lighting setting changes — see the
-    // subscription in the constructor. `beamLights` 0 means the beam still
-    // draws, it just carries no light: the mesh is ~3 draw calls and free, and
-    // the light is the whole cost.
-    if (!this.beam) {
-      this.beam = createRepairBeam(this.game.scene, w.def.tool.beam, getSetting('beamLights') > 0);
-    }
-
+    if (!working || !this.game.beams) return;
     const range = w.def.tool.range;
     this.camera.getWorldDirection(_dir);
     _from.copy(this.camera.position).addScaledVector(_dir, 0.3);
@@ -1552,7 +1529,9 @@ export class Player {
     const origin = this.vmMuzzle
       ? this.vmMuzzle.getWorldPosition(_muzzle)
       : this.gunHolder.getWorldPosition(_muzzle);
-    this.beam.set(origin, _aim, dt);
+    // Keyed on the SOLDIER, not the controller, so the pool can tell the
+    // player's beam from a bot's by the one flag they share.
+    this.game.beams.request(this.soldier, origin, _aim);
   }
 
   _dryFire() {

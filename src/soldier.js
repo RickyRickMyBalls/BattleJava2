@@ -1042,6 +1042,15 @@ export class Soldier {
       this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
     }
     this.repairing = t.applyRepair(this, dt) > 0;
+    // Show it. `muzzlePos` reads the HELD gun's cached `ref_muzzle`, and by now
+    // `_updateAnim` has put the tool in this soldier's hands — so the beam
+    // leaves the nozzle rather than the chest, the same as the player's.
+    //
+    // Both scratches are handed straight to `request`, which copies. They are
+    // rewritten by the next soldier's move before the pool ever draws.
+    if (this.repairing && this.game.beams) {
+      this.game.beams.request(this, this.muzzlePos(_v), t.bodyPoint(_v2, 1.0));
+    }
     if (!t.needsRepair) this.repairTarget = null;   // done — back to the war
   }
 

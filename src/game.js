@@ -1,7 +1,7 @@
 // Match orchestrator: teams, squads, spawning, capture logic, tickets, win state.
 
 import * as THREE from 'three';
-import { CFG, TEAM, CLASSES } from './config.js';
+import { CFG, TEAM, CLASSES, WEAPONS } from './config.js';
 import { makeLoadout, randomLoadout, validateLoadout } from './loadout.js';
 import { World } from './world.js';
 import { Soldier } from './soldier.js';
@@ -12,6 +12,8 @@ import { Structures } from './structures.js';
 import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
+import { createBeamPool } from './repairtool.js';
+import { getSetting, onSettingChange } from './settings.js';
 import { prewarm, weaponClones, characterClones } from './assets.js';
 
 const BLUE_NAMES = ['Reyes', 'Okafor', 'Tanaka', 'Silva', 'Novak', 'Baptiste', 'Kowalski', 'Iversen', 'Mbeki', 'Duarte', 'Halvorsen', 'Cross', 'Vega', 'Antar', 'Riley', 'Song', 'Petrov', 'Lindqvist', 'Moreau', 'Adeyemi', 'Castillo', 'Brandt', 'Oyelaran', 'Whitaker', 'Nakamura', 'Sorenson', 'Blake', 'Ferreira', 'Zhou', 'Kaminski', 'Dubois'];
@@ -43,6 +45,16 @@ export class Game {
     this.supply = new Supply(this);
     this.structures = new Structures(this);
     this.hud = new Hud(this);
+    // Built HERE, before `prewarm`, and that ordering is the whole point: the
+    // pool's lights are in the scene when the match compiles its materials, so
+    // the compile happens once behind the loading bar instead of the first time
+    // anyone welds. See createBeamPool for why the light count must not move.
+    this.beams = createBeamPool(this.scene, WEAPONS.repairtool.tool.beam, getSetting('beamLights'));
+    this._unsubSettings = onSettingChange((key, value) => {
+      if (key !== 'beamLights') return;
+      this.beams.dispose();
+      this.beams = createBeamPool(this.scene, WEAPONS.repairtool.tool.beam, value);
+    });
 
     this.teams = [
       { id: TEAM.BLUE, soldiers: [], squads: [], tickets: CFG.tickets, brain: null },
@@ -356,6 +368,12 @@ export class Game {
     if (!this.paused) {
       for (let i = 0; i < this.timeScale; i++) this._simStep(dt);
     }
+
+    // Every beam requested this frame, drawn at once. After the sim, because a
+    // welder's position is only final once it has moved; once per RENDERED
+    // frame, not per sim substep, which is why requests are keyed by welder and
+    // an 8x substep still produces one beam per soldier.
+    this.beams.commit(dt, this.camera.position);
 
     // HUD (real-time, even when paused)
     this.hud.setVitals(this.playerSoldier.plate, this.playerSoldier.health,
