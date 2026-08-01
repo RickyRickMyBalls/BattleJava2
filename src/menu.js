@@ -20,7 +20,10 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { CFG, WEAPONS, CLASSES } from './config.js';
-import { SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout, selectClass, saveBook } from './loadout.js';
+import {
+  SLOTS, slotById, slotValue, setSlot, slotDef, validateLoadout,
+  selectClass, selectSlot, resetSlot, saveBook, matchingPreset, SLOTS_PER_CLASS,
+} from './loadout.js';
 import { prewarm, weaponClones } from './assets.js';
 
 const S = CFG.armoryStage;
@@ -1686,6 +1689,51 @@ export class LoadoutMenu {
     return card;
   }
 
+  // The class's three editable kits, down the left of the card area — the same
+  // list the deploy screen carries, so the two screens teach one idea rather
+  // than two. Without it the armoury is where you EDIT a kit but not where you
+  // choose WHICH kit, which meant bouncing back to deploy to switch slots.
+  //
+  // Rendered in both panel states: while a picker is open it is the only thing
+  // still saying which loadout the change you are about to make lands in.
+  _renderKits() {
+    const sess = this._session();
+    if (!sess) return;
+    const cls = this.loadout.cls;
+    const activeIdx = sess.activeSlot[cls] || 0;
+    const col = document.createElement('div');
+    col.className = 'ar-kits';
+    for (let i = 0; i < SLOTS_PER_CLASS; i++) {
+      const kit = sess.loadouts[cls][i];
+      const preset = matchingPreset(kit);
+      const b = document.createElement('button');
+      b.className = 'ar-kit' + (i === activeIdx ? ' sel' : '');
+      b.innerHTML = `<span class="n">LOADOUT ${i + 1}</span>`
+        + `<span class="s">${preset ? preset.name : 'CUSTOM'}</span>`;
+      b.title = preset ? preset.desc : 'Edited loadout';
+      b.onclick = () => {
+        selectSlot(sess, i);
+        this.pickSlot = null;               // the pool you were browsing belongs to the old kit
+        this._view(slotById('primary'), this.loadout.primary);
+        this.refresh();
+      };
+      col.appendChild(b);
+    }
+    const reset = document.createElement('button');
+    reset.className = 'ar-kit-reset';
+    reset.textContent = 'RESET SLOT';
+    reset.title = 'Put this slot back to the kit it shipped with';
+    reset.onclick = () => {
+      resetSlot(sess.loadouts, cls, activeIdx);
+      selectSlot(sess, activeIdx);
+      this.pickSlot = null;
+      this._view(slotById('primary'), this.loadout.primary);
+      this.refresh();
+    };
+    col.appendChild(reset);
+    this.el.cards.appendChild(col);
+  }
+
   _slotRow(labelText, onBack) {
     const wrap = document.createElement('div');
     wrap.className = 'ar-slot';
@@ -1706,6 +1754,7 @@ export class LoadoutMenu {
   _renderGrid() {
     const lo = this.loadout;
     this.el.cards.innerHTML = '';
+    this._renderKits();
     const row = this._slotRow('LOADOUT', null);
     // Every grid card is `sel` so its art sits at full opacity — but six cyan
     // borders at once is a wall of selection state that means nothing, since
@@ -1729,6 +1778,7 @@ export class LoadoutMenu {
     const slot = slotById(this.pickSlot);
     if (!slot) { this.pickSlot = null; this._renderGrid(); return; }
     this.el.cards.innerHTML = '';
+    this._renderKits();
     const back = () => { this.pickSlot = null; this.refresh(); };
     const row = this._slotRow(slot.label, back);
     const cur = slotValue(lo, slot);

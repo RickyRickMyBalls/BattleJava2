@@ -701,7 +701,41 @@
        narrow viewports — see the flex-basis note on .ar-card for why a wide
        screen never noticed the old 46/4vw at all. */
     .ar-cards { display: flex; gap: 30px; padding: 18px 2.5vw 4px; min-width: 0; }
-    .ar-slot { min-width: 0; }
+    /* Grows into whatever the kit column leaves. Safe now that there is exactly
+       ONE of these — back when the panel held a PRIMARY slot and a CLASS WEAPON
+       slot side by side, growing them would have given each half the row
+       regardless of how many cards it held. */
+    .ar-slot { flex: 1 1 auto; min-width: 0; }
+    /* The class's three editable kits, left of the cards. Same list the deploy
+       screen carries — this is where you edit one, that is where you pick one
+       fast, and both have to say which slot you are on. Sized off the card
+       height so the column reads as part of the row rather than an aside. */
+    .ar-kits {
+      display: flex; flex-direction: column; justify-content: center; gap: 2px;
+      flex: 0 0 152px; padding-right: 26px;
+      border-right: 1px solid rgba(255,255,255,0.10);
+    }
+    .ar-kit {
+      cursor: pointer; text-align: left; background: none; color: #7c96a8;
+      border: none; border-left: 2px solid transparent;
+      padding: 5px 10px; line-height: 1.2;
+      transition: color 0.12s, background 0.12s, border-color 0.12s;
+    }
+    .ar-kit .n { display: block; font-size: 11px; letter-spacing: 2px; }
+    .ar-kit .s { display: block; font-size: 8px; letter-spacing: 1px; color: #55707f; }
+    .ar-kit:hover { color: #dceaf5; background: rgba(127,212,255,0.06); }
+    .ar-kit.sel {
+      color: var(--hud-cyan); background: rgba(127,212,255,0.10);
+      border-left-color: var(--hud-cyan);
+    }
+    .ar-kit.sel .s { color: var(--hud-cyan-dim); }
+    .ar-kit-reset {
+      cursor: pointer; background: none; color: #55707f;
+      border: 1px solid rgba(255,255,255,0.10); margin: 7px 0 0 10px; padding: 3px 9px;
+      font-size: 8px; letter-spacing: 2px; align-self: flex-start;
+      transition: color 0.12s, border-color 0.12s;
+    }
+    .ar-kit-reset:hover { color: #ffb15e; border-color: #6b4a28; }
     /* Small cyan tick before the label, as in the reference */
     .ar-slot-label {
       font-size: 13px; letter-spacing: 4px; color: #93b0c4; margin-bottom: 14px;
