@@ -1708,8 +1708,10 @@ export class LoadoutMenu {
       const preset = matchingPreset(kit);
       const b = document.createElement('button');
       b.className = 'ar-kit' + (i === activeIdx ? ' sel' : '');
-      b.innerHTML = `<span class="n">LOADOUT ${i + 1}</span>`
-        + `<span class="s">${preset ? preset.name : 'CUSTOM'}</span>`;
+      // What is IN the slot leads; the slot number is just its address, so it
+      // rides underneath at caption size.
+      b.innerHTML = `<span class="n">${preset ? preset.name : 'CUSTOM'}</span>`
+        + `<span class="s">LOADOUT ${i + 1}</span>`;
       b.title = preset ? preset.desc : 'Edited loadout';
       b.onclick = () => {
         selectSlot(sess, i);

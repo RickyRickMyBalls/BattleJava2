@@ -577,8 +577,10 @@ export class DeployScreen {
       b.className = 'dp-kit' + (i === activeIdx ? ' sel' : '');
       // The subtitle is the preset it still matches, or CUSTOM once edited —
       // which is how a slot says what is in it without needing a name of its own.
-      b.innerHTML = `<span class="n">LOADOUT ${i + 1}</span>`
-        + `<span class="s">${preset ? preset.name : 'CUSTOM'}</span>`;
+      // Same hierarchy as the armoury: the kit's name leads, the slot number is
+      // just its address.
+      b.innerHTML = `<span class="n">${preset ? preset.name : 'CUSTOM'}</span>`
+        + `<span class="s">LOADOUT ${i + 1}</span>`;
       b.title = preset ? preset.desc : 'Edited loadout';
       b.onclick = () => {
         if (sess) selectSlot(sess, i);

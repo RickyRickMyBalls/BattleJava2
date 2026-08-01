@@ -268,18 +268,24 @@
        square stop reading as weapon tiles and start reading as columns. */
     .dp-kits {
       display: flex; flex-direction: column; justify-content: center; gap: 1px;
-      width: 148px; padding: 7px; border-right: 1px solid rgba(127,212,255,0.22);
+      flex: 0 0 156px; min-width: 0; padding: 7px;
+      border-right: 1px solid rgba(127,212,255,0.22);
     }
-    /* Two lines per entry: the slot's fixed name, and what is actually in it —
-       the preset it still matches, or CUSTOM once edited. A slot has no name of
-       its own, so the subtitle is how it says what it holds. */
+    /* Two lines per entry: what the slot HOLDS on top — the preset it still
+       matches, or CUSTOM once edited — with the slot number beneath it at
+       caption size. The kit is the thing you are choosing between; the number
+       is only its address. */
     .dp-kit {
       cursor: pointer; text-align: left; background: none; color: #7c96a8;
       border: 1px solid transparent; border-left: 2px solid transparent;
       padding: 2px 8px; line-height: 1.15;
       transition: color 0.12s, background 0.12s, border-color 0.12s;
     }
-    .dp-kit .n { display: block; font-size: 9.5px; letter-spacing: 2px; }
+    /* Same lock as the armoury column — see the note there. */
+    .dp-kit .n {
+      display: block; font-size: 9.5px; letter-spacing: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .dp-kit .s { display: block; font-size: 7px; letter-spacing: 1px; color: #55707f; }
     .dp-kit:hover { color: #dceaf5; background: rgba(127,212,255,0.06); }
     .dp-kit.sel {
@@ -710,9 +716,14 @@
        screen carries — this is where you edit one, that is where you pick one
        fast, and both have to say which slot you are on. Sized off the card
        height so the column reads as part of the row rather than an aside. */
+    /* Width is LOCKED. A flex item defaults to min-width:auto, so a long
+       unbreakable kit name pushed the column wider — QUARTERMASTER took it from
+       152 to 174 and shrank every card by 11px, which read as the whole row
+       jumping when you switched to Support. Sized to fit the longest name, with
+       min-width:0 and an ellipsis below so no future name can do it again. */
     .ar-kits {
       display: flex; flex-direction: column; justify-content: center; gap: 2px;
-      flex: 0 0 152px; padding-right: 26px;
+      flex: 0 0 176px; min-width: 0; padding-right: 26px;
       border-right: 1px solid rgba(255,255,255,0.10);
     }
     .ar-kit {
@@ -721,7 +732,10 @@
       padding: 5px 10px; line-height: 1.2;
       transition: color 0.12s, background 0.12s, border-color 0.12s;
     }
-    .ar-kit .n { display: block; font-size: 11px; letter-spacing: 2px; }
+    .ar-kit .n {
+      display: block; font-size: 11px; letter-spacing: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .ar-kit .s { display: block; font-size: 8px; letter-spacing: 1px; color: #55707f; }
     .ar-kit:hover { color: #dceaf5; background: rgba(127,212,255,0.06); }
     .ar-kit.sel {
