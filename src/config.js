@@ -221,6 +221,61 @@ export const CFG = {
     // already runs per bullet against every soldier — a second shape in that
     // path would be a second thing to keep honest.
     hitSpheres: [[0.35, 0.42], [0.85, 0.36]],
+
+    // When an AI squad leader decides to plant one. See Squad.updateBeacon.
+    //
+    // The whole rule turns on ONE measured quantity: how much of the walk a
+    // rally here would actually save. Bots respawn at whichever spawn is
+    // nearest the OBJECTIVE and walk in from there, so the saving is
+    //     d(nearest spawn -> objective) - d(leader -> objective)
+    // and a rally is worth planting exactly when that is large.
+    //
+    // "Near the objective" was the obvious rule and it is the wrong one.
+    // Sampled over a live match at 60 s, the median squad sat 251 m from its
+    // objective and only 74 m from a spawn — squads are nearly always in
+    // transit, so a proximity rule almost never fires, and when it does the
+    // squad is usually somewhere a spawn already covers.
+    ai: {
+      // Measured across 16 squads mid-match: median saving 6 m, max 112 m,
+      // with 4 squads over 80.
+      //
+      // 80 was the first value and it saturated: every squad on both sides had
+      // a rally within 30 s and never lost it. The instantaneous distribution
+      // badly understates how often the rule fires, and that is the lesson
+      // worth keeping — a squad is checked every 2.5 s, so it gets roughly 24
+      // chances a minute to catch a moment where it qualifies. "Rare at any
+      // instant" turns into "true of everyone, eventually". Any threshold rule
+      // sampled this way needs the same correction.
+      //
+      // So the threshold is high AND the count is capped below; neither alone
+      // was enough. Raise for rarer, more deliberate rallies.
+      minSaved: 120,
+      // Live rallies a side may hold. The real brake, and the same reasoning as
+      // CFG.structure.maxPerTeam: it makes the worst case knowable instead of a
+      // function of how the match went. It also keeps the enemy's rallies
+      // findable — eight of them is not a target, it is weather.
+      //
+      // Applied to the AI's decision rather than to placement, so bots holding
+      // every slot can never stop a player from planting theirs. A squad
+      // REPLACING its own beacon is not blocked: that is net-zero.
+      maxPerTeam: 3,
+      // Don't churn. An existing rally is replaced only once it has stopped
+      // earning its keep — the squad has moved on and it now saves less than
+      // this — rather than every time the leader finds a marginally better
+      // spot, which would have squads re-planting on every advance.
+      staleSaved: 30,
+      // Per squad, not per soldier: leadership moves when a leader goes down,
+      // and a cooldown carried on the man would reset with him.
+      cooldown: 60,
+      // After a refusal (almost always ENEMY TOO CLOSE — see `enemyClear`).
+      // Short, because a refused plant means a fight is happening right there,
+      // which is where the squad most wants a rally once it clears.
+      retry: 8,
+      // How often the rule is even evaluated. The test walks every soldier for
+      // the enemy-proximity check, so it is throttled rather than run per
+      // frame; a rally is a decision measured in tens of seconds anyway.
+      checkInterval: 2.5,
+    },
   },
 
   // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS

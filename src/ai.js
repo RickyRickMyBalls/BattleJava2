@@ -2,7 +2,7 @@
 // squads to sectors; soldiers do their own local combat (soldier.js).
 
 import * as THREE from 'three';
-import { CFG, TEAM } from './config.js';
+import { CFG, TEAM, BEACON } from './config.js';
 
 const SQUAD_NAMES_BLUE = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel'];
 const SQUAD_NAMES_RED = ['Zealot', 'Vanguard', 'Talon', 'Fury', 'Havoc', 'Wrath', 'Umbra', 'Sable'];
@@ -10,6 +10,8 @@ const SQUAD_NAMES_RED = ['Zealot', 'Vanguard', 'Talon', 'Fury', 'Havoc', 'Wrath'
 const FORMATION = [
   [0, 0], [-3, -2.5], [3, -2.5], [0, -5], [-5, -4.5], [5, -4.5], [0, -8],
 ];
+
+const A = CFG.beacon.ai;
 
 export class Squad {
   constructor(team, name) {
@@ -21,6 +23,11 @@ export class Squad {
     this.followPlayer = false;
     this.leader = null;      // see refreshLeader — a position, never a class
     this.beacon = null;      // live rally beacon, or null. structures.js owns it
+    // Both on the SQUAD rather than on the leader: leadership moves when a
+    // leader goes down, and a cooldown carried on the man would reset with him
+    // — a squad could re-plant every time it lost someone.
+    this.beaconCooldown = 0;
+    this.beaconTimer = Math.random() * CFG.beacon.ai.checkInterval; // stagger
   }
 
   addMember(soldier) {
@@ -77,6 +84,60 @@ export class Squad {
       m.waypoint.set(sector.x, sector.y, sector.z);
       m.hasWaypoint = true;
     }
+  }
+
+  // Should the leader plant a rally, and if so, do it. Squad-level rather than
+  // soldier-level on purpose: this is the one decision in the game that is
+  // about where the SQUAD comes back to, and no individual bot has the standing
+  // to make it.
+  //
+  // One quantity decides it — how much of the walk a rally here would save:
+  //     d(nearest spawn -> objective) - d(leader -> objective)
+  // because `game._respawnAI` sends a dead bot to the spawn nearest the
+  // OBJECTIVE and walks it in from there. When that number is large the squad
+  // is fighting somewhere its own reinforcements cannot reach quickly, which is
+  // the entire problem a rally exists to solve. See CFG.beacon.ai for why the
+  // obvious "plant when near the objective" rule was measured and discarded.
+  updateBeacon(dt, game) {
+    if (this.beaconCooldown > 0) this.beaconCooldown = Math.max(0, this.beaconCooldown - dt);
+    this.beaconTimer -= dt;
+    if (this.beaconTimer > 0) return;
+    this.beaconTimer = A.checkInterval;
+    if (this.beaconCooldown > 0) return;
+
+    const leader = this.leader;
+    // The player's own rally is the player's call. A bot planting one for the
+    // squad they are leading would spend the ability out from under them.
+    if (!leader || leader.isPlayer) return;
+    // A squad following the player has no objective of its own to measure
+    // against — the player IS the objective.
+    if (this.followPlayer && game.playerActive()) return;
+    const obj = this.objective;
+    if (!obj) return;
+
+    // The team's rally slots. Checked before the geometry because it is the
+    // cheaper question, and because a squad that already holds one is only ever
+    // replacing it — that is net-zero and must not be blocked by a full board.
+    if (!this.beacon && game.structures.count(this.team, 'beacon') >= A.maxPerTeam) return;
+
+    const spawnToObj = game.nearestSpawnDist(this.team, obj.x, obj.z);
+    const saved = spawnToObj - Math.hypot(leader.pos.x - obj.x, leader.pos.z - obj.z);
+    if (saved < A.minSaved) return;
+
+    // An existing rally is replaced only once it has stopped earning its keep,
+    // not whenever the leader could do marginally better — otherwise a squad
+    // re-plants on every advance and the beacon never means anything.
+    if (this.beacon) {
+      const held = spawnToObj - Math.hypot(this.beacon.pos.x - obj.x, this.beacon.pos.z - obj.z);
+      if (held >= A.staleSaved) return;
+    }
+
+    // `place` owns legality — ground, overlap, and the enemy-proximity rule
+    // that stops a rally going down in the middle of a firefight. A refusal is
+    // a short retry rather than a full cooldown, because "enemies too close" is
+    // a temporary fact about a place the squad still wants to hold.
+    const made = game.structures.place(leader, BEACON);
+    this.beaconCooldown = made ? A.cooldown : A.retry;
   }
 
   // Alpha squad escorts the player when they're alive.

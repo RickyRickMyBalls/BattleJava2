@@ -365,6 +365,7 @@ export class Game {
       t.brain.update(dt);
       for (const sq of t.squads) {
         sq.refreshLeader();
+        sq.updateBeacon(dt, this);
         sq.updateFollow(followPos);
       }
     }
@@ -405,6 +406,31 @@ export class Game {
     return best.owner !== this.playerTeam ? `CAPTURE ${best.id}` : best.contested ? `DEFEND ${best.id}` : `HOLD ${best.id}`;
   }
 
+  // Everywhere a soldier of this team can come back WITHOUT a rally: HQ, plus
+  // any sector they hold uncontested. Shared, because the squad beacon rule in
+  // ai.js measures a rally's worth against exactly this list — if the two ever
+  // disagreed, squads would plant rallies to shorten walks they were not
+  // actually making.
+  spawnOptionsFor(team) {
+    const opts = [{ x: this.world.hqDefs[team].x, z: this.world.hqDefs[team].z }];
+    for (const sec of this.world.sectors) {
+      if (sec.owner === team && !sec.contested) opts.push(sec);
+    }
+    return opts;
+  }
+
+  // Distance from a point to the nearest of those. The squad beacon rule reads
+  // this against the OBJECTIVE, not against the leader: a dead bot respawns at
+  // whichever spawn is closest to where the squad is going.
+  nearestSpawnDist(team, x, z) {
+    let best = Infinity;
+    for (const o of this.spawnOptionsFor(team)) {
+      const d = Math.hypot(o.x - x, o.z - z);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
   _respawnAI(s) {
     // The squad's rally outranks every sector, and outranks them absolutely
     // rather than by distance. That IS the ability: a leader planting one is
@@ -422,10 +448,7 @@ export class Game {
     }
 
     // Spawn at HQ or a safely-held sector nearest the squad objective
-    const options = [{ x: this.world.hqDefs[s.team].x, z: this.world.hqDefs[s.team].z }];
-    for (const sec of this.world.sectors) {
-      if (sec.owner === s.team && !sec.contested) options.push(sec);
-    }
+    const options = this.spawnOptionsFor(s.team);
     let pick = options[0];
     const obj = s.squad.objective;
     if (obj) {

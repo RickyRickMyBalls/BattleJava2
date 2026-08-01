@@ -1,8 +1,20 @@
 # Frontline Command — 32v32 Halo-themed combined-arms prototype
 
 Three.js (r170) + Vite. Player + 31 AI vs 32 AI, sector control, class loadouts,
-deploy-map hub. Design doc: `GAME_DESIGN_PLAN.md` (aspirational; build incrementally,
-owner approves each step — propose first when asked "give suggestion / read only").
+deploy-map hub.
+
+Design docs — all aspirational; build incrementally, owner approves each step
+(propose first when asked "give suggestion / read only"):
+
+- `GAME_DESIGN_PLAN.md` — the whole game. Parent doc.
+- `CLASS_AND_GADGET_PLAN.md` — what a soldier is and carries: classes, perks,
+  loadout slots, gadgets, construction, downed state.
+- `GAME_TYPE_PLAN.md` — what the match is: objectives, spawning, economy, victory.
+  Locks the Battlefield-chassis / Squad-structure call, and splits the modes into
+  two economies (Sector Control spends lives, Frontline accrues territory).
+
+Each carries **Locked / Working / Open / Long-term** labels per decision — check
+the label before treating anything in them as a requirement.
 
 ## Run / debug
 
