@@ -55,7 +55,10 @@
     }
     .sector-pip .fill { position: absolute; inset: 0; opacity: 0.55; transform-origin: left; }
     .sector-pip span { position: relative; }
-    #timeCtrl { display: flex; gap: 4px; margin-top: 2px; }
+    #timeCtrl {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 22px;
+      display: flex; gap: 4px;
+    }
     #timeCtrl button {
       pointer-events: auto; cursor: pointer; min-width: 34px; height: 22px;
       background: rgba(8,20,32,0.6); color: #9ab4c4; border: 1px solid var(--hud-cyan-dim);
@@ -145,26 +148,9 @@
     #visor .v-tickmark.full { opacity: 0; }
     #visor .v-tick { stroke: #06131b; stroke-width: 2px; opacity: 0.5; }
 
-    /* ---- Vitals ---- */
-    #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px; width: 340px; text-align: center; }
-    #shieldbar { height: 10px; background: #10202c; border: 1px solid var(--hud-cyan-dim); margin-bottom: 4px; }
-    #shieldbar > div { height: 100%; background: linear-gradient(90deg, #6ec6ff, #b7e6ff); width: 100%; transition: width 0.1s; }
-    #shieldbar.flash > div { background: #fff; }
-    #healthbar { height: 5px; background: #10202c; border: 1px solid var(--hud-cyan-dim); }
-    #healthbar > div { height: 100%; background: #ffb15e; width: 100%; transition: width 0.1s; }
-    /* Stamina is the only vital that is normally FULL, so it is the only one
-       that earns its space by disappearing: opacity goes to 0 at a full pool
-       (hud.setVitals) and the element keeps its height, so shield and health
-       never move under it. Thinner and dimmer than health on purpose — third in
-       the hierarchy, and it must not read as a damage bar. Green, because both
-       other slots are taken and an amber-on-amber pair would be misread in
-       peripheral vision, which is the only way this bar is ever seen. */
-    #stambar { height: 3px; background: #10202c; border: 1px solid var(--hud-cyan-dim);
-               margin-top: 4px; opacity: 0; transition: opacity 0.25s; }
-    #stambar > div { height: 100%; background: #8fe6b0; width: 100%; transition: width 0.1s; }
-    /* Ran dry: the bar is refilling but Shift does nothing until resprintAt, and
-       without a distinct state that reads as a bug rather than a rule. */
-    #stambar.spent > div { background: #e6a05e; }
+    /* Shield, health and stamina used to live in a #vitals stack down here. The
+       visor carries all three now, and two readouts of one number is one too
+       many — the bottom centre is the sim controls' space instead. */
 
     #ammo { position: absolute; right: 26px; bottom: 26px; text-align: right; }
     #ammo .mag { font-size: 34px; font-weight: 600; color: var(--hud-cyan); }
@@ -1222,13 +1208,15 @@
         <span class="t red" id="ticketsRed">400</span>
       </div>
       <div id="sectors"></div>
-      <div id="timeCtrl">
-        <button id="tcPause" title="Pause (P)">❚❚</button>
-        <button data-speed="1" class="active" title="Normal speed (1)">1x</button>
-        <button data-speed="2" title="2x speed (2)">2x</button>
-        <button data-speed="4" title="4x speed (3)">4x</button>
-        <button data-speed="8" title="8x speed (4)">8x</button>
-      </div>
+    </div>
+    <!-- Sim controls, not match state — hence out of the topbar and down at the
+         bottom centre, in the space the vitals stack used to hold. -->
+    <div id="timeCtrl">
+      <button id="tcPause" title="Pause (P)">❚❚</button>
+      <button data-speed="1" class="active" title="Normal speed (1)">1x</button>
+      <button data-speed="2" title="2x speed (2)">2x</button>
+      <button data-speed="4" title="4x speed (3)">4x</button>
+      <button data-speed="8" title="8x speed (4)">8x</button>
     </div>
     <div id="modeTag">FREECAM — F TO EXIT</div>
 
@@ -1244,12 +1232,6 @@
     <div id="squad" class="panel">
       <div class="lbl" id="squadLabel">ALPHA SQUAD</div>
       <div id="squadList"></div>
-    </div>
-
-    <div id="vitals">
-      <div id="shieldbar"><div></div></div>
-      <div id="healthbar"><div></div></div>
-      <div id="stambar"><div></div></div>
     </div>
 
     <div id="ammo">

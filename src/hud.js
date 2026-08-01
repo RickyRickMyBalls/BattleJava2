@@ -22,9 +22,6 @@ export class Hud {
       orderText: document.getElementById('orderText'),
       msg: document.getElementById('msg'),
       squadList: document.getElementById('squadList'),
-      shieldbar: document.getElementById('shieldbar'),
-      healthbar: document.getElementById('healthbar'),
-      stambar: document.getElementById('stambar'),
       ammoMag: document.getElementById('ammoMag'),
       ammoRes: document.getElementById('ammoRes'),
       reloadingTxt: document.getElementById('reloadingTxt'),
@@ -37,7 +34,6 @@ export class Hud {
       promptText: document.getElementById('promptText'),
       promptBar: document.getElementById('promptBar'),
       crosshair: document.getElementById('crosshair'),
-      vitals: document.getElementById('vitals'),
       ammo: document.getElementById('ammo'),
       squad: document.getElementById('squad'),
       order: document.getElementById('order'),
@@ -125,26 +121,19 @@ export class Hud {
     }).join('');
   }
 
+  // All three vitals are the visor's now — the DOM stack that used to sit at
+  // the bottom centre is gone, because two readouts of one number is one too
+  // many. These stay as the seam the rest of the game pushes through.
   setVitals(shield, health, maxShield = CFG.soldier.shield) {
-    this.el.shieldbar.firstElementChild.style.width = `${Math.max(0, (shield / maxShield) * 100)}%`;
-    this.el.healthbar.firstElementChild.style.width = `${Math.max(0, (health / CFG.soldier.health) * 100)}%`;
     this.visor.setVitals(shield, health, maxShield, CFG.soldier.health);
   }
 
-  // Stamina gets its own setter rather than more arguments on setVitals: it is
-  // the one vital that is usually full, and being full is the case where it
-  // must not be on screen at all. Passing `unlimited` (MJOLNIR) hides it
-  // permanently — a bar that can never move is noise, not information.
+  // Stamina keeps its own setter rather than more arguments on setVitals: it is
+  // the one vital that is usually full, and full is the case where it must not
+  // be on screen at all. `unlimited` (MJOLNIR) silences it permanently — a bar
+  // that can never move is noise, not information.
   setStamina(stamina, maxStamina, unlimited, spent) {
-    // Ahead of the DOM bar's early-outs below, which are about that bar only.
     this.visor.setStamina(stamina, maxStamina, unlimited, spent);
-    const el = this.el.stambar;
-    if (!el) return;
-    const full = unlimited || !isFinite(maxStamina) || stamina >= maxStamina - 0.01;
-    el.style.opacity = full ? 0 : 1;
-    el.classList.toggle('spent', !!spent);
-    if (full) return;   // width under a hidden bar is nobody's business
-    el.firstElementChild.style.width = `${Math.max(0, (stamina / maxStamina) * 100)}%`;
   }
 
   showHitmarker(kill) {
@@ -377,7 +366,6 @@ export class Hud {
     const set = (el, on) => { if (el) el.style.display = on ? '' : 'none'; };
     set(this.el.crosshair, armed);
     set(this.el.visor, armed);
-    set(this.el.vitals, armed);
     set(this.el.ammo, armed);
     set(this.el.squad, fps);
     set(this.el.order, fps);
@@ -385,6 +373,10 @@ export class Hud {
     set(this.el.casualties, fps);
     set(this.el.hint, fps);
     set(this.el.topbar, fps); // deploy screen has its own header
+    // Followed the topbar out of map mode when it lived inside it, and still
+    // should: there is no match clock to scale on the deploy screen, and the
+    // lobby arena's togglePause/cycleTimeScale are deliberate no-ops.
+    set(this.el.timeCtrl, fps);
   }
 
   showEnd(win, stats) {

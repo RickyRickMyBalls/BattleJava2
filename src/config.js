@@ -216,9 +216,10 @@ export const CFG = {
       shield: [[0, '#d4f7ff'], [0.28, '#83d9f7'], [1, '#2b87ba']],
       health: [[0, '#6fc8e7'], [0.48, '#276e9d'], [1, '#102f50']],
       ammo: [[0, '#d8f8ff'], [0.3, '#7cd9f6'], [1, '#247eac']],
-      // Green and amber, carried over from #stambar: both other slots are cyan,
-      // and the sprint pool must not read as a damage bar in the corner of the
-      // eye, which is the only way it is ever read.
+      // Green and amber, carried over from the DOM stamina bar this replaced:
+      // both other slots are cyan, and the sprint pool must not read as a
+      // damage bar in the corner of the eye, which is the only way it is ever
+      // read.
       boost: [[0, '#c8f5da'], [0.35, '#8fe6b0'], [1, '#2f7f56']],
       boostSpent: [[0, '#ffd9ae'], [0.35, '#e6a05e'], [1, '#8a4f1d']],
     },

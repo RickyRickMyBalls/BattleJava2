@@ -262,7 +262,9 @@ export class Visor {
   //              reads as breakage. The outline is frame; the fill is the news.
   //   limitless  MJOLNIR. Flat and dim at full rather than an empty socket:
   //              "always there", not "nothing there".
-  //   spent      the exhaust latch is closed. Amber, same as #stambar.
+  //   spent      the exhaust latch is closed: the pool is refilling but Shift
+  //              does nothing until resprintAt, and without a distinct state
+  //              that reads as a bug rather than a rule. Amber.
   setStamina(stamina, maxStamina, unlimited, spent) {
     if (!this._init()) return;
     const m = this.m.boost;
