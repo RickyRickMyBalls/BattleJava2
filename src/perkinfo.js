@@ -11,7 +11,14 @@ import { CLASSES, PERKS, GADGETS, CFG } from './config.js';
 // Human labels and formatting for PERKS[].stats. A raw `staminaMax: 1.5` means
 // nothing on screen.
 const STAT_LABELS = {
-  shield: { label: 'SHIELD', fmt: (v) => `${v}`, base: () => `${CFG.soldier.shield}` },
+  // The baseline is not a smaller shield, it is a different KIND of plate — so
+  // the comparison row says what everyone else carries rather than a number that
+  // would imply marines have 50 shield. This row IS the Spartan's durability
+  // story: energy that comes back against plating that does not.
+  shield: {
+    label: 'SHIELD', fmt: (v) => `${v}`,
+    base: () => `${CFG.soldier.armor} ARMOUR`,
+  },
   jumpHeight: { label: 'JUMP HEIGHT', fmt: (v) => `${v} m`, base: () => `${CFG.soldier.jumpHeight} m` },
   staminaMax: { label: 'STAMINA POOL', fmt: (v) => (v === Infinity ? 'UNLIMITED' : `×${v}`) },
   staminaRegen: { label: 'STAMINA RECOVERY', fmt: (v) => `×${v}` },

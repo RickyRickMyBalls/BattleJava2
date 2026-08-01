@@ -110,9 +110,15 @@ export class Soldier {
     this.vel = new THREE.Vector3();
     this.yaw = 0;
     this.alive = true;
-    this.shield = this.maxShield;
+    this.plate = this.plateMax;
     this.health = S.health;
-    this.shieldTimer = 0;
+    // Seconds since this soldier was last hit. Named for what it MEANS rather
+    // than for the one thing it used to drive: it gates shield regen, but three
+    // AI behaviours read it as "am I being shot at" — biofoam, answering a
+    // casualty, and deciding to sprint. It has to keep ticking for marines,
+    // whose plate never regenerates and who would otherwise stop injecting and
+    // stop sprinting for the rest of the match.
+    this.calmTimer = 0;
     this.deadTimer = 0;
     this.removeBodyTimer = 0;
 
@@ -136,6 +142,11 @@ export class Soldier {
     this.reviving = false;
     this.supplyTarget = null;  // AI: the crate this soldier is walking to
     this.drawTimer = 0;        // AI: progress on the draw it is standing over
+    this.repairTarget = null;  // AI: the teammate this soldier is walking to weld
+    // True on any frame this soldier is welding someone. Purely a read-out for
+    // now — nothing animates off it yet, but it is the hook a work pose hangs on
+    // and it costs nothing to write while the state is being computed anyway.
+    this.repairing = false;
 
     this.waypoint = new THREE.Vector3();
     this.hasWaypoint = false;
@@ -187,7 +198,18 @@ export class Soldier {
     // Spartan's 70 / 3 m were perks in everything but the name, and giving them
     // a home is what stops every future class trait accreting as another key.
     const perkStats = (classPerk(cls) && classPerk(cls).stats) || {};
-    this.maxShield = perkStats.shield || S.shield;
+    // The plate: one pool in front of health, and the perk decides its KIND.
+    // A perk granting `shield` makes it energy that comes back on its own;
+    // everyone else carries armour, which does not. Read off the perk rather
+    // than off the class name so a future shielded Elite is a perk entry and
+    // not a branch — see CFG.soldier.armor.
+    this.plateKind = perkStats.shield ? 'shield' : 'armor';
+    this.plateMax = perkStats.shield || S.armor;
+    // How fast THIS soldier repairs OTHERS — the worker's multiplier, not the
+    // patient's. The Engineer's ×2 is the whole of "class-boosted"; resolving it
+    // here means neither the player's beam nor a bot's errand has to reach into
+    // a perk to find it.
+    this.repairRate = perkStats.repairRate || 1;
     // How high this soldier jumps, in metres. Everything else about the jump —
     // takeoff speed, hang time, how fast the jump clip plays — is derived from
     // this one number, so it is the only thing to tune. MJOLNIR clears 3 m.
@@ -458,6 +480,14 @@ export class Soldier {
     // data the simulation has nothing to do with yet.
     this.crateKey = (this.gadgetKeys || []).find((k) => GADGETS[k] && GADGETS[k].crate) || null;
     this.crateCharges = this.crateKey ? (GADGETS[this.crateKey].charges || 0) : 0;
+    // Does this soldier carry a repair tool? Two ways to, and the perk GRANT is
+    // the one that matters most — the Engineer's is free and therefore never
+    // appears in `gadgetKeys`, so a slot-only check would leave the class the
+    // tool was designed around unable to use it. Same rule the player controller
+    // follows in `_heldToolKey`.
+    const perk = classPerk(this.cls);
+    this.hasRepairTool = [...((perk && perk.grants) || []), ...this.gadgetKeys]
+      .some((k) => GADGETS[k] && GADGETS[k].kind === 'tool' && GADGETS[k].held === 'repairtool');
     const gdef = GRENADES[grenadeKey];
     this.grenade = gdef ? { def: gdef, count: gdef.count } : null;
     // A grenade with no `ai` block is one the AI never throws — that is how an
@@ -478,10 +508,15 @@ export class Soldier {
     this.reviveTarget = null;
     this.reviving = false;
     this.supplyTarget = null;
+    this.repairTarget = null;
     this.drawTimer = 0;
     this.callTimer = 0;
     this._called = false;
-    this.shield = this.maxShield;
+    // A full plate every spawn, armour included. That makes armour a PER-LIFE
+    // resource that decays across that life rather than a per-match one — dying
+    // is already the expensive way to get your plating back, and a soldier who
+    // respawned stripped would have no way to start a fight at all.
+    this.plate = this.plateMax;
     this.health = S.health;
     this.stamina = this.maxStamina;
     this.staminaTimer = 0;
@@ -549,11 +584,16 @@ export class Soldier {
     // kills. Going down inside an enemy push should almost never survive, and
     // this is what makes that true without a separate execute verb.
     if (this.downed) { this.die(attacker); return true; }
-    this.shieldTimer = 0;
+    this.calmTimer = 0;
     let dmg = amount * (isHead ? CFG.headshotMult : 1);
-    if (this.shield > 0) {
-      const absorbed = Math.min(this.shield, dmg);
-      this.shield -= absorbed;
+    // The plate absorbs first and health takes the remainder — unchanged from
+    // when this pool was always a shield. Whether what just came off ever grows
+    // back is decided in `update`, not here: the damage rules do not care which
+    // kind of plate they just ate through, which is the whole reason one pool
+    // serves both classes.
+    if (this.plate > 0) {
+      const absorbed = Math.min(this.plate, dmg);
+      this.plate -= absorbed;
       dmg -= absorbed;
     }
     if (dmg > 0) this.health -= dmg;
@@ -584,11 +624,13 @@ export class Soldier {
     this.reviveTarget = null;
     this.reviving = false;
     this.supplyTarget = null;
+    this.repairTarget = null;
+    this.repairing = false;
     this.drawTimer = 0;
     this.callTimer = 0;
     this._called = false;
     this.health = 0;
-    this.shield = 0;
+    this.plate = 0;
     this.target = null;
     this.deadTimer = 0;
     this.removeBodyTimer = 0;
@@ -610,6 +652,8 @@ export class Soldier {
     this.reviveTarget = null;
     this.reviving = false;   // or the corpse keeps both guns stowed on its back
     this.supplyTarget = null;
+    this.repairTarget = null;
+    this.repairing = false;
     this.drawTimer = 0;
     this.callTimer = 0;
     this._called = false;
@@ -651,8 +695,13 @@ export class Soldier {
     this.callTimer = 0;
     this._called = false;
     this.health = S.health * D.reviveHealth;
-    this.shield = 0;
-    this.shieldTimer = 0;
+    // Up with nothing on. This was always the rule, but it used to cost a
+    // Spartan four calm seconds and now it costs a marine an Engineer: standing
+    // back up puts you at half health with no plate, and the only way off that
+    // floor is someone welding you. It is the strongest argument the armour
+    // layer makes for keeping an Engineer near the people doing the dying.
+    this.plate = 0;
+    this.calmTimer = 0;
     // Up on the same fraction as health, on purpose: `reviveHealth` is already
     // the number that says how much of you came back, and reusing it means the
     // strength of a pickup stays ONE knob. Sprinting straight out of a rescue
@@ -683,16 +732,21 @@ export class Soldier {
       return;
     }
 
-    // Shield regen
-    this.shieldTimer += dt;
-    if (this.shieldTimer > S.shieldRegenDelay && this.shield < this.maxShield) {
-      this.shield = Math.min(this.maxShield, this.shield + S.shieldRegenRate * dt);
+    // The calm clock runs for everyone; only a SHIELD spends it on regrowth.
+    // Armour is the one difference between the two plate kinds, and this is the
+    // line that makes it: a marine who has been shot stays stripped until an
+    // Engineer welds them, which is the entire attrition model in one branch.
+    this.calmTimer += dt;
+    if (this.plateKind === 'shield'
+      && this.calmTimer > S.shieldRegenDelay && this.plate < this.plateMax) {
+      this.plate = Math.min(this.plateMax, this.plate + S.shieldRegenRate * dt);
     }
 
     if (!this.isPlayer) {
       this._updateBiofoam(dt);
       this._think(dt);
       this._updateRevive(dt);
+      this._updateRepair(dt);
       this._updateSupply(dt);
       this._move(dt);
       this._fire(dt);
@@ -780,12 +834,37 @@ export class Soldier {
     return best;
   }
 
+  // Put armour back on. THE single entry point — the player's beam and a bot's
+  // errand both land here, so a bot can never get a better or worse deal than a
+  // human standing in the same place, the same way `supply.draw` is the one
+  // place a crate is spent.
+  //
+  // `worker` supplies the rate multiplier rather than this soldier, because the
+  // Engineer's ×2 belongs to whoever is holding the tool, not to whoever is
+  // being patched. Returns how much actually went on, so the caller can tell a
+  // working beam from one pointed at somebody already whole.
+  applyRepair(worker, dt) {
+    if (!this.alive || this.plateKind !== 'armor') return 0;
+    if (this.plate >= this.plateMax) return 0;
+    const rate = WEAPONS.repairtool.tool.armorRate * ((worker && worker.repairRate) || 1);
+    const step = Math.min(this.plateMax - this.plate, rate * dt);
+    this.plate += step;
+    return step;
+  }
+
+  // Can this soldier be welded at all? Shields are not the tool's business —
+  // they come back on their own, and a Spartan standing in a repair beam should
+  // read as a no-op rather than as a slow shield charger.
+  get needsRepair() {
+    return this.alive && this.plateKind === 'armor' && this.plate < this.plateMax;
+  }
+
   // AI biofoam. Without this the gadget effectively does not exist in the sim:
   // 31 of the 32 Assaults on a side are AI, so a player-only heal would not
   // move a single ticket.
   //
   // The AI uses it the way a player should — out of contact, hurt, and paying
-  // the lockout. `shieldTimer` doubles as time-since-damage (it is what gates
+  // the lockout. `calmTimer` doubles as time-since-damage (it is what gates
   // shield regen), so it is already the "am I being shot at" signal.
   _updateBiofoam(dt) {
     const g = this.biofoam;
@@ -805,7 +884,7 @@ export class Soldier {
     // thresholds are on the gadget def — see the note there on why the calm
     // window is its own number and not CFG.soldier.shieldRegenDelay.
     if (this.health > S.health * (g.def.aiUseBelow ?? 0.7)) return;
-    if (this.shieldTimer < (g.def.aiCalmTime ?? 2.0)) return;
+    if (this.calmTimer < (g.def.aiCalmTime ?? 2.0)) return;
     g.charges--;
     g.useTimer = g.def.useTime;
     // Committed: the injection costs the same tempo it costs a player.
@@ -833,10 +912,10 @@ export class Soldier {
 
     // Errands, decided on the same tick as targeting because they are the same
     // decision: fight, or go do something useful. Priority is fight > pick
-    // someone up > resupply. `shieldTimer` doubles as time-since-damage — the
+    // someone up > resupply. `calmTimer` doubles as time-since-damage — the
     // signal `_updateBiofoam` already trusts to mean "not being shot at".
     const charges = this.biofoam ? this.biofoam.charges : 0;
-    const calm = this.shieldTimer >= BIOFOAM.aiReviveCalm;
+    const calm = this.calmTimer >= BIOFOAM.aiReviveCalm;
 
     if (D.enabled && !this.target && calm && charges > 0) {
       if (!this.reviveTarget || !this.reviveTarget.downed) {
@@ -846,12 +925,28 @@ export class Soldier {
       this.reviveTarget = null;
     }
 
+    // Welding a teammate sits between the two: a bleeding casualty outranks a
+    // stripped plate, and both outrank going to find a crate. The ordering is
+    // the same judgement the plan makes about the interact key — a body will not
+    // be there in ten seconds, a dented marine will.
+    // Its own calm threshold rather than biofoam's: patching someone else is a
+    // longer commitment than injecting yourself, so it asks for a longer lull.
+    const R = WEAPONS.repairtool.tool.ai;
+    if (this.hasRepairTool && !this.target && this.calmTimer >= R.calm) {
+      if (!this.repairTarget || !this.repairTarget.needsRepair) {
+        this.repairTarget = this._findRepairTarget();
+      }
+    } else {
+      this.repairTarget = null;
+    }
+
     // Resupply is what a bot does when it has nothing left to spend, which is
     // why this is NOT chained onto the check above: an empty injector is
     // exactly the state casualty recovery rejects, so sharing that early-out
     // would mean a bot could only go looking for a crate while it still had
     // charges — the one time it does not need one.
-    if (!this.target && !this.reviveTarget && this.biofoam && charges <= CFG.crate.aiSeekBelow) {
+    if (!this.target && !this.reviveTarget && !this.repairTarget
+      && this.biofoam && charges <= CFG.crate.aiSeekBelow) {
       if (!this.supplyTarget || this.supplyTarget.pool <= 0) {
         this.supplyTarget = this._findCrate();
       }
@@ -893,6 +988,48 @@ export class Soldier {
     if (live >= C.aiTeamCap) return;
     this.crateCharges--;
     sup.place(this, GADGETS[this.crateKey]);
+  }
+
+  // Nearest teammate worth walking to with a welder out.
+  //
+  // Two filters do the real work. `below` keeps a bot from crossing thirty
+  // metres to top somebody up by four points — the errand has to be worth
+  // leaving the waypoint for. `targetCalm` keeps it from running to somebody who
+  // is currently being shot: welding a man under fire is how you get two
+  // casualties instead of one, and the bot has no way to win that fight while
+  // holding a torch.
+  _findRepairTarget() {
+    const R = WEAPONS.repairtool.tool.ai;
+    const mates = this.game.teams[this.team].soldiers;
+    let best = null, bestD = R.seekRange;
+    for (const m of mates) {
+      if (m === this || !m.needsRepair) continue;
+      if (m.plate > m.plateMax * R.below) continue;
+      if (m.calmTimer < R.targetCalm) continue;
+      const d = this.pos.distanceTo(m.pos);
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    return best;
+  }
+
+  // Stand next to them and hold the beam. No charge to spend and no lockout to
+  // pay — the tool's cost is the time and the fact that your rifle is away, and
+  // both of those are already true just by being here.
+  _updateRepair(dt) {
+    const t = this.repairTarget;
+    this.repairing = false;
+    if (!t) return;
+    if (!t.needsRepair || this.target) { this.repairTarget = null; return; }
+    const R = WEAPONS.repairtool.tool.ai;
+    if (this.pos.distanceTo(t.pos) > R.reach) return;
+    // Face the work, so a welding pair reads as two soldiers doing something
+    // together rather than two soldiers standing near each other.
+    const dx = t.pos.x - this.pos.x, dz = t.pos.z - this.pos.z;
+    if (Math.hypot(dx, dz) > 1e-3) {
+      this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
+    }
+    this.repairing = t.applyRepair(this, dt) > 0;
+    if (!t.needsRepair) this.repairTarget = null;   // done — back to the war
   }
 
   // Nearest friendly medical crate with something left in it. Ammunition crates
@@ -1000,6 +1137,19 @@ export class Soldier {
         travelDist = dist;
       }
       if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
+    } else if (this.repairTarget) {
+      // Below casualties, above a crate run. Walk, do not run: the errand is
+      // only taken during a lull, and a soldier sprinting across open ground
+      // with a welder out is not the picture — it is also what keeps a repair
+      // pair from outrunning the squad it belongs to.
+      const t = this.repairTarget;
+      const dx = t.pos.x - this.pos.x, dz = t.pos.z - this.pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > WEAPONS.repairtool.tool.ai.reach * 0.7) {
+        desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
+        travelDist = dist;
+      }
+      if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
     } else if (this.supplyTarget) {
       // Below casualties, above the squad's waypoint. A bot with an empty
       // injector is worth less to the squad at the objective than it is a few
@@ -1033,13 +1183,13 @@ export class Soldier {
     // Sprint. A tier above the travel run, on the same pool and the same rules
     // the player spends — and gated on signals the AI already trusts elsewhere:
     // no target (fighting is not travel), nobody shooting at us for `calm`
-    // seconds (`takeDamage` zeroes shieldTimer), and far enough out that the
+    // seconds (`takeDamage` zeroes calmTimer), and far enough out that the
     // boost is worth spending. Applied BEFORE separation, because separation is
     // a shove away from a squadmate, not a speed you were trying to travel at.
     //
     // `stepStamina` runs every frame regardless — it owns regen as well as
     // drain, so skipping the call on a walking frame would strand the pool.
-    const wantSprint = !engaging && travelDist > ST.ai.minDist && this.shieldTimer >= ST.ai.calm;
+    const wantSprint = !engaging && travelDist > ST.ai.minDist && this.calmTimer >= ST.ai.calm;
     const mult = this.stepStamina(dt, wantSprint, desired.lengthSq() > 0.16, S.sprintMult);
     if (wantSprint) desired.multiplyScalar(mult);
 

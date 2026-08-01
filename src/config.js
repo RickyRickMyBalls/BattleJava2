@@ -28,8 +28,30 @@ export const CFG = {
   gravity: 18,           // world constant: anything that falls, and every jump
 
   soldier: {
-    shield: 45,
-    health: 55,
+    // THE PLATE LAYER. Every soldier carries one pool in front of health, and
+    // the class decides which KIND — they are the same mechanic and differ in
+    // exactly one property, whether it comes back on its own:
+    //
+    //   armor   marines. Never regenerates. A repair tool is the only way back.
+    //   shield  Spartans, via MJOLNIR. Regenerates after a lull, as it always did.
+    //
+    // Mutually exclusive on purpose, so there is ONE pool rather than two with
+    // one of them permanently zero on four classes out of five. See
+    // soldier.plateKind — nothing branches on the class, only on the kind.
+    armor: 50,
+    health: 100,
+    // A stripped marine sits at exactly 100 EHP, which is what the whole weapon
+    // table was tuned against back when it was 45 shield + 55 health. That is
+    // the point of these numbers: the WORST case of the new model is the only
+    // case of the old one, so no weapon in the armoury ever describes a body
+    // weaker than one already tuned for, and armour is pure upside on top.
+    //
+    //   marine   150 fresh -> 100 stripped
+    //   spartan  170, always (70 shield + this health)
+    //
+    // Health is universal so the Spartan stays the most durable thing on the
+    // field. A marine tougher than a Spartan on the opening burst would fight
+    // the fiction hard; what marks the Spartan out is that it never degrades.
     shieldRegenDelay: 4.5,
     shieldRegenRate: 12,
     runSpeed: 6.2,
@@ -214,6 +236,12 @@ export const CFG = {
     // own values rather than a guess at them.
     fill: {
       shield: [[0, '#d4f7ff'], [0.28, '#83d9f7'], [1, '#2b87ba']],
+      // Armour wears the same meter as the shield and must not be mistaken for
+      // it — steel rather than energy, because one of them comes back on its own
+      // and the other needs somebody with a welder. Deliberately not the amber
+      // of `boostSpent`: two warm bars on one visor would read as the same
+      // warning twice.
+      armor: [[0, '#ffffff'], [0.3, '#cfd8de'], [1, '#5b6a75']],
       health: [[0, '#6fc8e7'], [0.48, '#276e9d'], [1, '#102f50']],
       ammo: [[0, '#d8f8ff'], [0.3, '#7cd9f6'], [1, '#247eac']],
       // Green and amber, carried over from the DOM stamina bar this replaced:
@@ -1274,6 +1302,32 @@ export const WEAPONS = {
       // How far the beam reaches. Deliberately short: the tool's cost is that
       // using it puts you next to the thing you are working on.
       range: 6,
+      // Armour restored per second, before the Engineer's ×2 from
+      // PERKS.combatEngineer.stats.repairRate — the perk stat was declared long
+      // before anything read it, and this is what reads it. A full 50-point
+      // plate is 4 s for anyone and 2 s for an Engineer, which is the plan's
+      // "universal action, class-boosted" without inventing a second constant.
+      //
+      // It lands against the heat ceiling for free: 4.5 s of continuous beam
+      // means an Engineer re-plates TWO soldiers per heat cycle and everyone
+      // else barely manages one. That gap was not designed, it is just what the
+      // two numbers do together — and it is the size of gap the plan asks for.
+      armorRate: 12.5,
+      // Bot repair. Without this the whole layer is player-only theatre: 63 of
+      // the 64 combatants are bots, and armour that never comes back on a bot
+      // means bot marines live at 100 EHP for most of a match while the player
+      // lives at 150. That is not the design being tested, it is bots being
+      // unable to weld.
+      //
+      // Shaped like BIOFOAM's ai block deliberately — same signals, same
+      // thresholds, so the two errands stay comparable.
+      ai: {
+        seekRange: 30,   // metres a bot will walk to patch someone up
+        reach: 4.5,      // close enough to work — inside `range`, with slack
+        below: 0.6,      // only worth crossing ground for a plate this stripped
+        calm: 2.5,       // seconds since the WORKER was last hit
+        targetCalm: 1.5, // ...and since the PATIENT was, or you are welding bait
+      },
       // Fuel is unlimited and HEAT is the limiter instead, which is the right
       // shape for something that does three jobs — a charge pool would have to
       // be split three ways and re-tuned every time a job was added.
@@ -1407,7 +1461,12 @@ export const ADS_DEFAULT = { pos: [0.15, -0.22, -0.555], rot: [0, 0, 0], scale: 
 export const BIOFOAM = {
   name: 'BIOFOAM',
   svg: '<rect x="9" y="7" width="6" height="10" rx="1"/><path d="M12 3v4M9.5 5h5M12 17v4"/>',
-  heal: 55,           // full health bar — revisit if armour carves the 100 EHP budget
+  // Follows CFG.soldier.health rather than restating it. It was a bare 55 with a
+  // note to revisit when armour landed; armour landed, health doubled, and a
+  // hardcoded 55 would have quietly become a half-heal without anything saying
+  // so. Biofoam restores HEALTH only — the plate is the repair tool's job, and
+  // that split is what gives the two classes different work.
+  heal: CFG.soldier.health,
   healRate: 22,       // HP per second once the injection lands
   useTime: 1.2,       // locked out of firing for this long
   cooldown: 1.0,      // between charges

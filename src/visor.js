@@ -232,8 +232,13 @@ export class Visor {
 
   // Gated on change like the rest of the HUD: this runs every frame, and the
   // pip count moves a handful of times a life.
-  setVitals(shield, health, maxShield, maxHealth) {
+  setVitals(plate, health, plateMax, maxHealth, kind = 'armor') {
     if (!this._init()) return;
+    // The plate meter is one piece of art wearing two palettes. Cyan energy for
+    // a shield, steel for armour — and the difference has to be visible at a
+    // glance, because it is the difference between a bar that will come back on
+    // its own and one that needs an Engineer.
+    this._setFill(this.m.shield, kind === 'shield' ? 'shield' : 'armor');
 
     // Ceil, with a floor of one while anything is left: a last sliver of health
     // that reads as an empty bar is a lie about whether you are still standing.
@@ -244,7 +249,17 @@ export class Visor {
       this.cells.forEach((c, i) => c.classList.toggle('on', i < lit));
     }
 
-    this._wipe(this.m.shield, shield / maxShield);
+    this._wipe(this.m.shield, plate / plateMax);
+  }
+
+  // Repoint a meter's filled copies at a different gradient. Gated on change
+  // like everything else here — this is called every frame and the kind changes
+  // at most once a life.
+  _setFill(m, key) {
+    if (!m || m.fillKey === key) return;
+    m.fillKey = key;
+    const url = `url(#${V.idPrefix}fill-${key})`;
+    for (const path of m.g.children) path.setAttribute('fill', url);
   }
 
   // `capacity` is the magazine size. Without it there is no fraction to draw,

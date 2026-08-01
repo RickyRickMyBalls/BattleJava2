@@ -141,6 +141,7 @@ export class Player {
     // you made before you drew it.
     this.lastGun = 0;
     this.beam = null;       // repair beam, built on first use — see _updateBeam
+    this.repairTarget = null; // who the beam is currently working on, if anyone
     this.switchTimer = 0;
     this.fireTimer = 0;
     this.firing = false;
@@ -1415,9 +1416,14 @@ export class Player {
   // added, and would make the tool's usefulness a question of inventory rather
   // than of where you are standing.
   //
-  // There is no target system here yet. This runs the heat rules and draws the
-  // beam; what the beam DOES lands at the single site below where `working` is
-  // true, once armour, vehicles or blueprints exist to receive it.
+  // Armour is the first of the three jobs to have something to receive it.
+  // Vehicles and blueprints hook in at the same site, on the same rule: find
+  // what the beam is on, ask whether it wants work, apply it.
+  //
+  // Heat is charged for HOLDING the trigger, not for landing on a target. A tool
+  // that only warmed up when it was being useful would make waving it around
+  // free, and the limiter has to cost something at the moment you decide to
+  // press rather than only in hindsight.
   _updateTool(dt, w) {
     const T = w.def.tool;
     this.fireTimer -= dt;    // the draw — a tool cannot work before it is up
@@ -1454,6 +1460,50 @@ export class Player {
     }
 
     this._updateBeam(dt, w, working);
+    this._applyRepair(dt, w, working);
+  }
+
+  // What the beam lands on. Deliberately separate from drawing it: the beam is
+  // shown whether or not it is doing anything, because a tool that only rendered
+  // when it was working would give away the answer before you had aimed.
+  _applyRepair(dt, w, working) {
+    const s = this.soldier;
+    if (!working || !s) { this.repairTarget = null; return; }
+    const t = this._beamTarget(w.def.tool.range);
+    this.repairTarget = t;
+    if (!t) return;
+    // `applyRepair` is the shared entry point bots use too, and it is what owns
+    // the Engineer's ×2 — so a player and a bot standing in the same place put
+    // the same plating on, which is the rule crates already follow.
+    const put = t.applyRepair(s, dt);
+    if (put > 0 && !t.needsRepair) {
+      this.game.hud.message(`${t.name} — ARMOUR RESTORED`, 1.5);
+    }
+  }
+
+  // The friendly soldier under the crosshair, if one is close enough to work on
+  // and has plating to put back. Its own trace rather than `combat.traceHit`,
+  // because that one is written to find things to SHOOT — it stops at the first
+  // body of either team and takes no interest in whether a teammate wants help.
+  _beamTarget(range) {
+    const s = this.soldier;
+    const mates = this.game.teams[s.team].soldiers;
+    this.camera.getWorldDirection(_dir);
+    _from.copy(this.camera.position);
+    let best = null, bestT = Infinity;
+    for (const m of mates) {
+      if (m === s || !m.needsRepair) continue;
+      // Distance along the beam, and how far off it they sit. A generous radius
+      // on purpose: this is a repair beam being pointed at a friend who is
+      // probably moving, not a shot that has to be earned.
+      _aim.subVectors(m.bodyPoint(_muzzle, 1.0), _from);
+      const along = _aim.dot(_dir);
+      if (along <= 0 || along > range || along >= bestT) continue;
+      if (_aim.addScaledVector(_dir, -along).length() > 0.9) continue;
+      bestT = along;
+      best = m;
+    }
+    return best;
   }
 
   // Where the beam starts and where the world stops it.

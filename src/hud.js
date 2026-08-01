@@ -134,8 +134,11 @@ export class Hud {
   // All three vitals are the visor's now — the DOM stack that used to sit at
   // the bottom centre is gone, because two readouts of one number is one too
   // many. These stay as the seam the rest of the game pushes through.
-  setVitals(shield, health, maxShield = CFG.soldier.shield) {
-    this.visor.setVitals(shield, health, maxShield, CFG.soldier.health);
+  // `kind` is 'armor' or 'shield' — the same meter, in the colour of whichever
+  // plate this soldier carries. One bar rather than two, because no soldier
+  // carries both and an always-empty second bar teaches the eye to ignore it.
+  setVitals(plate, health, plateMax = CFG.soldier.armor, kind = 'armor') {
+    this.visor.setVitals(plate, health, plateMax, CFG.soldier.health, kind);
   }
 
   // Stamina keeps its own setter rather than more arguments on setVitals: it is
@@ -325,7 +328,7 @@ export class Hud {
     for (const m of squad.members) {
       if (m.isPlayer) continue;
       const lead = m === squad.leader ? '<i class="lead">&#9650;</i>' : '';
-      const hpPct = m.alive ? ((m.shield + m.health) / (m.maxShield + CFG.soldier.health)) * 100 : 0;
+      const hpPct = m.alive ? ((m.plate + m.health) / (m.plateMax + CFG.soldier.health)) * 100 : 0;
       // A downed squadmate is not a dead one — the row has to say so, because
       // this list is where you look to decide whether anyone is worth going to.
       // The bar shows bleedout remaining, which is the only number that matters

@@ -818,7 +818,7 @@ export class DeployScreen {
   _updatePip(dt) {
     if (!this.watched) return;
     const s = this.watched;
-    this.el.pipHp.textContent = s.alive ? `${Math.max(0, Math.round(s.shield + s.health))} HP` : '';
+    this.el.pipHp.textContent = s.alive ? `${Math.max(0, Math.round(s.plate + s.health))} HP` : '';
     if (!s.alive && this.kiaTimer <= 0) {
       this.kiaTimer = 1.4; // linger on the death cam, then hop to a squadmate
       this.el.pipKia.style.display = 'flex';

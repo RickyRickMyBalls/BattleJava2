@@ -273,7 +273,7 @@ export class LobbyRoam {
       // that is not a Game, nobody pushes them and the bars sit frozen at full.
       // Mirrors what game.js does with the same two calls.
       const s = this.soldier;
-      this.hud.setVitals(s.shield, s.health, s.maxShield);
+      this.hud.setVitals(s.plate, s.health, s.plateMax, s.plateKind);
       this.hud.setStamina(s.stamina, s.maxStamina, s.staminaUnlimited, s.exhausted);
       this.hud.update(dt);
       // Same off-screen pass Game.renderScopes does, so scope screens are live

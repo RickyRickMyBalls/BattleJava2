@@ -222,7 +222,11 @@ export class Game {
 
   onPlayerDamaged(shooter) {
     this.hud.showDamage();
-    if (this.playerSoldier.shield <= 0) this.audio.playUI('shieldLow');
+    // Plate gone, whichever kind it was. For a Spartan it means "wait four
+    // seconds"; for a marine it means "that is not coming back" — the same cue
+    // for two very different pieces of news, which is worth splitting once there
+    // is a second sound to split it with.
+    if (this.playerSoldier.plate <= 0) this.audio.playUI('shieldLow');
     this.hud.notePlayerAwareShot(shooter);
   }
 
@@ -339,7 +343,8 @@ export class Game {
     }
 
     // HUD (real-time, even when paused)
-    this.hud.setVitals(this.playerSoldier.shield, this.playerSoldier.health, this.playerSoldier.maxShield);
+    this.hud.setVitals(this.playerSoldier.plate, this.playerSoldier.health,
+      this.playerSoldier.plateMax, this.playerSoldier.plateKind);
     this.hud.setStamina(this.playerSoldier.stamina, this.playerSoldier.maxStamina,
       this.playerSoldier.staminaUnlimited, this.playerSoldier.exhausted);
     this.hud.updateSectors(this.world.sectors);
