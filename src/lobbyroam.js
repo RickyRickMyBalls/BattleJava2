@@ -225,13 +225,15 @@ export class LobbyRoam {
     this.prompt.innerHTML = `<b>E</b> ${WEAPONS[t.key].name}`;
   }
 
+  // Only the way OUT is advertised. The "TAB WALK THE HANGAR" prompt is gone —
+  // TAB still works, it just no longer sits over the lobby offering itself. ESC
+  // stays, because a player already in roam mode has nothing else telling them
+  // how to get back to the setup panel.
   _setHint(kind) {
     if (!this.hint) return;
-    if (kind === null) { this.hint.style.display = 'none'; return; }
+    if (kind !== 'roam') { this.hint.style.display = 'none'; return; }
     this.hint.style.display = 'block';
-    this.hint.innerHTML = kind === 'roam'
-      ? '<b>ESC</b> RETURN TO SETUP'
-      : '<b>TAB</b> WALK THE HANGAR';
+    this.hint.innerHTML = '<b>ESC</b> RETURN TO SETUP';
   }
 
   // Shown whenever the lobby is idle and roam is available.

@@ -308,10 +308,13 @@
        clamp dutifully changed a number nothing was reading. */
     .kb button { font-family: inherit; font-size: inherit; }
     .kb-tabs { display: flex; gap: 0.3em; }
+    /* Was 1.1em, which made the class tabs the largest type in the bar — larger
+       than the kit names they sit above and nearly twice the card labels. They
+       are a switch, not a heading, so they read below the kit list now. */
     .kb-tabs button {
       cursor: pointer; background: rgba(8,18,28,0.85); color: #7c96a8;
-      border: 1px solid #24404f; border-bottom: none; padding: 0.7em 2em;
-      font-size: 1.1em; letter-spacing: 0.27em;
+      border: 1px solid #24404f; border-bottom: none; padding: 0.65em 1.8em;
+      font-size: 0.9em; letter-spacing: 0.27em;
     }
     .kb-tabs button:hover { color: var(--hud-cyan); }
     .kb-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
