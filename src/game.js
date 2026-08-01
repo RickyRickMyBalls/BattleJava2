@@ -8,6 +8,7 @@ import { Soldier } from './soldier.js';
 import { Squad, TeamBrain, squadNames } from './ai.js';
 import { Combat } from './combat.js';
 import { Supply } from './supply.js';
+import { Structures } from './structures.js';
 import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
@@ -40,6 +41,7 @@ export class Game {
     this.audio.init(assets.audio);
     this.combat = new Combat(this);
     this.supply = new Supply(this);
+    this.structures = new Structures(this);
     this.hud = new Hud(this);
 
     this.teams = [
@@ -364,6 +366,7 @@ export class Game {
     this._updateTickets(dt);
     this.combat.update(dt);
     this.supply.update(dt);
+    this.structures.update(dt);
   }
 
   _nearestObjectiveText() {

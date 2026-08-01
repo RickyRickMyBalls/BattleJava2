@@ -500,9 +500,18 @@ export class Player {
       || !!(this.melee && this.melee.useTimer > 0);
   }
 
-  // Slot gadgets. Nothing in the pools is implemented yet apart from the
-  // webbing, which is passive — the `built` guard is what keeps an unfinished
-  // gadget from half-working rather than obviously doing nothing.
+  // Which system owns a placeable. `crate` and `wall` are the two shapes one
+  // comes in, and the def says which — so a third kind of placeable is a config
+  // entry plus a module, never a branch on a gadget's NAME.
+  _placeSystem(def) {
+    if (def.crate) return this.game.supply;
+    if (def.wall) return this.game.structures;
+    return null;
+  }
+
+  // Slot gadgets. Most of the pool is still declared rather than implemented —
+  // the `built` guard is what keeps an unfinished gadget from half-working
+  // rather than obviously doing nothing.
   useGadget(i) {
     const g = this.gadgets[i];
     if (!g || this.freecam) return;
@@ -517,7 +526,7 @@ export class Player {
     // Placed at the END of the lockout, the same shape biofoam uses: the
     // commitment is paid before the thing exists. Flagged rather than dropped
     // here so `_updateGadgets` stays the single place a lockout resolves.
-    if (g.def.kind === 'placeable' && g.def.crate) g.pendingPlace = true;
+    if (g.def.kind === 'placeable' && this._placeSystem(g.def)) g.pendingPlace = true;
     this._cancelWeaponAction();
   }
 
@@ -555,8 +564,22 @@ export class Player {
           g.cooldown = g.def.cooldown || 0;
           if (g.pendingPlace) {
             g.pendingPlace = false;
-            const crate = this.game.supply && this.game.supply.place(this.soldier, g.def);
-            this.game.hud.message(crate ? `${g.def.name} DEPLOYED` : `${g.def.name} — NO ROOM`, 2);
+            const sys = this._placeSystem(g.def);
+            const made = sys && sys.place(this.soldier, g.def);
+            if (made) {
+              this.game.hud.message(`${g.def.name} DEPLOYED`, 2);
+            } else {
+              // Refunded, because placement is blind: the charge was spent
+              // before anyone could see whether the spot was legal, so losing
+              // it to a rule you were not shown is the game's mistake and not
+              // the player's. The lockout is still paid, which is the part that
+              // was actually a decision. A ghost preview would make this branch
+              // unreachable and the refund pointless — which is the argument
+              // for building one.
+              g.charges++;
+              const why = (sys && sys.lastRefusal) || 'NO ROOM';
+              this.game.hud.message(`${g.def.name} — ${why}`, 2);
+            }
           }
         }
       }

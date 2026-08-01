@@ -156,6 +156,31 @@ export const CFG = {
     },
   },
 
+  // Placed structures — the shared rules for anything a gadget stands up in the
+  // world. What a structure IS lives on its gadget def (see `wall` on
+  // GADGETS.quickwall); everything here is true of all of them.
+  structure: {
+    // Dropped this far ahead, further than a crate's 1.5: you stand BEHIND a
+    // wall, and a wall at arm's length is one you cannot shoot over comfortably.
+    placeAhead: 2.2,
+    // Shorter than a crate's 240. Cover should shape a fight, not a match — and
+    // it is also the cheap half of bounding `world.coverBoxes`, since every
+    // standing structure is a live cost on a test that runs per bullet.
+    life: 180,
+    // The expensive half. Two charges times a dozen Engineers is a lot of walls
+    // if none of them ever expired, so the cap is what makes the worst case
+    // knowable rather than a function of how the match went.
+    maxPerTeam: 12,
+    // Refuse a spot where the ground under the footprint varies by more than
+    // this, in metres. A wall is a rigid box: on a slope steeper than this one
+    // end buries itself and the other floats, and a floating wall is a gap
+    // bullets pour through at ankle height.
+    maxSlope: 0.9,
+    // Nobody may be standing inside the footprint plus this margin. Placing a
+    // wall through a squadmate would trap them in geometry they cannot see.
+    clearRadius: 0.8,
+  },
+
   // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS
   // OUT lives on its gadget def in `GADGETS`, because that is what differs;
   // everything here is true of any crate.
@@ -1414,10 +1439,27 @@ export const GADGETS = {
   // Instant cover, distinct from the blueprint system: a quick wall goes up in
   // half a second and needs no repair tool. Blueprints are the larger, built
   // fortifications. Two verbs on purpose.
+  // `wall` is what makes a placeable a STRUCTURE, the way `crate` makes one a
+  // supply point: `size` is [length, height, thickness] in metres, laid out
+  // broadside to the placer so it goes up across your view rather than pointing
+  // away down it.
+  //
+  // The height is a CONTRACT with CFG.soldier.crouchScale, not a free number.
+  // 1.25 sits 10 cm above the player's crouched camera (crouchEye 1.15) so you
+  // cannot peek over your own wall, and under the 1.3 m chest that LOS is
+  // sampled against in soldier._canSee so standing up puts you back on the
+  // menu. Measured against a bot at 10-80 m, 1.0-1.3 all hold that line and
+  // 1.4 breaks it — at 1.4 a standing soldier is never seen at all and shoots
+  // over the wall with impunity. Retune the two together or not at all.
   quickwall: {
-    name: 'QUICK WALL', kind: 'placeable', built: false,
+    name: 'QUICK WALL', kind: 'placeable', built: true,
     svg: '<rect x="4" y="8" width="16" height="10"/><path d="M4 13h16M12 8v10"/>',
-    charges: 2, deployTime: 0.5,
+    charges: 2,
+    // Named `useTime` rather than the old `deployTime` because that is what the
+    // shared gadget lockout in player.useGadget reads — the previous name was
+    // never wired to anything.
+    useTime: 0.5,
+    wall: { size: [3.2, 1.25, 0.35], color: 0x6f7c86 },
   },
   emp: {
     name: 'EMP CHARGE', kind: 'placeable', built: false,
