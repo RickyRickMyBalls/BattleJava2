@@ -106,6 +106,18 @@ export const CFG = {
     // 7. Bots are killed and respawn on a fresh kit long before they burn all
     // three charges, so "completely empty" is a state they almost never reach.
     aiSeekBelow: 1,
+    // Bot placement. One in five soldiers is Support and they respawn all match,
+    // so without limits a team would carpet the map — roughly twenty crates a
+    // side over a short match. Three rules keep it to a supply line rather than
+    // a minefield: a live cap per team, a spacing rule so they do not cluster,
+    // and a requirement to be at the objective, which is what makes a dropped
+    // crate mean "the squad is holding here".
+    aiTeamCap: 5,
+    aiMinSpacing: 30,
+    // Metres from the nearest SECTOR, not from the squad's objective — see the
+    // note in `_tryPlaceCrate`. Sector radii run 32-36, so this is roughly
+    // "inside the capture ring or just outside it".
+    aiNearObjective: 36,
   },
 
   player: {

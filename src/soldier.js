@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
-import { CFG, TEAM, WEAPONS, GRENADES, BIOFOAM } from './config.js';
+import { CFG, TEAM, WEAPONS, GRENADES, GADGETS, BIOFOAM } from './config.js';
 import { classPerk } from './loadout.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
 
@@ -377,6 +377,11 @@ export class Soldier {
       useTimer: 0,
       healLeft: 0,
     };
+    // A placeable crate is the one slot gadget the AI can act on, so it gets
+    // charge state of its own. The rest of `gadgetKeys` stays inert loadout
+    // data the simulation has nothing to do with yet.
+    this.crateKey = (this.gadgetKeys || []).find((k) => GADGETS[k] && GADGETS[k].crate) || null;
+    this.crateCharges = this.crateKey ? (GADGETS[this.crateKey].charges || 0) : 0;
     const gdef = GRENADES[grenadeKey];
     this.grenade = gdef ? { def: gdef, count: gdef.count } : null;
     // A grenade with no `ai` block is one the AI never throws — that is how an
@@ -411,6 +416,8 @@ export class Soldier {
       this.biofoam.useTimer = 0;
       this.biofoam.healLeft = 0;
     }
+    // One crate per life, reissued on respawn like the rest of the kit.
+    if (this.crateKey) this.crateCharges = GADGETS[this.crateKey].charges || 0;
     if (this.grenade) {
       const d = this.grenade.def;
       this.grenade.count = d.count;
@@ -748,6 +755,41 @@ export class Soldier {
     } else {
       this.supplyTarget = null;
     }
+
+    if (!this.target && calm) this._tryPlaceCrate();
+  }
+
+  // Support bots dropping their crate. Placement is instant and happens where
+  // the bot already is, so unlike the other errands it needs no movement branch
+  // — the condition is simply "I am standing somewhere worth supplying".
+  //
+  // Proximity is measured to the nearest SECTOR, not to the squad's assigned
+  // objective, and that is a correction rather than a preference: sampled over
+  // a 150 s battle, the median distance from a support bot to its squad
+  // objective was 148 m. Squads spend nearly all their time in transit toward
+  // one, so an objective test at any sane radius almost never fires. Sectors are
+  // where the fighting actually concentrates, which is what makes a crate
+  // dropped at one read as a supply line rather than as litter.
+  _tryPlaceCrate() {
+    if (!this.crateKey || this.crateCharges <= 0) return;
+    const sup = this.game.supply;
+    if (!sup) return;
+    const C = CFG.crate;
+    let nearSector = Infinity;
+    for (const s of this.game.world.sectors) {
+      const d = Math.hypot(s.x - this.pos.x, s.z - this.pos.z);
+      if (d < nearSector) nearSector = d;
+    }
+    if (nearSector > C.aiNearObjective) return;
+    let live = 0;
+    for (const c of sup.crates) {
+      if (c.team !== this.team || c.pool <= 0) continue;
+      if (this.pos.distanceTo(c.pos) < C.aiMinSpacing) return;  // do not cluster
+      live++;
+    }
+    if (live >= C.aiTeamCap) return;
+    this.crateCharges--;
+    sup.place(this, GADGETS[this.crateKey]);
   }
 
   // Nearest friendly medical crate with something left in it. Ammunition crates

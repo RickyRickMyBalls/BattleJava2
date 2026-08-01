@@ -854,9 +854,32 @@ which re-tunes attrition across the whole simulation, and the reserve figures
 would have to come down before a crate meant anything. Worth doing, worth doing
 deliberately.
 
-**Open:** No bot ever *places* a crate. Until a Support bot deploys one, crates
-exist only where the player drops them — which is the real scenario for a player
-supporting their squad, but it means an AI-only battle has no logistics at all.
+**Locked: Support bots place crates.** One crate per life, dropped where the bot
+is standing when it is out of contact and near a sector. Three limits keep it a
+supply line rather than a carpet — one in five soldiers is Support and they
+respawn all match, which without limits is roughly twenty crates a side:
+
+| Limit | Value | Why |
+| --- | --- | --- |
+| Live crates per team | 5 | The field stays readable |
+| Spacing | 30 m | Crates do not cluster on one spot |
+| Distance to a sector | 36 m | Roughly the capture ring |
+
+**Near a sector, not near the squad's objective** — a correction, not a
+preference. Sampled across a 150 s battle, the median distance from a Support bot
+to its own squad objective was **148 m**: squads spend nearly all their time in
+transit toward one, so an objective test at any sane radius almost never fires.
+The first implementation used it and placed 3 crates in 150 s, one of which
+cleared the gate by luck. Sectors are where fighting concentrates, which is what
+makes a crate dropped at one mean something.
+
+Measured across runs: 2–8 crates placed per 150 s, teams sitting at 1–5 live,
+never over cap, closest observed pair 34 m.
+
+**Open — consumption is still thin.** Bots place crates readily now but draw from
+them rarely, because a bot only seeks one at a single charge remaining and it
+usually dies on a fuller injector than that. The crates are on the field; the
+demand for them is the part that is not yet real.
 
 ### Support — logistics and sustain
 
@@ -953,7 +976,8 @@ clip held at its last frame.
 key. `supply.js` owns crates, meshes and pools; what a draw *does* to a soldier
 stays with that soldier's state. Blockout geometry, swappable for an authored
 GLB without touching anything else. Bots draw from medical crates; the ammunition
-crate stays player-only until bots model ammo at all.
+crate stays player-only until bots model ammo at all. Support bots place one
+crate per life, capped and spaced so the field stays readable.
 
 **Not started** — every other gadget behaviour, grenades, melee, construction, perks,
 stamina, armor, drag and carry (casualty recovery phase 2), and the four
@@ -1012,8 +1036,9 @@ Ordered by how much each one changes if answered differently.
 14. Does Support get a third gadget so it has a loadout decision at all?
 15. Do bots get a reserve-ammo model? It is what the ammunition crate needs to
     mean anything to 63 of 64 combatants, and it re-tunes attrition.
-16. When does a Support bot *place* a crate? Without it, an AI-only battle has
-    no logistics.
+16. Does bot demand for crates need raising? They place them readily and draw
+    from them rarely — a bot seeks one only at its last charge, and usually dies
+    on a fuller injector than that.
 17. Does anything own sector capture?
 18. Does the Spartan ship with overshield first, deferring grapple and jetpack?
 19. Is one in five too frequent for the Spartan, now that its perk includes
@@ -1101,6 +1126,11 @@ Ordered by how much each one changes if answered differently.
   the interact key. `pool ÷ per` is what a Support is worth to a squad, and it
   is the number to tune. Reserve ammo only, and the webbing reserve penalty
   survives a resupply.
+- Support bots place one crate per life, capped at 5 live per team, spaced 30 m
+  apart and only within 36 m of a sector. Proximity is measured to a sector
+  rather than to the squad's objective because the median distance from a bot to
+  its own objective measured 148 m — squads are nearly always in transit, so an
+  objective test never fires.
 - Bots draw from medical crates, on the errand priority fight > pick someone up >
   resupply, and through the same `supply.draw` the player uses. The seek
   threshold is one charge rather than zero because zero measured 0 draws against
