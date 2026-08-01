@@ -95,6 +95,17 @@ export const CFG = {
     // Crates are team-coloured by their contents, not by side: you never see an
     // enemy's, so a red/blue split would be information nobody can use.
     markerRange: 70,
+    // How far a bot will walk to a crate, and how empty its injector has to be
+    // before it bothers. Bots draw from MEDICAL crates only: they carry no
+    // reserve-ammo model at all — see the note on `give: 'ammo'` in GADGETS —
+    // so an ammunition crate has literally nothing to hand them.
+    aiSeekRange: 45,
+    // Seek when the injector is this low or worse. ONE, not zero, and the
+    // difference is the whole behaviour: measured over 150 s with six crates
+    // seeded, a threshold of 0 produced 0 draws and a threshold of 1 produced
+    // 7. Bots are killed and respawn on a fresh kit long before they burn all
+    // three charges, so "completely empty" is a state they almost never reach.
+    aiSeekBelow: 1,
   },
 
   player: {
@@ -1355,6 +1366,11 @@ export const GADGETS = {
     charges: 1,
     useTime: 0.8,
     crate: {
+      // PLAYER-ONLY, and not by choice: AI soldiers model no magazine and no
+      // reserve, so there is nothing for this crate to refill on 63 of the 64
+      // combatants. Giving bots an ammo economy is a real balance job — they
+      // would start running dry mid-fight, which re-tunes attrition — rather
+      // than a wiring job, so it is deliberately not bolted on here.
       give: 'ammo',
       pool: 6,           // resupplies held
       per: 1,            // one draw is one resupply — the crate serves six

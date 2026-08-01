@@ -833,11 +833,30 @@ body in reach suppresses the crate prompt entirely rather than the two competing
 for the same press. The crate will still be there in ten seconds; the casualty
 will not.
 
-**Open:** Bots do not use crates yet. That is the same objection this document
-raises about every gadget — 63 of 64 combatants are bots, so a crate only the
-player draws from is a crate that mostly does not exist. It is also the cheapest
-of the AI jobs on this page: the pool and the reach test already exist, and a bot
-needs only to notice it is short and walk over.
+**Locked: bots draw from medical crates.** A bot down to its last biofoam charge,
+out of contact and within 45 m of a friendly crate, walks over and takes a draw
+through the same `supply.draw` the player uses — so a bot cannot get a better
+deal than a human standing next to it. Errand priority is **fight > pick someone
+up > resupply**: an empty injector is what a bot goes to fix when it has nothing
+left to spend.
+
+The threshold is **one charge, not zero**, and that is not a rounding choice.
+Measured over 150 s with six crates seeded: a threshold of zero produced **0**
+draws, one produced **7**. Bots are killed and respawn on a fresh kit long before
+they burn all three charges, so "completely empty" is a state they essentially
+never reach — the behaviour existed but never once fired.
+
+**Open — the ammunition crate is player-only, and not by choice.** AI soldiers
+model no magazine and no reserve; they fire indefinitely. There is nothing for
+that crate to refill on 63 of the 64 combatants. Giving bots an ammo economy is a
+balance job rather than a wiring job — they would start running dry mid-fight,
+which re-tunes attrition across the whole simulation, and the reserve figures
+would have to come down before a crate meant anything. Worth doing, worth doing
+deliberately.
+
+**Open:** No bot ever *places* a crate. Until a Support bot deploys one, crates
+exist only where the player drops them — which is the real scenario for a player
+supporting their squad, but it means an AI-only battle has no logistics at all.
 
 ### Support — logistics and sustain
 
@@ -933,7 +952,8 @@ clip held at its last frame.
 **Landed** — Support's two crates, as finite pools drawn from with the interact
 key. `supply.js` owns crates, meshes and pools; what a draw *does* to a soldier
 stays with that soldier's state. Blockout geometry, swappable for an authored
-GLB without touching anything else. Bots cannot draw from them yet.
+GLB without touching anything else. Bots draw from medical crates; the ammunition
+crate stays player-only until bots model ammo at all.
 
 **Not started** — every other gadget behaviour, grenades, melee, construction, perks,
 stamina, armor, drag and carry (casualty recovery phase 2), and the four
@@ -990,13 +1010,15 @@ Ordered by how much each one changes if answered differently.
     default? Without it, Assault never carries the Magnum.
 13. What is Engineer's utility gadget, now that construction has left the slot?
 14. Does Support get a third gadget so it has a loadout decision at all?
-15. When do bots draw from crates? Until they do, Support's two identity gadgets
-    serve one combatant in sixty-four.
-16. Does anything own sector capture?
-17. Does the Spartan ship with overshield first, deferring grapple and jetpack?
-18. Is one in five too frequent for the Spartan, now that its perk includes
+15. Do bots get a reserve-ammo model? It is what the ammunition crate needs to
+    mean anything to 63 of 64 combatants, and it re-tunes attrition.
+16. When does a Support bot *place* a crate? Without it, an AI-only battle has
+    no logistics.
+17. Does anything own sector capture?
+18. Does the Spartan ship with overshield first, deferring grapple and jetpack?
+19. Is one in five too frequent for the Spartan, now that its perk includes
     unlimited stamina on top of shield, jump and free specialist access?
-19. Does the second-primary gadget stay Assault-only, or extend to other classes?
+20. Does the second-primary gadget stay Assault-only, or extend to other classes?
 
 ---
 
@@ -1079,6 +1101,10 @@ Ordered by how much each one changes if answered differently.
   the interact key. `pool ÷ per` is what a Support is worth to a squad, and it
   is the number to tune. Reserve ammo only, and the webbing reserve penalty
   survives a resupply.
+- Bots draw from medical crates, on the errand priority fight > pick someone up >
+  resupply, and through the same `supply.draw` the player uses. The seek
+  threshold is one charge rather than zero because zero measured 0 draws against
+  one's 7 — bots respawn on a fresh kit long before they run dry.
 - Locked casualties as outranking crates on the shared interact key. A crate
   will still be there in ten seconds; a bleeding squadmate will not.
 - Gave the rescuer a CPR pose, with both weapons stowed and the first-person

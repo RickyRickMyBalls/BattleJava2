@@ -121,6 +121,11 @@ export class Supply {
   remove(crate) {
     const i = this.crates.indexOf(crate);
     if (i >= 0) this.crates.splice(i, 1);
+    // Zero the pool on the way out. Bots hold a reference to the crate they are
+    // walking to, and everything that validates one asks whether it has
+    // anything left — so emptying it here is what stops a despawned crate
+    // leaving soldiers jogging toward a ghost.
+    crate.pool = 0;
     if (crate.mesh) {
       this.game.scene.remove(crate.mesh);
       crate.mesh.traverse((o) => {

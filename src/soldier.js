@@ -131,6 +131,8 @@ export class Soldier {
     // state, the same way it writes `crouching`/`aiming`; AI set it in
     // `_updateRevive`.
     this.reviving = false;
+    this.supplyTarget = null;  // AI: the crate this soldier is walking to
+    this.drawTimer = 0;        // AI: progress on the draw it is standing over
 
     this.waypoint = new THREE.Vector3();
     this.hasWaypoint = false;
@@ -394,6 +396,8 @@ export class Soldier {
     this.reviveHeld = false;
     this.reviveTarget = null;
     this.reviving = false;
+    this.supplyTarget = null;
+    this.drawTimer = 0;
     this.callTimer = 0;
     this._called = false;
     this.shield = this.maxShield;
@@ -477,6 +481,8 @@ export class Soldier {
     this.reviveHeld = false;
     this.reviveTarget = null;
     this.reviving = false;
+    this.supplyTarget = null;
+    this.drawTimer = 0;
     this.callTimer = 0;
     this._called = false;
     this.health = 0;
@@ -501,6 +507,8 @@ export class Soldier {
     this.target = null;
     this.reviveTarget = null;
     this.reviving = false;   // or the corpse keeps both guns stowed on its back
+    this.supplyTarget = null;
+    this.drawTimer = 0;
     this.callTimer = 0;
     this._called = false;
     const credit = attacker || this.downedBy;
@@ -576,6 +584,7 @@ export class Soldier {
       this._updateBiofoam(dt);
       this._think(dt);
       this._updateRevive(dt);
+      this._updateSupply(dt);
       this._move(dt);
       this._fire(dt);
     }
@@ -712,19 +721,72 @@ export class Soldier {
       this.target = this._acquireTarget();
     }
 
-    // Casualty recovery, decided on the same tick as targeting because it is
-    // the same decision: fight, or go help. `shieldTimer` doubles as
-    // time-since-damage — the signal `_updateBiofoam` already trusts to mean
-    // "not currently being shot at".
-    if (!D.enabled) return;
-    if (this.target || !this.biofoam || this.biofoam.charges <= 0
-        || this.shieldTimer < BIOFOAM.aiReviveCalm) {
+    // Errands, decided on the same tick as targeting because they are the same
+    // decision: fight, or go do something useful. Priority is fight > pick
+    // someone up > resupply. `shieldTimer` doubles as time-since-damage — the
+    // signal `_updateBiofoam` already trusts to mean "not being shot at".
+    const charges = this.biofoam ? this.biofoam.charges : 0;
+    const calm = this.shieldTimer >= BIOFOAM.aiReviveCalm;
+
+    if (D.enabled && !this.target && calm && charges > 0) {
+      if (!this.reviveTarget || !this.reviveTarget.downed) {
+        this.reviveTarget = this._findCasualty();
+      }
+    } else {
       this.reviveTarget = null;
+    }
+
+    // Resupply is what a bot does when it has nothing left to spend, which is
+    // why this is NOT chained onto the check above: an empty injector is
+    // exactly the state casualty recovery rejects, so sharing that early-out
+    // would mean a bot could only go looking for a crate while it still had
+    // charges — the one time it does not need one.
+    if (!this.target && !this.reviveTarget && this.biofoam && charges <= CFG.crate.aiSeekBelow) {
+      if (!this.supplyTarget || this.supplyTarget.pool <= 0) {
+        this.supplyTarget = this._findCrate();
+      }
+    } else {
+      this.supplyTarget = null;
+    }
+  }
+
+  // Nearest friendly medical crate with something left in it. Ammunition crates
+  // are skipped because a bot has no reserve to refill — see CFG.crate.
+  _findCrate() {
+    const sup = this.game.supply;
+    if (!sup) return null;
+    let best = null, bestD = CFG.crate.aiSeekRange;
+    for (const c of sup.crates) {
+      if (c.team !== this.team || c.pool <= 0) continue;
+      if (c.def.crate.give !== 'biofoam') continue;
+      const d = this.pos.distanceTo(c.pos);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+
+  // Walk to a crate and draw from it. Same pool and the same per-draw amount
+  // the player takes — `supply.draw` is the single place a crate is spent, so
+  // a bot cannot quietly get a better deal than a human standing next to it.
+  _updateSupply(dt) {
+    const t = this.supplyTarget;
+    if (!t) { this.drawTimer = 0; return; }
+    if (t.pool <= 0 || this.target || !this.biofoam) {
+      this.supplyTarget = null;
+      this.drawTimer = 0;
       return;
     }
-    if (!this.reviveTarget || !this.reviveTarget.downed) {
-      this.reviveTarget = this._findCasualty();
+    if (this.pos.distanceTo(t.pos) > CFG.crate.reach) { this.drawTimer = 0; return; }
+    this.drawTimer += dt;
+    if (this.drawTimer < CFG.crate.drawTime) return;
+    this.drawTimer = 0;
+    const got = this.game.supply.draw(t);
+    if (got > 0) {
+      const b = this.biofoam.def;
+      const max = (b.perClass && b.perClass[this.cls]) || b.count;
+      this.biofoam.charges = Math.min(max, this.biofoam.charges + got);
     }
+    this.supplyTarget = null;
   }
 
   _acquireTarget() {
@@ -774,6 +836,17 @@ export class Soldier {
       const dx = t.pos.x - this.pos.x, dz = t.pos.z - this.pos.z;
       const dist = Math.hypot(dx, dz);
       if (dist > D.reviveRange * 0.7) {
+        desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
+      }
+      if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
+    } else if (this.supplyTarget) {
+      // Below casualties, above the squad's waypoint. A bot with an empty
+      // injector is worth less to the squad at the objective than it is a few
+      // seconds later with a full one.
+      const t = this.supplyTarget;
+      const dx = t.pos.x - this.pos.x, dz = t.pos.z - this.pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > CFG.crate.reach * 0.6) {
         desired.set(dx / dist, 0, dz / dist).multiplyScalar(S.runSpeed);
       }
       if (dist > 1e-3) this.yaw = lerpAngle(this.yaw, Math.atan2(dx, dz), Math.min(1, dt * 8));
