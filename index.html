@@ -310,11 +310,11 @@
     .kb-tabs { display: flex; gap: 0.3em; }
     /* Was 1.1em, which made the class tabs the largest type in the bar — larger
        than the kit names they sit above and nearly twice the card labels. They
-       are a switch, not a heading, so they read below the kit list now. */
+       are a switch, not a heading, so they now read below both. */
     .kb-tabs button {
       cursor: pointer; background: rgba(8,18,28,0.85); color: #7c96a8;
-      border: 1px solid #24404f; border-bottom: none; padding: 0.65em 1.8em;
-      font-size: 0.9em; letter-spacing: 0.27em;
+      border: 1px solid #24404f; border-bottom: none; padding: 0.6em 1.7em;
+      font-size: 0.72em; letter-spacing: 0.27em;
     }
     .kb-tabs button:hover { color: var(--hud-cyan); }
     .kb-tabs button.sel { background: #dfeefb; color: #0a1826; font-weight: 600; }
@@ -371,21 +371,31 @@
       min-height: 5.2em; max-height: 10.4em;
       border: 1px solid #24404f; background: rgba(8,20,32,0.6);
       display: flex; flex-direction: column; align-items: center;
-      padding: 0.5em 0.4em 0.4em; cursor: pointer;
+      padding: 0.45em 0.35em 0.35em; cursor: pointer;
       color: rgba(127,212,255,0.75);
       transition: border-color 0.12s, background 0.12s;
     }
+    /* Weapons wider, gadgets narrower — a baked weapon thumbnail is about 3:1,
+       so on a square card the gun is width-limited and reads tiny, while a
+       square gadget glyph wastes that same width. Deliberately a REBALANCE and
+       not extra width: 2x13 + 4x8 + 5.6 comes to the same total as the old
+       6x9.6 + 6.2, so the bar still fits its container at 1366 where the lobby
+       only has 966px to give it. */
+    .kb-card.weapon { flex: 0 1 13em; }
+    .kb-card.glyph { flex: 0 1 8em; }
     .kb-card:hover { border-color: var(--hud-cyan); background: rgba(12,28,44,0.75); }
     .kb-slotname {
       font-size: 0.65em; letter-spacing: 0.31em; color: #55707f;
       line-height: 1; white-space: nowrap;
     }
+    /* The art gets whatever the two labels do not. Padding kept minimal here
+       because every pixel of it comes straight off the picture. */
     .kb-art {
       flex: 1; display: flex; align-items: center; justify-content: center;
-      width: 100%; min-height: 0; padding: 0.3em 0;
+      width: 100%; min-height: 0; padding: 0.15em 0;
     }
-    .kb-art img { max-width: 92%; max-height: 100%; opacity: 0.9; object-fit: contain; }
-    .kb-art svg { width: 3em; height: 3em; }
+    .kb-art img { max-width: 100%; max-height: 100%; opacity: 0.95; object-fit: contain; }
+    .kb-art svg { width: 3.6em; height: 3.6em; }
     .kb-fallback { font-size: 1em; letter-spacing: 0.1em; color: #6e93a8; }
     /* Two lines rather than one clipped one — BREACHING CHARGE and SMOKE
        LAUNCHER both truncated mid-word on a single line at this width. */
@@ -405,7 +415,7 @@
       width: 0.4em; height: 0.4em; border-radius: 50%; background: #ffb15e; opacity: 0.8;
     }
     .kb-customize {
-      flex: 0 0 6.2em; justify-content: center; gap: 0.4em;
+      flex: 0 0 5.6em; justify-content: center; gap: 0.4em;
       color: var(--hud-cyan); background: rgba(127,212,255,0.08);
     }
     .kb-plus { font-size: 1.7em; line-height: 1; }

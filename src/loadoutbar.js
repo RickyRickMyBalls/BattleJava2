@@ -132,6 +132,11 @@ export class LoadoutBar {
     const card = document.createElement('button');
     const gadget = GADGETS[key];
     card.className = 'kb-card'
+      // Weapon cards are wider than gadget cards. A baked weapon thumbnail is
+      // about 3:1, so on a square-ish card the gun is limited by width and ends
+      // up tiny, while a gadget glyph is square and wastes the same space. The
+      // armoury already splits them this way for the same reason.
+      + (slot.art === 'weapon' ? ' weapon' : ' glyph')
       // Declared-but-unbuilt gadgets are marked here as well as in the armoury.
       // With most of the roster still inert, a card that looks exactly as real
       // as a working one is actively misleading.
