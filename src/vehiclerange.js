@@ -344,30 +344,43 @@ export function createVehicleRange(assets) {
   }
 
   const _up = new THREE.Vector3(), _left = new THREE.Vector3(), _fwd = new THREE.Vector3();
+  const _flatF = new THREE.Vector3(), _flatL = new THREE.Vector3();
   const _want = new THREE.Vector3(), _tmp = new THREE.Vector3();
+  const _level = new THREE.Quaternion(), _full = new THREE.Quaternion();
+  const _YA = new THREE.Vector3(0, 1, 0);
+  const _PI_Y = new THREE.Quaternion().setFromAxisAngle(_YA, Math.PI);
 
   function updateCamera(dt) {
     const g = hog.group.position;
     _fwd.set(0, 0, 1).applyQuaternion(hog.quat);
     _left.set(1, 0, 0).applyQuaternion(hog.quat);
+    // Flattened onto the horizontal plane. Every camera below is placed from
+    // these, so none of them inherits the chassis's pitch or roll as POSITION —
+    // an 11 m boom turns a few degrees of attitude into metres of swing.
+    _flatF.set(_fwd.x, 0, _fwd.z).normalize();
+    _flatL.set(_left.x, 0, _left.z).normalize();
     const mode = CAMS[camMode];
 
     if (mode === 'DRIVER') {
       hog.group.updateMatrixWorld(true);
       const eye = hog.refWorld('ref_camera_driver', _tmp);
       camera.position.copy(eye || g);
-      camera.quaternion.copy(hog.quat);
-      camera.rotateY(Math.PI);          // three cameras look down -Z; chassis is +Z forward
+      // Horizon-locked base, blended toward the chassis by tiltFP. The eye is
+      // at the pivot here, so attitude costs nothing in stability.
+      _level.setFromAxisAngle(_YA, Math.PI + Math.atan2(_flatF.x, _flatF.z));
+      _full.copy(hog.quat).multiply(_PI_Y);   // three looks down -Z; chassis is +Z
+      camera.quaternion.copy(_level).slerp(_full, CFG.vehicle.camera.tiltFP);
       return;
     }
     if (mode === 'SIDE') {
       // Locked square to the vehicle's side and level. This is the suspension
-      // view: lean and per-corner travel are only legible from side-on.
-      _want.set(g.x - _left.x * 11, g.y + 2.2, g.z - _left.z * 11);
+      // view: lean and per-corner travel are only legible from side-on, and
+      // they are only legible at all if the camera itself is not leaning.
+      _want.set(g.x - _flatL.x * 11, g.y + 2.2, g.z - _flatL.z * 11);
     } else if (mode === 'FRONT') {
-      _want.set(g.x + _fwd.x * 12, g.y + 2.6, g.z + _fwd.z * 12);
+      _want.set(g.x + _flatF.x * 12, g.y + 2.6, g.z + _flatF.z * 12);
     } else {
-      _want.set(g.x - _fwd.x * 13, g.y + 5.5, g.z - _fwd.z * 13);
+      _want.set(g.x - _flatF.x * 13, g.y + 5.5, g.z - _flatF.z * 13);
     }
     const floor = rangeHeight(_want.x, _want.z) + 1.2;
     if (_want.y < floor) _want.y = floor;

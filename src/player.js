@@ -19,10 +19,19 @@ const _aim = new THREE.Vector3();
 const _exit = new THREE.Vector3();
 const _seat = new THREE.Vector3();
 const _eye = new THREE.Vector3();
-const _drive = new THREE.Quaternion();
+const _fwd = new THREE.Vector3();
+const _drive = new THREE.Quaternion();   // chassis-coupled view frame
+const _level = new THREE.Quaternion();   // horizon-locked view frame
 const _lookPitch = new THREE.Quaternion();
 const _YAXIS = new THREE.Vector3(0, 1, 0);
 const _XAXIS = new THREE.Vector3(1, 0, 0);
+
+// Shortest signed difference between two angles. The chase camera eases toward
+// the car's heading, and without this a heading crossing +/-PI would send it the
+// long way round — a full sweep for one degree of actual turn.
+function wrapAngle(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
 
 // Hip reference pose for the viewmodel holder. Aiming moves the holder to the
 // weapon's own `ads.pos` — the transform that puts that weapon's sight on the
@@ -180,6 +189,9 @@ export class Player {
     // `updateVehicleCamera`, which runs AFTER the sim step (see game.update).
     this.vehicle = null;
     this.exitCooldown = 0;   // stops one E press exiting the car it just entered
+    // Eased chase heading. Null means "no history" — snap to the car's heading
+    // on the next frame rather than sweeping in from whatever it was last time.
+    this.vCamYaw = null;
 
     // Freecam state
     this.freecam = false;
@@ -324,14 +336,11 @@ export class Player {
     // telling the truth in this view too.
     this.game.hud.setCrosshairVisible(true);
     // The flash cannot ride a hidden viewmodel — park it in the world and drive
-    // it from the body's muzzle instead.
+    // it from the body's muzzle instead. The light is already in the world and
+    // stays there in both modes (see _buildViewmodel).
     const flashHome = on ? this.game.scene : this.viewmodel;
     flashHome.add(this.flash);
-    flashHome.add(this.muzzleLight);
-    if (!on) {
-      this.flash.position.set(0, 0.03, -0.55);
-      this.muzzleLight.position.copy(this.flash.position);
-    }
+    if (!on) this.flash.position.set(0, 0.03, -0.55);
     this.game.hud.setModeTag(on ? 'THIRD PERSON — O TO EXIT' : null);
   }
 
@@ -371,11 +380,21 @@ export class Player {
     this.viewmodel.add(this.flash);
 
     // muzzle light: kicks warm light onto the gun body and nearby surfaces.
-    // Lives in the scene permanently (intensity 0) so lighting programs are
+    // Lives in the SCENE permanently (intensity 0) so lighting programs are
     // compiled once up front, not on the first shot.
+    //
+    // The parent is the point. It used to hang off the viewmodel, which defeats
+    // the whole idea: three counts only lights under a VISIBLE branch, and
+    // `viewmodel.visible` is false in freecam, third person, the deploy map,
+    // while driving, while downed and while reviving. Every one of those flipped
+    // the scene's point-light count, and the light count is part of three's
+    // program key — so every material in view recompiled on entering the mode
+    // and again on leaving it. That was ~108 of 359 programs in a Valhalla
+    // match existing purely as one-point-light/two-point-light pairs, and it is
+    // why changing camera hitched. Hanging off the scene, it is never hidden;
+    // it is positioned in world space when it actually fires.
     this.muzzleLight = new THREE.PointLight(0xffb36b, 0, 5, 2);
-    this.muzzleLight.position.copy(this.flash.position);
-    this.viewmodel.add(this.muzzleLight);
+    this.game.scene.add(this.muzzleLight);
 
     this.recoil = 0;
     this.bobTime = 0;
@@ -1185,6 +1204,7 @@ export class Player {
     v.enter(this);
     this.yaw = 0;              // looking straight down the bonnet
     this.pitch = 0;
+    this.vCamYaw = null;       // snap the chase heading, do not sweep in
     this.firing = false;
     this.ads = false;
     this.exitCooldown = 0.4;
@@ -1202,8 +1222,11 @@ export class Player {
     v.exit();
     // The relative look becomes an absolute one again, so stepping out leaves
     // you facing where you were looking rather than snapping to a world axis.
+    // Built from the EASED chase heading, not the car's, so the hand-off is
+    // seamless even if you get out mid-slide while the two still disagree.
     // Same PI as the camera carries — see updateVehicleCamera.
-    this.yaw += v.yaw + Math.PI;
+    this.yaw += (this.vCamYaw === null ? v.yaw : this.vCamYaw) + Math.PI;
+    this.vCamYaw = null;
     this.pos.copy(_exit);
     this.velY = 0;
     this.onGround = true;
@@ -1271,24 +1294,39 @@ export class Player {
     s.pos.copy(this.pos);
     s.yaw = v.yaw;
 
-    // Look is relative to the chassis, so the view rolls and pitches with the
-    // hog. That coupling IS the vehicle — a camera that stays world-level while
-    // the body pitches over a ridge reads as a spectator, not a driver.
+    // The view frame is built from the car's HEADING — its forward flattened
+    // onto the horizontal plane — not from its full orientation. Roll and pitch
+    // are then blended back in by `CFG.vehicle.camera.tilt*`, which is zero in
+    // third person. See that config note for why a boom cannot afford to
+    // inherit attitude.
     //
+    // The heading is eased rather than tracked exactly, so a handbrake spin
+    // sweeps the camera round instead of snapping it.
+    _fwd.set(0, 0, 1).applyQuaternion(v.quat);
+    const heading = Math.atan2(_fwd.x, _fwd.z);
+    if (this.vCamYaw === null) this.vCamYaw = heading;
+    else this.vCamYaw += wrapAngle(heading - this.vCamYaw)
+      * Math.min(1, dt * CFG.vehicle.camera.followRate);
+
     // The PI is not a fudge. A three.js camera looks down its local -Z, and the
-    // chassis frame is +Z forward, so handing the camera the chassis
-    // orientation aims it out of the tailgate. It is the same offset the
-    // infantry path carries as `s.yaw = this.yaw + Math.PI`.
-    _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
-    _drive.premultiply(v.quat);
-    _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+    // chassis frame is +Z forward, so a view built to face the car's forward
+    // would aim out of the tailgate. Same offset the infantry path carries as
+    // `s.yaw = this.yaw + Math.PI`.
+    _level.setFromAxisAngle(_YAXIS, Math.PI + this.vCamYaw + this.yaw);
+    _level.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
 
     if (this.thirdPerson) {
-      this._applyVehicleBoom(v, _drive, dt);
+      this._applyVehicleBoom(v, _level, dt, CFG.vehicle.camera.tiltTP);
     } else {
+      // First person sits at the pivot, so tilt costs nothing in stability and
+      // buys the only cue that the hog is leaning. Full chassis coupling is the
+      // far end of the same slerp.
       const eye = v.refWorld('ref_camera_driver', _eye) || seat;
       this.camera.position.copy(eye);
-      this.camera.quaternion.copy(_drive);
+      _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
+      _drive.premultiply(v.quat);
+      _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+      this.camera.quaternion.copy(_level).slerp(_drive, CFG.vehicle.camera.tiltFP);
     }
     if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
       this.camera.fov = HIP_FOV;
@@ -1301,9 +1339,12 @@ export class Player {
   // something is behind you, ease back out once it is clear. Its own CFG block
   // because the thing being framed is 6 m long and what you need to see is the
   // ground it is about to hit.
-  _applyVehicleBoom(v, lookQuat, dt) {
+  _applyVehicleBoom(v, lookQuat, dt, tilt) {
     const TP = CFG.vehicle.thirdPerson;
-    // The view direction is the camera's own -Z; the boom runs the other way.
+    // The boom direction comes off the LEVEL frame, always — this is the arc
+    // that amplified chassis pitch into metres of camera travel. Any attitude
+    // the view is meant to inherit is applied to the camera's ORIENTATION at
+    // the end, where it costs a rotation and not a translation.
     _dir.set(0, 0, 1).applyQuaternion(lookQuat);        // away from the view
     const px = v.pos.x, py = v.pos.y + TP.lift, pz = v.pos.z;
 
@@ -1326,7 +1367,14 @@ export class Player {
     const floor = v.groundAt(cx, cz) + 0.6;
     if (cy < floor) cy = floor;
     this.camera.position.set(cx, cy, cz);
-    this.camera.quaternion.copy(lookQuat);
+    if (tilt > 0) {
+      _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
+      _drive.premultiply(v.quat);
+      _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+      this.camera.quaternion.copy(lookQuat).slerp(_drive, tilt);
+    } else {
+      this.camera.quaternion.copy(lookQuat);
+    }
   }
 
   update(dt) {
@@ -1782,6 +1830,10 @@ export class Player {
     this.flash.material.rotation = Math.random() * Math.PI * 2;
     this.flash.scale.setScalar(0.25 + Math.random() * 0.2);
     this.muzzleLight.intensity = 6 + Math.random() * 4;
+    // The light is parented to the scene, so it is placed in world space here
+    // rather than riding the flash. Third person drives it from the body's
+    // barrel in update() instead, and the flash is already world-space there.
+    if (!this.thirdPerson) this.flash.getWorldPosition(this.muzzleLight.position);
 
     if (w.mag <= 0 && w.reserve > 0) this.startReload();
   }

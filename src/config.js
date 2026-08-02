@@ -386,6 +386,33 @@ export const CFG = {
     // 6 m long and what you need to see is the ground it is about to hit.
     thirdPerson: { dist: 11, lift: 3.4, minDist: 3, skin: 0.5, lerp: 5 },
 
+    // How much of the chassis's ROLL AND PITCH the view inherits, 0..1.
+    //
+    // This started at a hard 1.0 — the camera was rigidly bolted to the
+    // chassis — on the theory that inheriting the vehicle's attitude is what
+    // makes you feel like a driver rather than a spectator. That theory is
+    // fine and the implementation was not, for a reason specific to a boom:
+    // the camera hangs 11 m behind the car, so it swings through an ARC. A
+    // 10 degree chassis pitch became ~1.9 m of camera travel, and map-3's
+    // ground steps 0.73 m every 4 m even where it is flattest, so the chassis
+    // pitches constantly and the view never stopped moving.
+    //
+    // The rule that falls out: the further the camera is from the pivot, the
+    // less attitude it can afford to inherit — because distance from the pivot
+    // is what converts rotation into translation. Third person hangs 11 m out
+    // and gets none. FIRST PERSON SITS AT THE PIVOT, so the same coupling that
+    // wrecked the chase view costs nothing there: your head rolls with the cab
+    // because your head IS in the cab, and the horizon tilting is the correct
+    // and only cue that the hog is leaning. Owner's call, and the right one.
+    camera: {
+      tiltTP: 0,          // third person: 0 = horizon locked, 1 = bolted to the chassis
+      tiltFP: 1,          // first person: fully with the body
+      // How fast the chase camera's heading catches the car's. Not instant, or
+      // a handbrake spin whips the view through 180 degrees faster than anyone
+      // can read it.
+      followRate: 3.5,
+    },
+
     // ---------------------------------------------------------------------
     // Per-vehicle tuning. Everything below is a number to be found in
     // /chartest.html's VEHICLE tab (Phase 3) rather than reasoned about here;
