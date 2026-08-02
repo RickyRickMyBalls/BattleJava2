@@ -248,6 +248,45 @@ function dumpAds() {
     `// ADS pose -> paste into each def in config.js WEAPONS\n${lines.join('\n')}`;
 }
 
+// Frame counter, plus the numbers that actually say WHY a frame is slow.
+//
+// It times with performance.now() rather than the `dt` handed to frame(): that
+// value is clamped to 0.05 by the loop, so anything worse than 20 fps reports
+// as exactly 20 and a real hitch becomes invisible at the moment you most want
+// to see it.
+//
+// `worst` is the headline number after fps. An average hides stutter, and
+// stutter is what "something is off" almost always turns out to be — one
+// 200 ms frame per second reads as a perfectly healthy 55 fps average.
+function makePerf(renderer) {
+  const el = document.getElementById('perf');
+  el.style.display = 'block';
+  let last = performance.now();
+  let acc = 0, frames = 0, worst = 0, since = 0;
+  return () => {
+    const now = performance.now();
+    const ms = now - last;
+    last = now;
+    // The first frame after a load or a tab switch is meaningless.
+    if (ms > 0 && ms < 2000) { acc += ms; frames++; worst = Math.max(worst, ms); }
+    since += ms;
+    if (since < 250 || !frames) return;
+    const avg = acc / frames;
+    const fps = 1000 / avg;
+    const info = renderer.info;
+    const cls = fps < 30 ? 'bad' : fps < 55 ? 'warn' : '';
+    const wcls = worst > 50 ? 'bad' : worst > 25 ? 'warn' : '';
+    el.innerHTML =
+      `<b class="${cls}">${fps.toFixed(0)} fps</b>  ${avg.toFixed(1)} ms\n`
+      + `worst    <b class="${wcls}">${worst.toFixed(1)} ms</b>\n`
+      + `draws    ${info.render.calls}\n`
+      + `tris     ${(info.render.triangles / 1000).toFixed(0)}k\n`
+      + `programs ${info.programs ? info.programs.length : '?'}\n`
+      + `geom/tex ${info.memory.geometries} / ${info.memory.textures}`;
+    acc = 0; frames = 0; worst = 0; since = 0;
+  };
+}
+
 function dumpVehicle() {
   if (range) document.getElementById('out').value = range.dump();
 }
@@ -797,7 +836,11 @@ async function boot() {
   const clock = new THREE.Clock();
   const telEl = document.getElementById('vehTel');
   const camBtn = document.getElementById('vehCam');
+  // Sampled at the TOP of the frame, so renderer.info describes the frame that
+  // was actually drawn rather than one that has not happened yet.
+  const perf = makePerf(renderer);
   const frame = (dt) => {
+    perf();
     if (mode === 'veh') {
       range.update(dt);
       telEl.textContent = range.telemetry();

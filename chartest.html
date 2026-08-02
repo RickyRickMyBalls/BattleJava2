@@ -13,6 +13,17 @@
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
       font-size: 14px; letter-spacing: 2px; color: #6e93a8;
     }
+    /* Top-LEFT, opposite the panel, so it is readable in every tab including
+       the first-person ones where the panel is the only other chrome. */
+    #perf {
+      position: fixed; top: 12px; left: 12px; z-index: 5;
+      background: rgba(8, 20, 32, 0.82); border: 1px solid rgba(127,212,255,0.3);
+      padding: 6px 8px; font-family: Consolas, monospace; font-size: 11px;
+      line-height: 1.45; color: #9fd4ff; white-space: pre; pointer-events: none;
+    }
+    #perf b { color: #e8f4fc; font-weight: normal; }
+    #perf .warn { color: #ffd66e; }
+    #perf .bad { color: #ff7a6b; }
     #panel {
       position: fixed; top: 12px; right: 12px; width: 300px; max-height: calc(100vh - 24px);
       overflow-y: auto; background: rgba(8, 20, 32, 0.92); border: 1px solid rgba(127,212,255,0.35);
@@ -54,6 +65,7 @@
 </head>
 <body>
   <div id="app"></div>
+  <div id="perf" style="display:none"></div>
   <div id="loadmsg">LOADING CHARACTERS…</div>
   <div id="panel" style="display:none">
     <div class="btns" id="modeBtns">
