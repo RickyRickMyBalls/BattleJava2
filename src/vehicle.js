@@ -387,9 +387,17 @@ export class Vehicle {
     // toward whichever side came last in the array.
     for (const w of this.wheels) this._probe(w, upright);
     this._antiRoll();
+    // Suspension first, across every corner, because the TYRE pass needs to
+    // know the whole axle's load before it can divide the drive torque.
+    let totalLoad = 0;
     for (const w of this.wheels) {
       w.force.set(0, 0, 0);
-      if (w.grounded) this._wheelForces(w, h);
+      if (!w.grounded) { w.load = 0; continue; }
+      this._suspension(w, h);
+      totalLoad += w.load;
+    }
+    for (const w of this.wheels) {
+      if (w.grounded) this._tyre(w, h, totalLoad);
     }
     for (const w of this.wheels) {
       if (w.grounded) this._applyForce(w.force, w.contact, h);
@@ -472,16 +480,15 @@ export class Vehicle {
     }
   }
 
-  _wheelForces(w, h) {
-    const T = this.tune;
-
+  // Spring, damper, anti-roll bar and bump stop for one corner. Split out from
+  // the tyre because the drive torque cannot be divided until every corner's
+  // load is known.
+  _suspension(w, h) {
+    _arm.copy(w.contact).sub(this.pos);
     // Velocity of the contact patch: the body's velocity plus the part that
     // comes from the body rotating about its centre of mass. Without the second
     // term there is no yaw damping at all and the vehicle spins up forever.
-    _arm.copy(w.contact).sub(this.pos);
     _v2.copy(this.angVel).cross(_arm).add(this.vel);
-
-    // --- Spring + damper, along the strut ---
     const strutVel = _v2.dot(_up);
     const damp = strutVel < 0 ? this.damperC : this.damperRebound;
     let load = this.springK * w.compression - damp * strutVel + (w.arb || 0)
@@ -489,8 +496,34 @@ export class Vehicle {
     load = Math.max(0, load);       // a spring cannot pull the ground upward
     w.load = load;
     w.force.addScaledVector(_up, load);
+  }
 
-    // --- Tyre ---
+  // Tractive force available at a given road speed, as a multiple of
+  // `driveForce`. Two terms:
+  //
+  //   The linear falloff to nothing at `topSpeed` is what SETS the top speed —
+  //   there is no speed clamp anywhere in this file.
+  //
+  //   `lowGear` is the gearbox. Without it the model has no torque
+  //   multiplication at crawl speed, which is exactly where a hill needs it:
+  //   measured max sustained climb was 29 degrees, and the hog settled to a
+  //   5 m/s stall at 30 rather than pulling through. A real drivetrain trades
+  //   speed for force at the bottom of the range and this is the cheapest
+  //   honest version of that.
+  _driveCurve(v) {
+    const T = this.tune;
+    const falloff = Math.max(0, 1 - v / T.topSpeed);
+    const low = 1 + (T.lowGear - 1) * Math.max(0, 1 - v / T.lowGearSpeed);
+    return falloff * low;
+  }
+
+  _tyre(w, h, totalLoad) {
+    const T = this.tune;
+    const load = w.load;
+
+    _arm.copy(w.contact).sub(this.pos);
+    _v2.copy(this.angVel).cross(_arm).add(this.vel);
+
     // The wheel's own axes: chassis forward/left turned by the steer angle.
     // Built from the chassis quaternion, so they are automatically square to
     // the strut and no re-orthogonalization is needed.
@@ -505,17 +538,26 @@ export class Vehicle {
       * (this.input.handbrake && !w.front ? T.handbrakeGrip : 1);
     const budget = mu * load;
 
-    // Longitudinal. Drive falls off linearly to nothing at topSpeed, which is
-    // what sets the top speed — there is no speed clamp anywhere.
+    // Drive torque is divided by LOAD, not equally. That is what a locked
+    // centre diff does, and the equal split was quietly throwing force away
+    // exactly when it was needed most: climbing, the front axle unloads, so its
+    // quarter of the torque exceeded its grip budget and the excess was clipped
+    // and discarded while the loaded rear sat well inside its own budget with
+    // nothing extra to give. Measured at 40 degrees: front wheels at slip 1.0,
+    // rear at 0.61.
+    const share = totalLoad > 1 ? load / totalLoad : 1 / this.wheels.length;
     let fLong = 0;
-    const driven = this.wheels.length;
     if (this.input.throttle > 0) {
-      fLong += (T.driveForce / driven) * this.input.throttle
-        * Math.max(0, 1 - Math.max(0, this.speed) / T.topSpeed);
+      fLong += T.driveForce * share * this.input.throttle
+        * this._driveCurve(Math.max(0, this.speed));
     } else if (this.input.throttle < 0) {
-      fLong += (T.driveForce / driven) * T.reverseMult * this.input.throttle
+      fLong += T.driveForce * share * T.reverseMult * this.input.throttle
         * Math.max(0, 1 - Math.max(0, -this.speed) / (T.topSpeed * T.reverseMult));
     }
+    // Braking stays an EQUAL split, unlike drive. Brakes are per-corner
+    // hardware with no differential between them, and the friction circle
+    // below already stops an unloaded wheel from using more than it has.
+    const driven = this.wheels.length;
     let braking = this.input.brake * T.brakeForce / driven;
     if (this.input.handbrake && !w.front) braking += T.handbrakeForce / 2;
     if (braking > 0) {

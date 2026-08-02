@@ -529,6 +529,18 @@ export const CFG = {
       // the drift, and it is the number to move if the hog feels planted.
       driveForce: 36000,           // N at a standstill, summed over driven wheels
       topSpeed: 25,                // m/s where drive force has fallen to zero
+      // The gearbox. Tractive force at a standstill is `lowGear` x driveForce,
+      // decaying to 1.0 by `lowGearSpeed`. Without it there is no torque
+      // multiplication where a hill needs it and the measured max sustained
+      // climb was 29 degrees — the hog settled into a 5 m/s stall at 30 rather
+      // than pulling through.
+      //
+      // 1.6 is chosen to sit just UNDER the traction limit on the flat
+      // (57.6 kN commanded against a ~62 kN grip budget), so pulling away is
+      // strong but does not light the tyres up. Raise it and the hog spins its
+      // wheels off the line, which is a different and much worse kind of slow.
+      lowGear: 1.6,
+      lowGearSpeed: 8,             // m/s at which the low-gear boost is gone
       reverseMult: 0.4,
       brakeForce: 60000,           // just past mu*m*g, so the wheels can lock
       handbrakeForce: 40000,       // rear axle only

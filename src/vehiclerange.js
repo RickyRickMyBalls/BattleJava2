@@ -33,6 +33,9 @@ const MESH_STEP = 1.25;     // ground tessellation
 
 const smooth = (t) => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); };
 
+// Angles of the constant-gradient test ramps, in degrees.
+export const GRADES = [15, 25, 35, 45];
+
 // ---------------------------------------------------------------------------
 // The ground, as a function. Features are placed apart so each can be driven at
 // on its own, and every one of them answers a specific tuning question.
@@ -75,6 +78,23 @@ export function rangeHeight(x, z) {
   // out with a constant steering input.
   const bd = Math.hypot(x + 70, z + 70);
   if (bd < 45) h -= 2.2 * (0.5 + 0.5 * Math.cos(Math.PI * bd / 45));
+
+  // GRADE — four constant-gradient ramps at known angles. There is no
+  // max-climb SETTING anywhere in this project: hill climb is emergent from
+  // drive force, the torque curve, grip and mass, so the only way to know the
+  // number is to drive at a slope you already know the angle of. Well clear of
+  // the centre lane and of the camber dome, which reaches x = 110.
+  for (let i = 0; i < GRADES.length; i++) {
+    const cx = 130 + i * 22;
+    const dx = Math.abs(x - cx);
+    if (dx < 8 && z > 20) {
+      // Capped by HEIGHT, not by length, so a steeper ramp is a shorter one —
+      // 22 m of climb is more than enough to show whether the hog pulls through
+      // or stalls, and a 45 degree ramp run to full length would be a wall.
+      const rise = Math.min((z - 20) * Math.tan(GRADES[i] * Math.PI / 180), 22);
+      h = Math.max(h, rise * smooth((8 - dx) / 2.5));
+    }
+  }
 
   return h;
 }
@@ -140,9 +160,16 @@ function buildMarkers(group) {
     lab.position.set(14, rangeHeight(14, d) + 4, d);
     group.add(lab);
   }
+  for (let i = 0; i < GRADES.length; i++) {
+    const cx = 130 + i * 22;
+    const lab = makeLabel(`${GRADES[i]} deg`, '#ff9a5a');
+    lab.scale.set(14, 3.5, 1);
+    lab.position.set(cx, rangeHeight(cx, 26) + 4, 26);
+    group.add(lab);
+  }
   for (const [x, z, text] of [
     [-22, 72, 'JUMP'], [-60, 65, 'WASHBOARD'], [70, 75, 'CAMBER'],
-    [42, -50, 'STEP'], [-70, -70, 'BOWL'],
+    [42, -50, 'STEP'], [-70, -70, 'BOWL'], [174, 14, 'GRADE'],
   ]) {
     const lab = makeLabel(text, '#ffd66e');
     lab.scale.set(18, 4.5, 1);
