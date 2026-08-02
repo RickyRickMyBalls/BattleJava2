@@ -421,6 +421,69 @@ export const CFG = {
       pitchMax: 0.85,
     },
 
+    // The visible linkage. None of this touches the physics — it exists so the
+    // physics can be SEEN, and every gain here is a trim on a value already
+    // derived from the rig's own geometry rather than a number invented here.
+    linkage: {
+      // Suspension hardware, from the owner's own working table for this rig.
+      // It supersedes deriving these from geometry, and the two places the
+      // derivation was WRONG are the argument for that: arm .004 turns about
+      // local Z, not the fore-aft axis the other three use (it is a different
+      // kind of member), and its direction splits front/rear rather than
+      // left/right. Neither is visible in the geometry — it took someone
+      // looking at it move.
+      //
+      // Angles are DELTAS from the authored pose, in degrees, at three states:
+      //     [ full droop, ride height, full bump ]
+      // and the map through them is piecewise-linear rather than one gain,
+      // because the two halves of the travel move at visibly different rates —
+      // arm-001 turns 30 degrees over 0.13 m of droop and 25 over 0.21 m of
+      // bump, which no single number can express.
+      armAngles: {
+        'arm-001': [-10, 20, 45],
+        'arm-002': [-10, 20, 50],
+        'arm-003': [-10, 20, 45],
+        'arm-004': [-10, 7.5, 15],
+      },
+      // The coil-over both swings and compresses. `scaleY` is a ratio on the
+      // node's authored scale, and 1.25 at full droop is exactly the value the
+      // GLB ships with — the authored pose IS the extended one.
+      springAngles: [-5, 10, 25],
+      springScaleY: [1.25, 0.75, 0.50],
+
+      // [corner, node, local axis, direction, family]. Node names carry the
+      // Blender dots; the loader strips them, and the lookup normalizes.
+      hardware: [
+        ['FL', 'ref_sus_arm_FL.001', 'x', -1, 'arm-001'],
+        ['FL', 'ref_sus_arm_FL.002', 'x', -1, 'arm-002'],
+        ['FL', 'ref_sus_arm_FL.003', 'x', -1, 'arm-003'],
+        ['FL', 'ref_sus_arm_FL.004', 'z', -1, 'arm-004'],
+        ['FL', 'ref_sus_spring_FL', 'x', -1, 'spring'],
+        ['FR', 'ref_sus_arm_FR.001', 'x', 1, 'arm-001'],
+        ['FR', 'ref_sus_arm_FR.002', 'x', 1, 'arm-002'],
+        ['FR', 'ref_sus_arm_FR.003', 'x', 1, 'arm-003'],
+        ['FR', 'ref_sus_arm_FR.004', 'z', -1, 'arm-004'],
+        ['FR', 'ref_sus_spring_FR', 'x', 1, 'spring'],
+        ['RL', 'ref_sus_arm_RL.001', 'x', -1, 'arm-001'],
+        ['RL', 'ref_sus_arm_RL.002', 'x', -1, 'arm-002'],
+        ['RL', 'ref_sus_arm_RL.003', 'x', -1, 'arm-003'],
+        ['RL', 'ref_sus_arm_RL.004', 'z', 1, 'arm-004'],
+        ['RL', 'ref_sus_spring_RL', 'x', -1, 'spring'],
+        ['RR', 'ref_sus_arm_RR.001', 'x', 1, 'arm-001'],
+        ['RR', 'ref_sus_arm_RR.002', 'x', 1, 'arm-002'],
+        ['RR', 'ref_sus_arm_RR.003', 'x', 1, 'arm-003'],
+        ['RR', 'ref_sus_arm_RR.004', 'z', 1, 'arm-004'],
+        ['RR', 'ref_sus_spring_RR', 'x', 1, 'spring'],
+      ],
+
+      // Turns of the rim from full left lock to full right. Real cars are
+      // 2.5-3.5; a hog is quicker. This is what makes the wheel read as a
+      // steering wheel rather than a dial — it must move far more than the
+      // road wheels do.
+      steerWheelTurns: 1.4,
+      brakeGlow: 4,        // emissive intensity on the brake lamps
+    },
+
     // Landing on the roof. A flipped hog is a RECOVERABLE situation, not a lost
     // vehicle and not a soft-lock — which is what it was, because the hull had
     // no ground collision and an inverted chassis has its suspension switched

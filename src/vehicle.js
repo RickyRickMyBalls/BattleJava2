@@ -50,6 +50,7 @@ const _q2 = new THREE.Quaternion();
 const _box = new THREE.Box3();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
+const DEG = Math.PI / 180;   // the linkage table is authored in degrees
 const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
 const _t3 = new THREE.Vector3();
@@ -193,6 +194,7 @@ export class Vehicle {
     }
 
     this._measureTurret();
+    this._measureLinkage();
 
     // Hull sample points, from the authored collision shell if it is there and
     // the whole model's bounds if it is not. Corners only: the hull is convex
@@ -282,6 +284,81 @@ export class Vehicle {
       pitchAxis: inParentFrame(pitchRef, _v2),
       muzzleAxis: new THREE.Vector3().fromArray(bestAxis),
     };
+  }
+
+  // The visible linkage: A-arms, coil-overs, the steering wheel, the brake
+  // lights. None of it affects the physics — it exists so the physics can be
+  // SEEN. Four independent corners doing real work every frame read as nothing
+  // at all while the arms are rigid and the springs never move.
+  //
+  // Every axis here is derived off the rig, for the same reason the turret's
+  // are: "the hinge is local X" happens to be true of this export and is
+  // exactly the sort of thing that changes silently when a part is re-authored.
+  // What is true regardless is that an A-arm hinges FORE-AFT and a coil-over
+  // compresses along its own length.
+  _measureLinkage() {
+    const L = { arms: [], springs: [], steer: null, brakeMats: [] };
+    this.linkage = L;
+    const byCode = {
+      FL: 'front_left', FR: 'front_right', RL: 'rear_left', RR: 'rear_right',
+    };
+    const wheelOf = {};
+    for (const w of this.wheels) wheelOf[w.id] = w;
+
+    // Nodes are addressed by the AUTHORED name, dots and all, and normalized
+    // here — three's GLTFLoader strips the dots, so `ref_sus_arm_FL.001` is
+    // `ref_sus_arm_FL001` at runtime. Keeping the table in Blender's spelling
+    // means it can be compared against the .blend without translation.
+    const byName = {};
+    this.group.traverse((o) => { if (o.name) byName[o.name.replace(/\./g, '')] = o; });
+
+    for (const [code, name, axis, dir, family] of V.linkage.hardware) {
+      const node = byName[name.replace(/\./g, '')];
+      const w = wheelOf[byCode[code]];
+      if (!node || !w) {
+        console.warn(`[vehicle] ${this.key}: linkage ${name} missing`);
+        continue;
+      }
+      const entry = {
+        node, wheel: w, family, dir,
+        base: node.quaternion.clone(),
+        axis: new THREE.Vector3(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0, axis === 'z' ? 1 : 0),
+      };
+      if (family === 'spring') {
+        entry.baseScaleY = node.scale.y;
+        L.springs.push(entry);
+      } else {
+        L.arms.push(entry);
+      }
+    }
+
+    this.group.traverse((o) => {
+      if (/^steering_wheel$/i.test(o.name || '') && o.isMesh) {
+        // The column is the axis the disc is THIN along — measured off the
+        // geometry rather than assumed, because the rim is round and the only
+        // thing that distinguishes the column is the short extent.
+        o.geometry.computeBoundingBox();
+        const b = o.geometry.boundingBox;
+        const e = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z];
+        const i = e[0] <= e[1] && e[0] <= e[2] ? 0 : (e[1] <= e[2] ? 1 : 2);
+        L.steer = { node: o, base: o.quaternion.clone(),
+          axis: new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0) };
+        return;
+      }
+
+      // Brake lamps. The material is SHARED — by two meshes here and, because
+      // `clone(true)` shares materials, by every hog on the map. Animating it
+      // in place would light up the whole motor pool together, which is the
+      // same trap ammodisplay.js documents for the digit atlas.
+      if (/^breaklight/i.test(o.name || '') && o.isMesh && o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        o.material = Array.isArray(o.material) ? mats.map((m) => m.clone()) : mats[0].clone();
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          L.brakeMats.push(m);
+          m.emissiveIntensity = 0;
+        }
+      }
+    });
   }
 
   _deriveConstants() {
@@ -812,6 +889,63 @@ export class Vehicle {
     this.group.position.copy(this.pos).sub(_v1);
     this._syncWheelVisuals();
     this._syncTurret();
+    this._syncLinkage();
+  }
+
+  // Suspension state -> one of three authored poses, piecewise-linear:
+  // [full droop, ride height, full bump]. Two segments rather than one gain
+  // because the halves of the travel move at visibly different rates — the
+  // droop side covers 0.13 m and the bump side 0.21 m, and the arms turn
+  // through more degrees on the shorter half.
+  _travelMap(compression, triple) {
+    const sag = this.sagLen;
+    if (compression <= sag) {
+      const u = sag > 1e-4 ? Math.max(0, compression / sag) : 1;
+      return triple[0] + (triple[1] - triple[0]) * u;
+    }
+    const span = this.tune.travel - sag;
+    const u = span > 1e-4 ? Math.min(1, (compression - sag) / span) : 0;
+    return triple[1] + (triple[2] - triple[1]) * u;
+  }
+
+  // Drive the visible linkage off state the physics already computed. Costs
+  // nothing but a few quaternions, and it is the difference between a hog that
+  // has suspension and a hog that looks like it does.
+  _syncLinkage() {
+    const L = this.linkage;
+    if (!L) return;
+    const K = V.linkage;
+
+    for (const a of L.arms) {
+      const deg = this._travelMap(a.wheel.compression, K.armAngles[a.family]);
+      a.node.quaternion.copy(a.base)
+        .multiply(_q2.setFromAxisAngle(a.axis, a.dir * deg * DEG));
+    }
+
+    for (const s of L.springs) {
+      const deg = this._travelMap(s.wheel.compression, K.springAngles);
+      s.node.quaternion.copy(s.base)
+        .multiply(_q2.setFromAxisAngle(s.axis, s.dir * deg * DEG));
+      s.node.scale.y = s.baseScaleY
+        * (this._travelMap(s.wheel.compression, K.springScaleY) / K.springScaleY[0]);
+    }
+
+    if (L.steer) {
+      // Lock to lock in `steerWheelTurns` turns of the rim, so the wheel spins
+      // far more than the road wheels do — which is what makes it read as a
+      // steering wheel rather than a dial.
+      const ratio = (K.steerWheelTurns * Math.PI * 2) / (this.tune.steerMax * 2);
+      L.steer.node.quaternion.copy(L.steer.base)
+        .premultiply(_q2.setFromAxisAngle(L.steer.axis, this.steerAngle * ratio));
+    }
+
+    if (L.brakeMats.length) {
+      // Lit under the brake, and also whenever the hog is being reversed —
+      // both are "the driver is on the pedal".
+      const on = this.input.brake > 0 || this.input.handbrake;
+      const want = on ? K.brakeGlow : 0;
+      for (const m of L.brakeMats) m.emissiveIntensity = want;
+    }
   }
 
   _syncTurret() {
