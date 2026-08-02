@@ -238,6 +238,10 @@ export class Player {
 
   _bindInput() {
     this._on(document, 'keydown', (e) => {
+      // A held key repeats. Most bindings here do not care — a second reload
+      // request mid-reload is a no-op — but anything that STEPS THROUGH a list
+      // does, so the edge is captured for them.
+      const repeat = !!this.keys[e.code];
       this.keys[e.code] = true;
       if (this.game.menuOpen) return; // armory owns the keyboard
       if (e.code === 'KeyR' && !this.freecam) this.startReload();
@@ -245,7 +249,13 @@ export class Player {
       if (e.code === 'KeyF') this.game.toggleFreecam();
       if (e.code === 'KeyO' && !this.freecam) this.setThirdPerson(!this.thirdPerson);
       if (e.code === 'KeyP') this.game.togglePause();
-      if (e.code === 'KeyT') this.game.cycleTimeScale();
+      // T is context-sensitive rather than moved: in a vehicle it changes
+      // seats, and everywhere else it stays the time-scale cycle it has always
+      // been. The two can never both apply, so neither had to give up the key.
+      if (e.code === 'KeyT') {
+        if (this.vehicle) { if (!repeat) this.changeSeat(); }
+        else this.game.cycleTimeScale();
+      }
       if (!this.freecam) {
         // Number keys follow the loadout's slot order: 1-2 weapons, 3-4 gadgets.
         // Grenade and melee get their own keys when those slots are implemented.
@@ -1253,8 +1263,33 @@ export class Player {
     this.turretHeat = 0;
     this.viewmodel.visible = false;
     this.game.hud.setPrompt(null);
-    this.game.hud.message('E TO GET OUT', 2);
+    this.game.hud.message('E TO GET OUT · T TO CHANGE SEAT', 2.5);
     return true;
+  }
+
+  // Move to the next free seat, wrapping. Occupied seats are SKIPPED rather
+  // than blocked on, so with a crewed hog T walks you round whatever is
+  // actually empty instead of stopping dead at the first taken one.
+  changeSeat() {
+    const v = this.vehicle;
+    if (!v) return false;
+    const n = v.seats.length;
+    for (let k = 1; k <= n; k++) {
+      const i = (this.vehicleSeatIdx + k) % n;
+      if (v.seats[i].occupant) continue;
+      v.exitSeat(this);              // zeroes the controls if it was the driver's
+      v.enterSeat(i, this);
+      this.vehicleSeatIdx = i;
+      // A trigger held while switching must not carry over — the ring gun and
+      // a carried rifle both read `firing`, and arriving in the turret already
+      // shooting is a burst nobody asked for.
+      this.firing = false;
+      this.turretCooldown = 0;
+      this.game.hud.message(v.seats[i].def.label, 1.5);
+      return true;
+    }
+    this.game.hud.message('NO FREE SEAT', 1.2);
+    return false;
   }
 
   exitVehicle() {
