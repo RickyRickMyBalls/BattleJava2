@@ -168,12 +168,23 @@ export class World {
       const g = new THREE.Group();
       g.position.set(def.x, y, def.z);
 
-      const pad = new THREE.Mesh(
-        new THREE.CylinderGeometry(26, 26, 0.3, 24),
-        new THREE.MeshLambertMaterial({ color: 0x4a545e })
-      );
-      pad.position.y = 0.15;
-      g.add(pad);
+      // The pad is blockout, and only the procedural map needs it: there is
+      // nothing but bare noise terrain under a demo HQ, so the disc is what
+      // says "base" at all. An authored map brings its own ground.
+      //
+      // It also actively lies on a GLB map. Its height comes from the
+      // HEIGHTFIELD, and that is not where anything stands: soldiers and
+      // vehicles settle onto the authored floor shell, which at the blue HQ on
+      // map-3 sits 0.6-2.6 m LOWER. The disc therefore renders above the
+      // surface everyone is actually on, and swallows whatever parks on it.
+      if (this.def.type !== 'glb') {
+        const pad = new THREE.Mesh(
+          new THREE.CylinderGeometry(26, 26, 0.3, 24),
+          new THREE.MeshLambertMaterial({ color: 0x4a545e })
+        );
+        pad.position.y = 0.15;
+        g.add(pad);
+      }
 
       const pole = new THREE.Mesh(
         new THREE.CylinderGeometry(0.35, 0.35, 26, 8),

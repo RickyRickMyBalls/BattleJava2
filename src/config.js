@@ -356,6 +356,146 @@ export const CFG = {
     },
   },
 
+  // Vehicles — intake pass. Nothing here drives physics yet; this is the
+  // placement half, which is what the first step needs to answer: does a
+  // 5.6 m Warthog read at the right size next to a 1.86 m marine, on a map
+  // whose geometry was normalized by MARKER SPAN rather than by architecture
+  // (maps.js scales map-3 to ~0.28x). The vehicle is the first object in the
+  // game with an unambiguous real-world size, so it is the first thing that
+  // can prove the map's scale right or wrong.
+  vehicle: {
+    // Hogs per FC_VEHICLE_ marker, laid out across the marker's facing. The
+    // markers carry position only — no rotation is authored on them — so
+    // facing is derived (see VehicleManager._spawnAll) rather than read.
+    perSpawn: 2,
+    spacing: 5.0,        // metres between neighbours, measured across the line
+
+    // Physics runs on a FIXED substep, not the frame's dt. A 0.05 s frame
+    // (game.js clamps there) through a spring stiff enough to hold three tonnes
+    // is unconditionally unstable — the hog launches. The accumulator is
+    // deterministic under `_simStep`'s repeated same-dt calls, so 8x
+    // fast-forward stays numerically identical to 8 real frames, which is the
+    // property scripted battle testing depends on.
+    substep: 1 / 120,
+    maxSubsteps: 8,      // bail out rather than spiral if a frame is very long
+
+    enterRange: 4.0,     // metres from the driver's door to prompt
+
+    // Third-person boom while driving. Further out and higher than the
+    // infantry boom (`player.thirdPerson`) because the thing being framed is
+    // 6 m long and what you need to see is the ground it is about to hit.
+    thirdPerson: { dist: 11, lift: 3.4, minDist: 3, skin: 0.5, lerp: 5 },
+
+    // ---------------------------------------------------------------------
+    // Per-vehicle tuning. Everything below is a number to be found in
+    // /chartest.html's VEHICLE tab (Phase 3) rather than reasoned about here;
+    // these are the starting values, chosen to be roughly right rather than
+    // right. What is NOT arbitrary is the parameterization — see `sag`.
+    // ---------------------------------------------------------------------
+    warthog: {
+      mass: 3000,                  // kg
+      // Centre of mass in the chassis frame (origin = ground, centre of the
+      // wheelbase; +Z forward, +X left, +Y up).
+      //
+      // NOT read from `ref_body_rotation`, deliberately. That empty sits
+      // 1.457 m above the ground and 0.356 m behind the axle midpoint — far
+      // too high to be a centre of mass on a vehicle 2.29 m tall, and a hog
+      // with its mass there would roll over in every turn. It is much more
+      // likely a modelling pivot. Until that is confirmed (VEHICLE_PLAN.md,
+      // Open question 1) the COM is a tuned number, and this is it.
+      com: [0, 0.66, -0.10],
+      // Box used for the inertia tensor [x=width, y=height, z=length], in
+      // metres, and a per-axis multiplier over the uniform-box result.
+      // Real vehicles yaw more willingly than a solid box of their dimensions,
+      // which is what the 0.8 buys.
+      inertiaBox: [2.3, 1.5, 4.8],
+      inertiaScale: [1.0, 0.8, 1.0],   // [pitch (X), yaw (Y), roll (Z)]
+
+      wheelRadius: 0.631,          // measured off the tyre mesh
+
+      // --- Suspension -----------------------------------------------------
+      // Spring rate is DERIVED, not authored, and that is the important part:
+      //     k = (mass * g) / (4 * travel * sag)
+      // `sag` is the fraction of total travel the vehicle uses just holding
+      // itself up. That is how real suspension is specced, and it means
+      // changing the mass does not silently change the ride height — the two
+      // knobs stay independent, which is what makes them tunable by hand.
+      travel: 0.34,                // total strut travel, metres
+      sag: 0.38,                   // fraction of travel used at rest
+      damping: 0.55,               // fraction of critical, on compression
+      dampingRebound: 0.85,        // higher on the way back out, as on a real damper
+      // Load transferred across each axle per metre of compression difference,
+      // as a fraction of the spring rate. This is the main "does the body flop"
+      // knob. 0 is a hog that leans alarmingly; 1 is a go-kart.
+      antiRoll: 0.42,
+      // The end of the strut, as a multiple of the spring rate. Only acts on
+      // travel PAST the stop, so it is invisible in normal driving and is the
+      // thing that stops a hard landing putting the floor pan through the rock.
+      bumpStop: 10,
+
+      // --- Drive ----------------------------------------------------------
+      // Sized against CFG.gravity, which is 18 — nearly double real gravity,
+      // and a world constant every jump and fall in the game already uses. Do
+      // NOT reach for real-vehicle numbers here: a tyre's whole force budget is
+      // mu * load, load scales with g, and at g = 18 a "1 g" manoeuvre is
+      // 18 m/s². Everything below is quoted as a fraction of that budget, which
+      // is the only frame in which these numbers mean anything.
+      //
+      // 36000 N on 3000 kg is 12 m/s² off the line, against a lateral limit of
+      // 1.2 * 18 = 21.6. So full throttle spends over half the tyre's budget,
+      // and asking for a corner at the same time overdraws it. That ratio is
+      // the drift, and it is the number to move if the hog feels planted.
+      driveForce: 36000,           // N at a standstill, summed over driven wheels
+      topSpeed: 25,                // m/s where drive force has fallen to zero
+      reverseMult: 0.4,
+      brakeForce: 60000,           // just past mu*m*g, so the wheels can lock
+      handbrakeForce: 40000,       // rear axle only
+      rollResist: 0.015,           // Coulomb, as a fraction of wheel load
+      airDrag: 5,                  // N per (m/s)^2
+
+      // --- Steering -------------------------------------------------------
+      // Speed-sensitive: full lock is available when parking and roughly a
+      // quarter of it at top speed. Without this a hog at 25 m/s spins on the
+      // spot the instant A is touched.
+      steerMax: 0.60,              // radians at a standstill
+      steerMaxFast: 0.17,          // radians at topSpeed
+      steerRate: 3.6,              // rad/s toward the held direction
+      steerReturn: 6.0,            // rad/s back to centre when released
+
+      // --- Tyres ----------------------------------------------------------
+      // `grip` is the friction coefficient mu — the tyre's total force budget
+      // is mu * (that wheel's current load), and longitudinal and lateral
+      // demand SHARE it (the friction circle). That sharing is what produces
+      // the Warthog's signature: get greedy with the throttle and the rear
+      // spends its budget driving instead of gripping, and the back steps out.
+      // It is not a scripted drift; there is no drift code.
+      grip: 1.2,
+      gripRear: 1.1,               // looser than the front on purpose: the rear
+                                   // must run out of grip FIRST, or the hog
+                                   // understeers into every corner instead of
+                                   // rotating. This gap is the handling.
+      cornerStiffness: 8.5,        // force per radian of slip, in units of mu
+      // Multiplier on rear mu while held. 0.4 was a full 180 from one tap —
+      // spectacular and useless. This is a slide you can hold and steer out of,
+      // which is the version that is actually worth having on the key.
+      handbrakeGrip: 0.62,
+
+      // --- Hull -----------------------------------------------------------
+      hullSkin: 0.35,              // push-out radius on each hull sample point
+      restitution: 0.12,           // how much of the impact speed comes back
+
+      angularDamping: 0.6,         // 1/s, keeps a spin from running forever
+
+      // --- Sleep ----------------------------------------------------------
+      // A parked hog stops integrating once it has been still for a moment.
+      // Without it, four vehicles' worth of springs jitter forever at the
+      // bottom of their travel and the motor pool visibly hums.
+      sleepSpeed: 0.25,            // m/s below which it may fall asleep
+      sleepSpin: 0.25,             // rad/s, same
+      sleepDelay: 0.7,             // seconds of stillness before it does
+    },
+  },
+
   // Deployed supply crates — the shared rules. What each crate HOLDS and HANDS
   // OUT lives on its gadget def in `GADGETS`, because that is what differs;
   // everything here is true of any crate.
@@ -2033,6 +2173,21 @@ export const ASSET_PATHS = {
   // walked straight off this map, so adding one is a single entry.
   props: {
     frag: { url: '/UNSC/weapons/Gernade/Frag.glb', len: 0.12 },
+  },
+  // Drivable vehicles. Deliberately NOT length-normalized the way characters,
+  // weapons and props are: the Warthog is authored in metres (5.60 m long,
+  // 0.63 m wheel radius, 3.95 m wheelbase) and normalizing it would erase the
+  // exact quantity the intake pass exists to check. `forward` states the
+  // authored facing so the loader can turn the model onto the +Z-forward
+  // convention the soldiers already use — both the Warthog and the Pelican are
+  // authored -X forward, +Y up (see the Pelican's asset.json).
+  //
+  // The runtime hierarchy is a contract: every moving part is a named empty
+  // (`ref_contact_*`, `ref_steer_*`, `ref_seat_*`, `ref_camera_*`,
+  // `ref_turret_base_rotate_yaw`, `ref_door*`…) and there are no animation
+  // clips — code drives all of it. `collision_warthog` is the authored hull.
+  vehicles: {
+    warthog: { url: '/UNSC/Land Vehicles/warthog-v3.glb', forward: '-x' },
   },
   animations: {
     // Two rifle idles, assigned per soldier at spawn so a crowd standing around

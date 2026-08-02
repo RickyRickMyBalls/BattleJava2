@@ -1,0 +1,502 @@
+# Vehicle Plan — the Warthog
+
+Companion to `GAME_DESIGN_PLAN.md` (the whole-game document),
+`CLASS_AND_GADGET_PLAN.md` (what a soldier is and carries) and
+`GAME_TYPE_PLAN.md` (what the match is). This one covers only **what a vehicle
+is** — the physics, the seats, the crew, and how bots use one — so it can be
+read on its own.
+
+It is written around the Warthog because the Warthog is first and because it is
+the hardest of the wheeled vehicles: four independent suspension corners, three
+crewed seats plus riders, a manned turret, and a body that has to feel like it
+weighs three tonnes. Anything that can carry the Warthog can carry the Mongoose
+and the Scorpion. The doc names the general seam wherever one exists, but it
+does not design the Pelican — air is a different problem and gets its own pass.
+
+## Decision labels
+
+Same vocabulary as the sibling docs.
+
+- **Locked:** Owner-decided, or built and verified. Treat as a project requirement until deliberately revised.
+- **Working:** Proposed and not yet owner-approved, or approved but unvalidated by play.
+- **Open:** A decision is still required.
+- **Long-term:** Intended future, not required for the first playable.
+
+---
+
+## The thing being built
+
+**Locked — the rule that decides borderline cases:**
+
+> The Warthog is a **physics object you drive**, not a camera on rails that
+> plays a driving animation.
+>
+> Take: mass, momentum, weight transfer, four independent suspension corners,
+> grip that runs out, air time, and a chassis that can end up on its roof.
+>
+> Leave: fixed-speed waypoint following, snapping to terrain normals,
+> "arcade" as an excuse for a box that slides.
+
+This is the expensive call and it is made deliberately. The Warthog's whole
+identity in its source material is the *handling* — the slide, the bounce, the
+gunner hanging on. A vehicle that merely translates across the map at 20 m/s
+would cost a tenth as much and would be worth less than nothing, because it
+would make the map smaller without making it more fun.
+
+The corollary is that Phase 2 is the phase that matters. Everything after it is
+addition; if the chassis does not feel right, nothing built on top rescues it.
+
+---
+
+## What is already true
+
+**Locked.** Phase 1 shipped and was verified in-engine. These are measurements,
+not intentions, and the rest of the plan is built on them.
+
+### The model is authored in metres
+
+| Quantity | Measured | Real-world reference |
+| --- | --- | --- |
+| Overall extent (incl. turret, hooks) | 3.07 W × 3.47 H × 6.26 L m | — |
+| Body mesh alone | 2.86 W × 2.29 H × 5.60 L m | ~3.2 × 2.2 × 5.8 m |
+| Wheelbase | 3.948 m | — |
+| Track | 2.42 m | — |
+| Wheel radius | 0.631 m | — |
+
+Verified against a 1.86 m marine standing beside it: head at the top of the
+windshield, hood at chest height. **The model needs no scale normalization, and
+map-3's architecture agrees with it.** This is why `prepareVehicle` in
+`assets.js` deliberately does *not* normalize vehicles the way it normalizes
+characters (to a measured height) and weapons/props (to a measured length) — a
+vehicle's real-world size is a fact about the model, not a design number we own,
+and normalizing would hide a mis-scaled export instead of showing it.
+
+### The model is -X forward, +Y up
+
+Confirmed three ways: the baked 180° Y rotations that put `headlight` and
+`engine_body` at x ≈ −3.1 while `breaklight` sits at x ≈ +2.44; the Pelican's
+`asset.json`, which documents the same convention for the air-vehicle intake
+lane; and visually, in-engine, after the correction.
+
+The loader turns this onto the **+Z-forward, +Y-up** convention the soldiers and
+the AI already use, inside a nested group so that `wrapper.rotation.y` stays a
+plain world yaw no caller has to reason about. After correction the contact
+refs read:
+
+```
+front_left  [ +1.21, 0.059, +1.974 ]     rear_left  [ +1.21, 0.059, -1.974 ]
+front_right [ -1.21, 0.059, +1.974 ]     rear_right [ -1.21, 0.059, -1.974 ]
+```
+
+Front on +Z and left on +X — exactly what `forward × up` gives for a +Z/+Y rig,
+so the rig's naming is internally consistent and every `ref_*` in it can be
+trusted.
+
+### The contact empties are hardpoints, not contact points
+
+`ref_contact_*` sits **5.9 cm above** where the tyre geometry actually meets the
+ground. Predicted from the GLB (`ref_steer` is 0.572 above `ref_contact`, wheel
+radius is 0.631) and confirmed in-engine. The loader therefore grounds off the
+**wheel meshes**, not the empties.
+
+Phase 2 must not quietly re-inherit this error: the suspension ray's rest length
+is measured from the empty, but the wheel's visual position is measured from the
+tyre.
+
+---
+
+## The rig contract
+
+**Locked.** `warthog-v3.glb` carries **no animation clips**. Every moving part is
+a named empty and code drives all of it. That is the contract between the
+Blender file and the runtime, and it is the reason a vehicle is cheap to add
+once the system exists.
+
+| Purpose | Nodes | Driven by |
+| --- | --- | --- |
+| Chassis root / pivot | `ref_warthog_root` → `ref_body_rotation` | Phase 2 |
+| Wheel corners | `ref_contact_*` → `ref_steer_*` → `wheel_*` → `rim_*` | Phase 2 |
+| Suspension linkage | `ref_sus_arm_{FL,FR,RL,RR}.001–.004`, `ref_sus_spring_*` | Phase 4 |
+| Seats | `ref_seat_driver`, `ref_seat_passenger` | Phase 5 |
+| Seat cameras | `ref_camera_driver`, `ref_camera_passenger`, `ref_camera_gunner` | Phase 2 (driver), Phase 5 (rest) |
+| Turret | `ref_turret_base_rotate_yaw` → `ref_gun_turret_handle_rotate_pitch` → `ref_muzzle_gunner` | Phase 5 |
+| Doors | `ref_door.001`–`.014`, `ref_door_interior.001/.002`, `ref_door_trunk` | Phase 4 |
+| Driver controls | `ref_steering_wheel`, `ref_throttle`, `pedal_Gas`, `pedle_Break` | Phase 4 |
+| Buttons | `button_engine`, `button_{driver,passenger}_seat_{F,B}` | Open |
+| FX emitters | `ref_exhaust.001/.002`, `headlight`, `breaklight`, `light_underglow_right` | Phase 4 |
+| Tow hooks | `ref_hook.001`–`.003` | Long-term |
+| Collision hull | `collision_warthog` (2486 v) | Phase 2 |
+
+### Two traps in the rig
+
+**Locked — steering must be applied as a quaternion multiply.** The right-side
+corners carry a baked ±90° Y pair (`ref_contact_FR` at +90, `ref_steer_FR` at
+−90) that nets to identity. Writing `ref_steer.rotation.y = angle` wipes the
+authored half and mirrors that wheel. The correct form is
+`quaternion = authoredQuat × quatY(angle)`, which is valid on all four corners
+because Y rotations commute with Y rotations.
+
+**Locked — wheels spin about their own local Z.** The wheel discs are authored
+in the XY plane, thin in Z, on every corner. Not X, and not "whichever axis
+points sideways in world space".
+
+---
+
+## The physics model
+
+**Working:** A hand-rolled **raycast vehicle**. No physics engine.
+
+`package.json` carries `three` and `three-mesh-bvh` and nothing else, and the
+codebase's whole idiom is analytic-or-BVH: terrain height is a function
+(`world.js:34`), collision is BVH raycasts (`collision.js`), nothing anywhere
+integrates a rigid body. Pulling in ammo.js or Rapier to drive one jeep would
+add a WASM dependency, a second source of truth for "where is the ground", and a
+substepping model that has to be reconciled with `game._simStep`'s existing
+`timeScale` substepping — which is what makes 8× fast-forward numerically
+identical to 8 real frames, and which the project relies on for scripted battle
+testing.
+
+A raycast vehicle is roughly 200 lines and is the model that actually produces
+the feel we want. The shape:
+
+1. **Chassis** — position, quaternion, linear velocity, angular velocity.
+   Diagonal box inertia tensor. Full 3-DOF rotation, not yaw-only: landing
+   sideways off a ridge *is* the Warthog, and yaw-only closes that off
+   permanently for a saving of about thirty lines.
+
+2. **Four suspension rays** — cast down from each corner's hardpoint using the
+   same two-tier grounding rule every other entity uses (`collision.groundAt`
+   first so tunnels and bridges work, `world.heightAt` as fallback). See
+   "Grounding must match the infantry" below.
+
+3. **Spring force** `k·compression − c·ẏ` at each contact. This alone produces
+   the squat under throttle, the dive under braking and the roll in a turn —
+   they are not separate features, they fall out of having four independent
+   springs and a centre of mass that is not at ground level.
+
+4. **Longitudinal force** from throttle and brake at each contact patch.
+
+5. **Lateral force** from a slip-angle model that **saturates at μ·Fz**. This is
+   the line that separates a vehicle from a sliding box, and it is where the
+   Warthog's signature drift comes from. Grip running out has to be a
+   consequence of load, not a speed threshold.
+
+6. **Hull collision** — sample points derived from `collision_warthog`, pushed
+   out against `wallBvh.closestPointToPoint` and `world.coverBoxes`, with
+   velocity reflected along the contact normal.
+
+**Working — centre of mass sits at `ref_body_rotation`.** It is 0.355 m forward
+of the axle midpoint and 1.235 m above the root, which is a plausible COM for a
+front-engine vehicle and is almost certainly what the empty was authored for.
+See the Open questions.
+
+### Grounding must match the infantry
+
+**Locked.** A vehicle grounds by the same rule a soldier does — floor shell
+first, heightfield fallback — seeded from the heightfield rather than from
+somewhere safely high. `groundAt` takes the *first* floor it meets casting down,
+so seeding from 200 m finds roofs and bridge decks instead of the surface the
+people walking around the vehicle are standing on.
+
+A vehicle that grounds by a different rule than the infantry is a vehicle that
+parks in its own private world, and every bug that follows from that is
+invisible until something tries to stand on it.
+
+---
+
+## The seat model
+
+**Working.** Seats are a table in config keyed to the rig's ref names, not a
+class hierarchy. A seat declares where the body sits, where the camera goes, and
+what the occupant may do:
+
+```js
+seats: [
+  { id: 'driver',    seat: 'ref_seat_driver',    camera: 'ref_camera_driver',    can: ['drive'] },
+  { id: 'gunner',    seat: null,                 camera: 'ref_camera_gunner',    can: ['turret'] },
+  { id: 'passenger', seat: 'ref_seat_passenger', camera: 'ref_camera_passenger', can: ['weapon'] },
+  // tailgate riders — see Open questions, the empties do not exist yet
+]
+```
+
+**Working:** every seat has both a first-person and a third-person view, and the
+toggle is the one the player already has (`O`, `player.js:231`). Third person
+reuses the `_applyBoom` shape at `player.js:1629` — the same collision-aware
+boom, with its own `CFG` block, boomed off the chassis instead of the eye.
+
+**Locked — the controller branches, it does not fork.** `Player.update` gains a
+seat branch exactly the way it already branches to `updateDowned` at
+`game.js:343`. A second Player subclass for "in a vehicle" would duplicate
+input, aim, weapon and HUD handling and the two copies would drift.
+
+An occupied soldier stays in `game.allSoldiers` — they are still shootable, and
+the passenger can still fire. What changes is that `s.vehicle` is set, so
+`soldier._move` skips and the body is parked at its seat ref.
+
+---
+
+## Build order
+
+**Working:** Eight phases. Each one is useful before the next exists, and each
+one ends in something that can be *looked at* rather than reasoned about.
+
+### Phase 1 — Intake ✅ DONE
+
+Load the GLB, park two hogs at each `FC_VEHICLE_` marker, screenshot next to a
+marine.
+
+**Built:** `ASSET_PATHS.vehicles` + `CFG.vehicle` in `config.js`,
+`prepareVehicle` in `assets.js`, `src/vehicle.js` (`VehicleManager` + `Vehicle`
+with a per-instance `ref_*` index), wiring in `game.js`.
+
+**Proved:** scale, facing, and that the rig's naming is trustworthy. Also
+surfaced the blue-HQ collision-floor problem below, which was pre-existing and
+had been invisible because nothing had ever needed to agree with the ground to
+within a metre.
+
+**Deliberately not done:** anything that moves.
+
+### Phase 2 — Chassis and suspension ✅ DONE
+
+The full raycast vehicle above. Player drives with WASD (S is brake-then-
+reverse, Space is the handbrake), E gets in and out, camera on
+`ref_camera_driver` in first person and a collision-aware boom in third.
+
+**Built:** `CFG.vehicle.warthog` (the whole tuning block), the `Vehicle` rigid
+body + `Wheel` corners in `vehicle.js`, and the driving branch in `player.js`
+(`enterVehicle` / `_updateDriving` / `updateVehicleCamera` / `_applyVehicleBoom`).
+
+**Measured, not asserted:**
+
+| Check | Result |
+| --- | --- |
+| Rest state | Four loads sum to 54,000 N = mass x gravity exactly; compression 0.125 vs 0.129 predicted sag |
+| Acceleration | 0 to 20 m/s in 5 s, top speed 22.4 m/s; rear squats to 0.143 while front extends to 0.093 |
+| Cornering | 0.85 g sustained, body leans 7.4 degrees and settles, inside front wheel lifts to 0 N while the outside rear takes 17,942 N |
+| Lift-off | Body slip angle swings -5.5 to +9.5 degrees — trailing-throttle rotation, unscripted |
+| 4 m drop at 11 m/s | Bottoms the springs, rebounds, settles level in 0.75 s |
+| 200 frames at 20 fps | Finite, upright, still driving — the fixed substep holds |
+| Cost | 0.44 ms/frame for 64 soldiers and 7 vehicles |
+
+**Four bugs worth remembering**, all found by measurement rather than by looking:
+
+1. **Wheel forces must be applied in a second pass.** Applying each corner as it
+   was computed meant later corners solved against a body the earlier ones had
+   already pushed. It showed as a persistent 0.4 degree roll driving in a
+   straight line, leaning toward whichever side came last in the array.
+2. **Rolling resistance was viscous, not Coulomb.** Written as `-v * k * load`
+   it is a damper worth 14 kN at speed, and it quietly capped the hog at
+   13.6 m/s with a 25 m/s top speed configured.
+3. **No bump stop.** A 4 m drop put the body 0.45 m below its resting height —
+   the floor pan through the rock. A second, much stiffer spring acting only on
+   the overshoot fixed it.
+4. **A three.js camera looks down its own -Z**, and the chassis frame is +Z
+   forward, so handing the camera the chassis orientation aimed it out of the
+   tailgate. The infantry path already carries the same offset as
+   `s.yaw = this.yaw + Math.PI`.
+
+**Deliberately not done:** seats other than the driver, the turret, damage, any
+cosmetic linkage. The body is hidden while driving because it has no seated pose
+yet and would stand upright through the roll cage.
+
+**Left for Phase 3 to decide:** the handbrake fully locks the rear axle, which
+spins the hog 180 degrees from one tap at 20 m/s. That is what a locked axle
+does and the model is behaving; whether it is the *feel* wanted is a tuning
+call, not a code one.
+
+### Phase 3 — The tuning range
+
+A `VEHICLE` tab in `/chartest.html`: flat ground, a ramp, a bank, live sliders
+for mass, COM offset, spring rate, damper rate, grip coefficient, torque curve,
+steer limit and speed-sensitive steer falloff. Values paste back into
+`CFG.vehicle.warthog` exactly the way the `BACK`, `GRIP` and `VIEWMODEL` tabs
+already work.
+
+**Locked:** this is how the project tunes — build the UI, do not guess the
+numbers. It is listed as its own phase rather than folded into Phase 2 because
+it is the tool that *finishes* Phase 2, and treating it as optional polish is
+how Phase 2 ends up hand-tuned badly and never revisited.
+
+### Phase 4 — The parts that move because the physics moved
+
+Purely cosmetic, and only possible once there is real motion to drive them.
+
+- Suspension linkage: rotate `ref_sus_arm_*` by `k·compression`, aim and stretch
+  `ref_sus_spring_*` between their endpoints.
+- Doors and the tailgate. **This needs a tuner, not a guess** — there are 14
+  `ref_door*` empties with varied baked rotations, no clips, and no way to tell
+  from the file which are cab doors, which are engine panels and which way each
+  swings. A `DOOR` tab (hinge axis + open angle per ref) is the same shape as
+  every other tuning tab in the project.
+- Steering wheel, throttle lever, pedals, brake lights, exhaust, headlights.
+
+### Phase 5 — Seats and the turret
+
+Passenger, gunner, tailgate riders. Enter/exit on the existing `E` interact key,
+folded into the priority chain in `_updateInteract` (casualties already win over
+crates there; a vehicle joins the same ordering rather than adding a second key).
+
+The turret: `ref_turret_base_rotate_yaw` for yaw,
+`ref_gun_turret_handle_rotate_pitch` for pitch, `ref_muzzle_gunner` for the shot
+origin, and a `WEAPONS.hogturret` entry so it fires through
+`combat.firePlayerShot` like everything else rather than growing a private
+damage path.
+
+### Phase 6 — Damage, roadkill and repair
+
+- Vehicle hull into `combat.traceHit` (`combat.js:322`), on the same
+  nearest-wins compare the rally beacon already uses at line 371 — so a round
+  never passes through a hog to hit the soldier behind it.
+- Run-over: relative speed above a threshold does damage scaled by it. **Working:**
+  this should hurt the *hog* too. A Warthog that farms infantry with no cost is
+  the version of this feature nobody enjoys playing against.
+- The repair tool already works on "whatever it is pointed at"
+  (`repairtool.js:17`) and should need little more than a target type.
+- Destruction, wreck, respawn timer.
+
+### Phase 7 — Bots drive
+
+**Working:** vehicle use is a **squad-level** decision, not an individual one.
+`TeamBrain.replan` (`ai.js:168`) assigns a squad to a vehicle when its objective
+is far enough that driving beats walking; the squad's members fill seats by role
+(leader gunners, the rest ride).
+
+The driver is a pure-pursuit controller onto the existing objective, with
+obstacle avoidance sampled off the heightfield gradient. The gunner reuses
+`_acquireTarget` unchanged — it already picks targets off a position and a
+facing, and a turret is just a different position and facing.
+
+**Open:** whether bots may capture a sector *from* a vehicle, or must dismount.
+Dismounting is more readable and much more likely to be what a player expects.
+
+### Phase 8 — The second vehicle
+
+The Mongoose, because it is the cheapest possible proof: two wheels, one seat,
+no turret. If adding it is one `ASSET_PATHS.vehicles` entry plus one `CFG` block,
+the abstraction is right. If it needs code, the abstraction is wrong and this is
+the cheapest possible moment to find out.
+
+`Scorpion-runtime.glb` and `Grizzly.glb` are already in the kit and are tracked
+vehicles — a different steering model, and explicitly **Long-term**.
+
+---
+
+## Open questions
+
+Ordered by how much the answer changes.
+
+### 1. What is `ref_body_rotation` for?
+
+The wheels are parented *under* it, so it cannot be a body-roll node in the usual
+sense — rolling it would roll the wheels with it.
+
+**Measured** (chassis frame): it sits at `[0, 1.457, -0.356]`, i.e. 1.457 m above
+the ground and 0.356 m behind the axle midpoint. That is far too high to be a
+centre of mass on a vehicle 2.29 m tall — a hog with its mass there rolls over in
+every turn — so Phase 2 does **not** use it. `CFG.vehicle.warthog.com` is a tuned
+`[0, 0.66, -0.10]` instead, and it works. The question is now only whether the
+empty means something else that a later phase should honour.
+
+### 2. Should `collision_warthog` be visible?
+
+The loader currently hides it. It ships with a material literally named
+`collision`, which reads as intent, but the project's map rule is the
+opposite — authored collision parents *render as authored* because they double
+as real floors and walls (`CLAUDE.md`). This is one line in `prepareVehicle`.
+
+### 3. Where do the tailgate riders sit?
+
+The rig has `ref_seat_driver` and `ref_seat_passenger` and nothing for the two
+riders on the back. Either two more empties get authored, or their positions are
+derived from `ref_door_trunk`. Authored is better — everything else about crew
+position is authored, and deriving one seat from a door hinge is the kind of
+special case that outlives its reason.
+
+### 4. Do the markers ever carry rotation?
+
+`maps.js:47` stores `getWorldPosition` and drops the quaternion, and nothing in
+map-3 authors a rotation on `FC_VEHICLE_*` anyway — so Phase 1 derives facing by
+pointing at the nearest sector. `lobby.js` already keeps quaternions for
+`FC_PROP_VEHICLE`, so the fix is small whenever it is wanted. Until then, motor
+pools cannot be aimed.
+
+### 5. Do vehicles cost resources?
+
+`GAME_TYPE_PLAN.md` → "Resources" already lists "Vehicle spawning, when vehicles
+exist" as something the materiel pool must gate. **Working:** vehicles spawn free
+on a timer for now, and the seam is left where the resource system can take it
+over without reshaping this module.
+
+### 6. Can a moving vehicle capture a sector?
+
+Affects Phase 7's driver AI and the capture code equally. **Working:** no —
+dismount to capture.
+
+---
+
+## Known problems
+
+**Locked — these are real and measured, and neither is caused by vehicle work.**
+
+### The asset is 38 MB
+
+105 meshes, 26 textures, 34 materials — roughly 105 draw calls per hog, 210 for
+a pair. It loads acceptably from the dev server and is not blocking, but a
+`warthog-runtime.glb` is the right thing before this ships:
+merge *inside* `i_mesh_parts` only (every `ref_*` and wheel node must survive),
+resize textures, Draco or meshopt. `Scorpion-runtime.glb` at 5.9 MB is the
+precedent and shows the problem has already been solved once.
+
+### The baked heightfield disagrees with the authored floor, map-wide
+
+Phase 1 found this at the blue HQ. Phase 2 found it is not local.
+
+| Location | Heightfield | Collision floor | Δ |
+| --- | --- | --- | --- |
+| Sector markers A/B/C/D | — | — | 0.00 – 0.18 |
+| Red HQ | 26.18 | 26.19 | +0.01 |
+| **Blue HQ centre** | 0.01 | −0.58 | **−0.59** |
+| **Blue HQ, ~8 m east** | 0.00 | −2.62 | **−2.62** |
+| **(315, 190) → (315, 220)** | **0.00 flat** | **+1.04 → −2.50** | **up to −3.5** |
+
+`world.heightAt` returns a flat **0** across large stretches of map-3 where the
+authored `Collision_floor_parent` is metres lower and genuinely sloped. The bake
+simply has nothing in it there. A marine deployed at the blue HQ settles to
+y ≈ −2.41, two and a half metres under the visible surface.
+
+**Consequences already hit, both fixed by using the same two-tier rule everything
+else uses** (floor shell first, heightfield as fallback — never the heightfield
+alone):
+
+- The third-person boom clamped its camera against `heightAt` and so shoved
+  itself *up* into a hillside the hog was driving along (`player.js`).
+- Searching for flat ground by sampling `heightAt` returns the void outside the
+  map, because the void and the flat-zero regions read identically.
+
+`world.raycastTerrain` and `world.hasLOS` still march against `heightAt` alone,
+so **bullets and AI line-of-sight are using the wrong surface in these regions
+today.** That is well outside vehicle scope but it is the same root cause, and it
+is worth knowing before it is diagnosed as an AI bug.
+
+The real fix is Blender-side: `Collision_floor_parent` and the bake need to agree.
+Phase 1 removed the procedural HQ pad on GLB maps (`world.js:171`), which fixes
+how the HQ *looks* — the disc was drawn at heightfield height and so hovered
+above the real surface — but not the underlying disagreement.
+
+---
+
+## Long-term
+
+Not required for the first playable, listed so the architecture does not
+accidentally exclude them.
+
+- **Tow hooks** (`ref_hook.001`–`.003`) — towing, or Pelican pickup. The
+  Pelican's `asset.json` already mentions a Warthog attach ref, so this was
+  planned on the art side before it was planned here.
+- **Tracked vehicles** (Scorpion, Grizzly) — a different steering model on the
+  same chassis and suspension core.
+- **Air** (Pelican, Wasp, Shortsword) — a genuinely different problem. Gets its
+  own doc.
+- **Vehicle logistics** — `GAME_TYPE_PLAN.md` raises transported materiel as the
+  deepest version of the Frontline economy and notes it "needs vehicles, which do
+  not exist yet". They will.

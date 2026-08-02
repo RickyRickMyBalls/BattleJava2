@@ -9,6 +9,7 @@ import { Squad, TeamBrain, squadNames } from './ai.js';
 import { Combat } from './combat.js';
 import { Supply } from './supply.js';
 import { Structures } from './structures.js';
+import { VehicleManager } from './vehicle.js';
 import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { GameAudio } from './audio.js';
@@ -44,6 +45,10 @@ export class Game {
     this.combat = new Combat(this);
     this.supply = new Supply(this);
     this.structures = new Structures(this);
+    // Before `prewarm`, for the same reason the beam pool below is: the hogs
+    // are in the scene when the match compiles, so their 26 textures upload
+    // behind the loading bar instead of hitching the first frame one is in view.
+    this.vehicles = new VehicleManager(this);
     this.hud = new Hud(this);
     // Built HERE, before `prewarm`, and that ordering is the whole point: the
     // pool's lights are in the scene when the match compiles its materials, so
@@ -369,6 +374,12 @@ export class Game {
       for (let i = 0; i < this.timeScale; i++) this._simStep(dt);
     }
 
+    // A driver's camera is placed HERE, after the step, not in `player.update`
+    // with every other camera. It reads the chassis transform, and in
+    // `player.update` that transform is a frame stale — at 25 m/s, 40 cm of
+    // visible judder. Input still goes in above; only the eye waits.
+    if (!this.spectating && this.player.vehicle) this.player.updateVehicleCamera(dt);
+
     // Every beam requested this frame, drawn at once. After the sim, because a
     // welder's position is only final once it has moved; once per RENDERED
     // frame, not per sim substep, which is why requests are keyed by welder and
@@ -430,6 +441,7 @@ export class Game {
     this.combat.update(dt);
     this.supply.update(dt);
     this.structures.update(dt);
+    this.vehicles.update(dt);
   }
 
   _nearestObjectiveText() {

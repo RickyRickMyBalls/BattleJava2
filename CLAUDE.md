@@ -12,6 +12,10 @@ Design docs — all aspirational; build incrementally, owner approves each step
 - `GAME_TYPE_PLAN.md` — what the match is: objectives, spawning, economy, victory.
   Locks the Battlefield-chassis / Squad-structure call, and splits the modes into
   two economies (Sector Control spends lives, Frontline accrues territory).
+- `VEHICLE_PLAN.md` — what a vehicle is: raycast-suspension physics, seats, crew,
+  bot driving. Built around the Warthog. Its "what is already true" and "rig
+  contract" sections are MEASURED (scale, -X forward, the ±90° steer trap) —
+  read them before touching `vehicle.js` or a vehicle GLB.
 
 Each carries **Locked / Working / Open / Long-term** labels per decision — check
 the label before treating anything in them as a requirement.

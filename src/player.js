@@ -15,6 +15,14 @@ const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
 const _muzzle = new THREE.Vector3();
 const _aim = new THREE.Vector3();
+// Driving scratch
+const _exit = new THREE.Vector3();
+const _seat = new THREE.Vector3();
+const _eye = new THREE.Vector3();
+const _drive = new THREE.Quaternion();
+const _lookPitch = new THREE.Quaternion();
+const _YAXIS = new THREE.Vector3(0, 1, 0);
+const _XAXIS = new THREE.Vector3(1, 0, 0);
 
 // Hip reference pose for the viewmodel holder. Aiming moves the holder to the
 // weapon's own `ads.pos` — the transform that puts that weapon's sight on the
@@ -165,6 +173,13 @@ export class Player {
     // Nothing tore these down before either; dispose() closes that leak.
     this.enabled = true;
     this._listeners = [];
+
+    // Driving. `vehicle` is the whole state — being in one is not a mode flag
+    // plus a reference that can disagree with it. While it is set, `update`
+    // hands over to `_updateDriving` and the camera is owned by
+    // `updateVehicleCamera`, which runs AFTER the sim step (see game.update).
+    this.vehicle = null;
+    this.exitCooldown = 0;   // stops one E press exiting the car it just entered
 
     // Freecam state
     this.freecam = false;
@@ -328,7 +343,10 @@ export class Player {
   syncBodyVisibility() {
     const s = this.soldier;
     if (!s || !s.mesh) return;
-    s.mesh.visible = (s.alive || s.downed) && (this.freecam || this.thirdPerson);
+    // Hidden while driving even in third person: the body has no seated pose
+    // yet, so it would stand upright through the roll cage. Phase 5 gives it
+    // one and drops the last term.
+    s.mesh.visible = (s.alive || s.downed) && (this.freecam || this.thirdPerson) && !this.vehicle;
   }
 
   _buildViewmodel() {
@@ -975,7 +993,25 @@ export class Player {
       return;
     }
     this._updateRevive(dt);          // clears revive state and the prompt
+    if (this._updateVehiclePrompt()) return;
     this._updateSupply(dt);
+  }
+
+  // A vehicle in reach owns the interact key ahead of a crate, on exactly the
+  // rule casualties use against both: the crate will still be there in ten
+  // seconds. Returns true when it has claimed the prompt.
+  _updateVehiclePrompt() {
+    if (this.vehicle || this.exitCooldown > 0 || this.freecam) return false;
+    const fleet = this.game.vehicles;
+    const v = fleet && fleet.nearest(this.pos);
+    if (!v) return false;
+    if (v.driver) {
+      this.game.hud.setPrompt('WARTHOG — SEAT TAKEN', 0);
+      return true;
+    }
+    this.game.hud.setPrompt('E — DRIVE WARTHOG', 0);
+    if (this.keys['KeyE'] && this.locked && !this.actionBusy()) this.enterVehicle(v);
+    return true;
   }
 
   _updateRevive(dt) {
@@ -1138,9 +1174,166 @@ export class Player {
     return s.stepStamina(dt, boosting, moving, P.sprintMult);
   }
 
+  // ------------------------------------------------------------- Driving --
+  // Getting in and out. `yaw`/`pitch` are reused as CHASSIS-RELATIVE look while
+  // driving rather than growing a second pair: every consumer of them
+  // (mouselook, sensitivity, the exit heading) wants the same numbers, and two
+  // sets would need reconciling on every transition instead of two.
+  enterVehicle(v) {
+    if (this.vehicle || !v || v.driver) return false;
+    this.vehicle = v;
+    v.enter(this);
+    this.yaw = 0;              // looking straight down the bonnet
+    this.pitch = 0;
+    this.firing = false;
+    this.ads = false;
+    this.exitCooldown = 0.4;
+    this.viewmodel.visible = false;
+    this.game.hud.setPrompt(null);
+    this.game.hud.message('E TO GET OUT', 2);
+    return true;
+  }
+
+  exitVehicle() {
+    const v = this.vehicle;
+    if (!v) return;
+    v.exitPoint(_exit);
+    this.vehicle = null;
+    v.exit();
+    // The relative look becomes an absolute one again, so stepping out leaves
+    // you facing where you were looking rather than snapping to a world axis.
+    // Same PI as the camera carries — see updateVehicleCamera.
+    this.yaw += v.yaw + Math.PI;
+    this.pos.copy(_exit);
+    this.velY = 0;
+    this.onGround = true;
+    this.exitCooldown = 0.4;
+    this.soldier.pos.copy(this.pos);
+    this.game.hud.message(null, 0);
+  }
+
+  // Input only. The camera cannot be placed here: the vehicle has not been
+  // stepped yet this frame, so anything read off the chassis now is a frame
+  // stale — at 25 m/s that is 40 cm of visible judder. See updateVehicleCamera.
+  _updateDriving(dt) {
+    const v = this.vehicle;
+    const s = this.soldier;
+    this.exitCooldown = Math.max(0, this.exitCooldown - dt);
+
+    const drive = this.locked && !this.game.menuOpen;
+    const fwd = drive && !!this.keys['KeyW'];
+    const back = drive && !!this.keys['KeyS'];
+    let steer = 0;
+    if (drive && this.keys['KeyA']) steer += 1;   // +X is chassis left
+    if (drive && this.keys['KeyD']) steer -= 1;
+
+    // S is brake-then-reverse rather than a dedicated key: while there is
+    // forward speed to kill it brakes, and only once stopped does it back up.
+    // A separate reverse key would be a key nobody presses in a panic.
+    const rolling = v.speed > 0.6;
+    v.input.throttle = fwd ? 1 : (back && !rolling ? -1 : 0);
+    v.input.brake = back && rolling ? 1 : 0;
+    v.input.handbrake = drive && !!this.keys['Space'];
+    v.input.steer = steer;
+    if (fwd || back || steer) v.wake();
+
+    if (drive && this.keys['KeyE'] && this.exitCooldown <= 0) {
+      this.exitVehicle();
+      return;
+    }
+
+    // The body rides in the seat. It stays in `allSoldiers` and stays
+    // shootable — a driver is not invulnerable, they are just not walking.
+    s.speed2D = 0;
+    s.sprinting = false;
+    s.crouching = false;
+    s.airborne = false;
+    s.aiming = false;
+    s.setMoveDir(0, 0, 0);
+    this.viewmodel.visible = false;
+    this.firing = false;
+    this.lookSens = HIP_SENS;
+  }
+
+  // Camera and seat, AFTER the physics has run. Called from game.update once
+  // the sim step is done, which is the only ordering that puts the eye where
+  // the vehicle actually ended up this frame.
+  updateVehicleCamera(dt) {
+    const v = this.vehicle;
+    if (!v) return;
+    const s = this.soldier;
+    v.group.updateMatrixWorld(true);
+
+    // Seat the body and keep the controller's own position with it, so squad
+    // follow, objective distance and `playerActive` all track the vehicle.
+    const seat = v.refWorld('ref_seat_driver', _seat) || v.group.position;
+    this.pos.set(seat.x, seat.y - P.eyeHeight, seat.z);
+    s.pos.copy(this.pos);
+    s.yaw = v.yaw;
+
+    // Look is relative to the chassis, so the view rolls and pitches with the
+    // hog. That coupling IS the vehicle — a camera that stays world-level while
+    // the body pitches over a ridge reads as a spectator, not a driver.
+    //
+    // The PI is not a fudge. A three.js camera looks down its local -Z, and the
+    // chassis frame is +Z forward, so handing the camera the chassis
+    // orientation aims it out of the tailgate. It is the same offset the
+    // infantry path carries as `s.yaw = this.yaw + Math.PI`.
+    _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
+    _drive.premultiply(v.quat);
+    _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+
+    if (this.thirdPerson) {
+      this._applyVehicleBoom(v, _drive, dt);
+    } else {
+      const eye = v.refWorld('ref_camera_driver', _eye) || seat;
+      this.camera.position.copy(eye);
+      this.camera.quaternion.copy(_drive);
+    }
+    if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
+      this.camera.fov = HIP_FOV;
+      this.camera.updateProjectionMatrix();
+    }
+    this.syncBodyVisibility();
+  }
+
+  // Same shape as the infantry boom (_applyBoom): pull in hard the instant
+  // something is behind you, ease back out once it is clear. Its own CFG block
+  // because the thing being framed is 6 m long and what you need to see is the
+  // ground it is about to hit.
+  _applyVehicleBoom(v, lookQuat, dt) {
+    const TP = CFG.vehicle.thirdPerson;
+    // The view direction is the camera's own -Z; the boom runs the other way.
+    _dir.set(0, 0, 1).applyQuaternion(lookQuat);        // away from the view
+    const px = v.pos.x, py = v.pos.y + TP.lift, pz = v.pos.z;
+
+    let want = TP.dist;
+    const col = this.game.world.collision;
+    if (col) {
+      const hit = col.rayDistance(px, py, pz, _dir.x, _dir.y, _dir.z, TP.dist + TP.skin);
+      if (hit !== null) want = Math.max(TP.minDist, hit - TP.skin);
+    }
+    if (want < this.tpDist) this.tpDist = want;
+    else this.tpDist += (want - this.tpDist) * Math.min(1, dt * TP.lerp);
+
+    const cx = px + _dir.x * this.tpDist;
+    const cz = pz + _dir.z * this.tpDist;
+    let cy = py + _dir.y * this.tpDist;
+    // Clamped against the SAME ground the vehicle drives on, not the raw
+    // heightfield. On map-3 the baked heightfield reads 0 over large areas
+    // where the authored floor shell is metres lower, and clamping to it
+    // shoved the camera up inside the hillside the hog was driving along.
+    const floor = v.groundAt(cx, cz) + 0.6;
+    if (cy < floor) cy = floor;
+    this.camera.position.set(cx, cy, cz);
+    this.camera.quaternion.copy(lookQuat);
+  }
+
   update(dt) {
     const s = this.soldier;
     if (!s.alive) return;
+    if (this.vehicle) { this._updateDriving(dt); return; }
+    this.exitCooldown = Math.max(0, this.exitCooldown - dt);
 
     // ---- Movement ----
     this.walking = !!this.keys['ControlLeft'];

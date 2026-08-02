@@ -224,14 +224,92 @@ export function characterClones(assets) {
   return Object.values(assets.characters).map((c) => cloneSkeleton(c.template));
 }
 
+// Authored facing -> the Y rotation that turns it into the +Z-forward, +Y-up
+// convention the soldiers and the AI already use. Stated per vehicle in
+// ASSET_PATHS rather than guessed, because a GLB's forward axis is whatever the
+// artist's scene was and there is no way to read it back off the geometry.
+const FORWARD_YAW = { '-x': Math.PI / 2, '+x': -Math.PI / 2, '+z': 0, '-z': Math.PI };
+
+// Vehicles are the one asset class that keeps its authored scale. Characters
+// are normalized to a measured height and weapons/props to a measured length,
+// because in all three cases the real-world size is a design number we own. A
+// vehicle's is not: it is a fact about the model, and normalizing would hide a
+// mis-scaled export instead of showing it.
+//
+// What DOES get fixed up is the origin and the facing, so that placing one is
+// `group.position.set(x, groundY, z)` + `group.rotation.y = yaw` and nothing
+// else. The origin lands on the ground at the centre of the wheelbase:
+//   - XZ from the four ref_contact_* empties (the bounding box would centre on
+//     the roll cage and turret, and a vehicle wants placing by its tyres)
+//   - Y from the bottom of the four wheel MESHES, not the contact empties,
+//     which sit ~6 cm high on the Warthog and would park it floating.
+function prepareVehicle(key, scene, def) {
+  scene.updateMatrixWorld(true);
+
+  const contacts = [];
+  const wheels = [];
+  scene.traverse((o) => {
+    const n = (o.name || '').toLowerCase();
+    if (n.startsWith('ref_contact_')) contacts.push(o.getWorldPosition(new THREE.Vector3()));
+    else if (o.isMesh && /^wheel_/.test(n)) wheels.push(o);
+    // The authored hull. It ships with a material literally named `collision`
+    // and exists to be raycast against in step 2, not to be looked at — unlike
+    // a MAP's collision parents, which double as real floors and walls and are
+    // therefore never hidden in code (see CLAUDE.md). Flip this line if the
+    // shell turns out to be intended as visible geometry.
+    else if (o.isMesh && n.startsWith('collision_')) o.visible = false;
+  });
+
+  const origin = new THREE.Vector3();
+  if (contacts.length) {
+    for (const c of contacts) origin.add(c);
+    origin.divideScalar(contacts.length);
+  } else {
+    console.warn(`[assets] vehicle ${key}: no ref_contact_* empties — falling back to the bounding box`);
+    new THREE.Box3().setFromObject(scene).getCenter(origin);
+  }
+
+  if (wheels.length) {
+    const b = new THREE.Box3(), acc = new THREE.Box3();
+    acc.makeEmpty();
+    for (const w of wheels) {
+      w.geometry.computeBoundingBox();
+      acc.union(b.copy(w.geometry.boundingBox).applyMatrix4(w.matrixWorld));
+    }
+    origin.y = acc.min.y;
+  } else {
+    console.warn(`[assets] vehicle ${key}: no wheel_* meshes — grounding on the contact empties`);
+  }
+
+  // Two nested groups, and the nesting matters: the inner one carries the
+  // facing correction, so the wrapper's rotation.y stays a plain world yaw that
+  // callers can read and write without knowing anything about how the GLB was
+  // authored.
+  const inner = new THREE.Group();
+  scene.position.sub(origin);
+  inner.add(scene);
+  inner.rotation.y = FORWARD_YAW[def.forward] ?? 0;
+  if (!(def.forward in FORWARD_YAW)) {
+    console.warn(`[assets] vehicle ${key}: unknown forward "${def.forward}" — leaving it as authored`);
+  }
+  const wrapper = new THREE.Group();
+  wrapper.add(inner);
+
+  const size = new THREE.Box3().setFromObject(wrapper).getSize(new THREE.Vector3());
+  console.log(`[assets] vehicle ${key}: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)} m `
+    + `(W x H x L), ${contacts.length} contact refs, ${wheels.length} wheels`);
+  return wrapper;
+}
+
 
 export async function loadAssets(onProgress) {
-  const out = { characters: {}, clips: {}, clipHipsRest: {}, audio: {}, weaponModels: {}, props: {} };
+  const out = { characters: {}, clips: {}, clipHipsRest: {}, audio: {}, weaponModels: {}, props: {}, vehicles: {} };
   const jobs = [];
   let done = 0;
   const total =
     Object.keys(ASSET_PATHS.characters).length + Object.keys(WEAPONS).length +
     Object.keys(ASSET_PATHS.props || {}).length +
+    Object.keys(ASSET_PATHS.vehicles || {}).length +
     Object.keys(ASSET_PATHS.animations).length +
     Object.keys(ASSET_PATHS.audio).length;
 
@@ -289,6 +367,15 @@ export async function loadAssets(onProgress) {
       out.props[key] = wrapper;
       tick(key);
     }).catch((e) => { console.warn(`Failed prop ${def.url}`, e); tick(key); }));
+  }
+
+  // Vehicles --------------------------------------------------------------
+  // The one asset class that keeps its authored scale — see prepareVehicle.
+  for (const [key, def] of Object.entries(ASSET_PATHS.vehicles || {})) {
+    jobs.push(loadGLB(def.url).then((gltf) => {
+      out.vehicles[key] = prepareVehicle(key, gltf.scene, def);
+      tick(key);
+    }).catch((e) => { console.warn(`Failed vehicle ${def.url}`, e); tick(key); }));
   }
 
   // Animations ------------------------------------------------------------
