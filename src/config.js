@@ -381,6 +381,21 @@ export const CFG = {
 
     enterRange: 4.0,     // metres from the driver's door to prompt
 
+    // Landing on the roof. A flipped hog is a RECOVERABLE situation, not a lost
+    // vehicle and not a soft-lock — which is what it was, because the hull had
+    // no ground collision and an inverted chassis has its suspension switched
+    // off, so it fell out of the world taking the driver with it.
+    flip: {
+      upThreshold: 0.35,   // chassis up-vector Y below this counts as inverted
+      // It has to have STOPPED, not just be inverted. Mid-barrel-roll is
+      // airborne, and prompting someone to right a tumbling vehicle is
+      // prompting them to walk into it.
+      settleTime: 0.8,
+      rightTime: 2.0,      // seconds of held E to put one back on its wheels
+      rightLift: 0.4,      // clearance it is dropped from, so the springs land it
+      groundFriction: 0.6, // mu of hull-on-ground, or a roofed hog skates forever
+    },
+
     // Third-person boom while driving. Further out and higher than the
     // infantry boom (`player.thirdPerson`) because the thing being framed is
     // 6 m long and what you need to see is the ground it is about to hit.

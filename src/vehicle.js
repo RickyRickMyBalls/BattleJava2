@@ -50,6 +50,9 @@ const _q2 = new THREE.Quaternion();
 const _box = new THREE.Box3();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
+const _t1 = new THREE.Vector3();
+const _t2 = new THREE.Vector3();
+const _t3 = new THREE.Vector3();
 const _hullHit = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
 const _hullPoint = new THREE.Vector3();
 const _hullProbe = new THREE.Vector3();
@@ -121,6 +124,8 @@ export class Vehicle {
     this.speed = 0;                      // signed forward speed, m/s — for HUD/AI
     this.asleep = false;
     this.stillTimer = 0;
+    this.flipped = false;                // on its roof and settled; see _flipCheck
+    this.flipTimer = 0;
 
     this.wheels = [];
     this.hullPoints = [];                // chassis-frame hull sample points
@@ -325,9 +330,25 @@ export class Vehicle {
 
     this.pos.addScaledVector(this.vel, h);
     this._integrateRotation(h);
+
+    // The ground runs whenever the suspension is not doing the job — inverted,
+    // airborne, or moving. A hog sitting level on four loaded springs is the
+    // one case that can skip it.
+    if (!upright || this.driver || this.vel.lengthSq() > 0.25
+      || this.wheels.some((w) => !w.grounded)) this._collideGround(h);
     // Eight BVH queries per substep is the most expensive thing in here, and a
     // parked hog cannot drive into anything. Everything that moves still pays.
     if (this.driver || this.vel.lengthSq() > 0.25) this._collideHull(h);
+
+    // Last resort, and it runs UNCONDITIONALLY — it used to sit at the bottom
+    // of the wall-collision routine, behind an early return that fires whenever
+    // nothing is being hit, so the one situation it existed to catch was the
+    // one situation it never ran in.
+    const floor = this.groundAt(this.pos.x, this.pos.z);
+    if (this.pos.y < floor - 2) { this.pos.y = floor + 0.5; this.vel.y = Math.max(0, this.vel.y); }
+    this.world.clampToMap(this.pos);
+
+    this._flipCheck(h, upright);
     this._sleepCheck(h);
   }
 
@@ -462,6 +483,54 @@ export class Vehicle {
     w.spin += w.spinSign * (spinV / T.wheelRadius) * h;
   }
 
+  // Effective mass along `n` for a contact at offset `r` from the centre of
+  // mass: 1 / ( 1/m + n · ((I⁻¹(r × n)) × r) ).
+  //
+  // This denominator is the whole difference between a collision and a
+  // catapult. An impulse applied off-centre spends part of itself on rotation,
+  // so the impulse needed to cancel a given closing speed is SMALLER than
+  // m·Δv — using m·Δv over-corrects by however much of the hit should have
+  // become spin. Landing a hog on its roof from 6 m returned it 12 m into the
+  // air on the first bounce.
+  _effectiveMass(n, r) {
+    _t1.copy(r).cross(n);
+    _q1.copy(this.quat).invert();
+    _t1.applyQuaternion(_q1);
+    _t1.set(_t1.x * this.invInertia.x, _t1.y * this.invInertia.y, _t1.z * this.invInertia.z);
+    _t1.applyQuaternion(this.quat);
+    _t2.copy(_t1).cross(r);
+    return 1 / (1 / this.mass + n.dot(_t2));
+  }
+
+  // One contact, resolved properly: a normal impulse that cancels the closing
+  // speed (plus restitution), then Coulomb friction on the tangent capped by
+  // it. Shared by the ground and the wall shells because a contact is a
+  // contact — the only thing that differs is where the normal came from.
+  _resolveContact(point, normal, restitution, friction) {
+    _arm.copy(point).sub(this.pos);
+    _t3.copy(this.angVel).cross(_arm).add(this.vel);
+    const closing = _t3.dot(normal);
+    if (closing >= 0) return 0;
+
+    const jN = -(1 + restitution) * closing * this._effectiveMass(normal, _arm);
+    _force.copy(normal).multiplyScalar(jN);
+    this._applyForce(_force, point, 1);
+
+    if (friction > 0) {
+      _arm.copy(point).sub(this.pos);
+      _t3.copy(this.angVel).cross(_arm).add(this.vel);
+      _t3.addScaledVector(normal, -_t3.dot(normal));   // tangential part
+      const vt = _t3.length();
+      if (vt > 1e-4) {
+        _t3.divideScalar(vt);
+        const jT = Math.min(vt * this._effectiveMass(_t3, _arm), friction * jN);
+        _force.copy(_t3).multiplyScalar(-jT);
+        this._applyForce(_force, point, 1);
+      }
+    }
+    return jN;
+  }
+
   // Force at a world point: linear at the centre of mass, plus the torque its
   // offset generates. Inertia is diagonal in the BODY frame, so the torque goes
   // into body space, gets divided, and comes back out.
@@ -492,7 +561,33 @@ export class Vehicle {
     ).normalize();
   }
 
-  // Hull vs the world. Wall shells are the authored blockers on GLB maps; the
+  // Hull vs the ground. THE SUSPENSION IS NOT A FLOOR: it is the only thing
+  // holding an upright vehicle up, and `_probe` switches it off entirely once
+  // the chassis is inverted, because no wheel is pointing at anything any more.
+  // Without this pass a flipped hog therefore has nothing at all underneath it
+  // — measured falling 41 m through the terrain and still accelerating, taking
+  // the driver with it. This is the floor of last resort, and it is what makes
+  // landing on the roof a recoverable situation instead of a lost vehicle.
+  _collideGround(h) {
+    const T = this.tune;
+    let deepest = 0;
+    for (const p of this.hullPoints) {
+      _v1.copy(p).sub(this.com).applyQuaternion(this.quat).add(this.pos);
+      const pen = this.groundAt(_v1.x, _v1.z) - _v1.y;
+      if (pen > deepest) { deepest = pen; _hullPoint.copy(_v1); }
+    }
+    if (deepest <= 0) return;
+
+    this.pos.y += deepest;
+    _hullPoint.y += deepest;
+    // Resolved AT the contact rather than at the centre, so a corner striking
+    // first rolls the body instead of stopping it flat — which is what lets a
+    // hog bounce onto its roof and settle there rather than pancaking.
+    this._resolveContact(_hullPoint, _Y, T.restitution, V.flip.groundFriction);
+    this.wake();
+  }
+
+  // Hull vs the authored blockers. Wall shells are what GLB maps carry; the
   // cover boxes are what the procedural map has instead, and a hog that drives
   // through every crate on the demo map is not finished.
   _collideHull(h) {
@@ -536,21 +631,44 @@ export class Vehicle {
     _v3.normalize();
 
     this.pos.addScaledVector(_v3, bestDepth);
-    const closing = this.vel.dot(_v3);
-    if (closing < 0) {
-      // An impulse, not a force — so `h` is 1 and the magnitude already carries
-      // the mass. Applied at the deepest contact point rather than at the
-      // centre, which is what makes a corner strike spin the vehicle instead of
-      // stopping it dead square.
-      _force.copy(_v3).multiplyScalar(-closing * (1 + T.restitution) * this.mass);
-      this._applyForce(_force, _hullPoint, 1);
-      this.wake();
-    }
+    // Same contact solver the ground uses — a corner strike spins the vehicle
+    // instead of stopping it dead square, and the impulse is scaled by the
+    // effective mass so an off-centre hit does not launch it.
+    this._resolveContact(_hullPoint, _v3, T.restitution, T.hullFriction ?? 0.4);
+    this.wake();
+  }
 
-    // Last resort: never let the body end up under the world.
-    const floor = this.groundAt(this.pos.x, this.pos.z);
-    if (this.pos.y < floor - 1) { this.pos.y = floor + 0.5; this.vel.y = Math.max(0, this.vel.y); }
-    this.world.clampToMap(this.pos);
+  // A hog on its roof is a recoverable situation, not a lost vehicle. The state
+  // latches only once it has STOPPED — mid-barrel-roll is not flipped, it is
+  // airborne, and prompting someone to right a vehicle that is still tumbling
+  // would be prompting them to walk into it.
+  _flipCheck(h, upright) {
+    const F = V.flip;
+    _v1.set(0, 1, 0).applyQuaternion(this.quat);
+    const settled = this.vel.lengthSq() < 4 && this.angVel.lengthSq() < 1;
+    if (_v1.y < F.upThreshold && settled) {
+      this.flipTimer += h;
+      if (this.flipTimer > F.settleTime) this.flipped = true;
+    } else if (_v1.y > F.upThreshold) {
+      this.flipTimer = 0;
+      this.flipped = false;
+    }
+  }
+
+  // Put it back on its wheels, keeping the heading it came to rest on. Dropped
+  // from a small clearance rather than placed exactly, so the suspension takes
+  // up the landing and the result is never a vehicle interpenetrating the
+  // ground it was just righted onto.
+  rightUp() {
+    this.quat.setFromAxisAngle(_Y, this.yaw);
+    this.pos.y = this.groundAt(this.pos.x, this.pos.z) + this.com.y + V.flip.rightLift;
+    this.vel.set(0, 0, 0);
+    this.angVel.set(0, 0, 0);
+    this.steerAngle = 0;
+    this.flipped = false;
+    this.flipTimer = 0;
+    this.wake();
+    this.syncVisuals();
   }
 
   _sleepCheck(h) {

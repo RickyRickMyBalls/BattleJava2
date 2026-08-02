@@ -189,6 +189,7 @@ export class Player {
     // `updateVehicleCamera`, which runs AFTER the sim step (see game.update).
     this.vehicle = null;
     this.exitCooldown = 0;   // stops one E press exiting the car it just entered
+    this.rightTimer = 0;     // held-E progress toward righting a flipped one
     // Eased chase heading. Null means "no history" — snap to the car's heading
     // on the next frame rather than sweeping in from whatever it was last time.
     this.vCamYaw = null;
@@ -1012,18 +1013,41 @@ export class Player {
       return;
     }
     this._updateRevive(dt);          // clears revive state and the prompt
-    if (this._updateVehiclePrompt()) return;
+    if (this._updateVehiclePrompt(dt)) return;
     this._updateSupply(dt);
   }
 
   // A vehicle in reach owns the interact key ahead of a crate, on exactly the
   // rule casualties use against both: the crate will still be there in ten
   // seconds. Returns true when it has claimed the prompt.
-  _updateVehiclePrompt() {
+  _updateVehiclePrompt(dt) {
     if (this.vehicle || this.exitCooldown > 0 || this.freecam) return false;
     const fleet = this.game.vehicles;
     const v = fleet && fleet.nearest(this.pos);
-    if (!v) return false;
+    if (!v) { this.rightTimer = 0; return false; }
+
+    // On its roof: righting it is the only thing on offer, and it is a HOLD.
+    // Same rule the crate draw and the casualty pickup use — releasing costs
+    // the time and nothing else.
+    if (v.flipped) {
+      const holding = !!this.keys['KeyE'] && this.locked && !this.actionBusy();
+      this.rightTimer = holding ? this.rightTimer + dt : 0;
+      const t = CFG.vehicle.flip.rightTime;
+      if (this.rightTimer >= t) {
+        v.rightUp();
+        this.rightTimer = 0;
+        this.game.hud.setPrompt(null);
+        this.game.hud.message('WARTHOG BACK ON ITS WHEELS', 2);
+        return true;
+      }
+      this.game.hud.setPrompt(
+        holding ? 'RIGHTING WARTHOG' : 'HOLD E — RIGHT WARTHOG',
+        holding ? this.rightTimer / t : 0,
+      );
+      return true;
+    }
+
+    this.rightTimer = 0;
     if (v.driver) {
       this.game.hud.setPrompt('WARTHOG — SEAT TAKEN', 0);
       return true;
@@ -1199,7 +1223,7 @@ export class Player {
   // (mouselook, sensitivity, the exit heading) wants the same numbers, and two
   // sets would need reconciling on every transition instead of two.
   enterVehicle(v) {
-    if (this.vehicle || !v || v.driver) return false;
+    if (this.vehicle || !v || v.driver || v.flipped) return false;
     this.vehicle = v;
     v.enter(this);
     this.yaw = 0;              // looking straight down the bonnet
