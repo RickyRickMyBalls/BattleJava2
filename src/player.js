@@ -192,6 +192,8 @@ export class Player {
     this.exitCooldown = 0;   // stops one E press exiting the car it just entered
     this.rightTimer = 0;     // held-E progress toward righting a flipped one
     this.turretCooldown = 0; // rate limit for the ring gun
+    this.doorHeld = false;   // E edge for door toggling — see _updateDoorFocus
+    this._outlined = null;   // vehicles currently showing door outlines
     // Eased chase heading. Null means "no history" — snap to the car's heading
     // on the next frame rather than sweeping in from whatever it was last time.
     this.vCamYaw = null;
@@ -250,6 +252,10 @@ export class Player {
       if (e.code === 'KeyO' && !this.freecam) this.setThirdPerson(!this.thirdPerson);
       if (e.code === 'KeyP') this.game.togglePause();
       if (e.code === 'KeyT') this.game.cycleTimeScale();
+      // ALT reveals door outlines (see _updateDoorFocus). Swallowed because
+      // Windows gives the menu bar focus on a bare Alt press, which drops
+      // pointer lock and drops you out of the game mid-look.
+      if (e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault();
       // Seat change. Caps Lock is a deliberate choice and it is worth knowing
       // what it costs: the OS owns the key, so the caps state still TOGGLES
       // underneath us and preventDefault cannot stop it. Harmless while the
@@ -1031,8 +1037,66 @@ export class Player {
       return;
     }
     this._updateRevive(dt);          // clears revive state and the prompt
+    // ALT outranks the seat prompt: with the key down you are asking about
+    // DOORS, and the one you are pointing at is the one you mean.
+    if (this._updateDoorFocus()) return;
     if (this._updateVehiclePrompt(dt)) return;
     this._updateSupply(dt);
+  }
+
+  // Hold ALT on foot and every door on a nearby vehicle draws its own outline;
+  // put the crosshair on one and E swings it.
+  //
+  // ALT is a REVEAL, not a mode: it answers "what can I touch here", which on a
+  // vehicle with seventeen named door nodes is otherwise unanswerable by
+  // looking. The outline is only ever shown while the key is down, so nothing
+  // is added to the normal view.
+  //
+  // Returns true when it has claimed the interact key, so the seat prompt below
+  // does not also try to use it — standing at the driver's door with ALT down
+  // must operate the DOOR, which is the thing you are pointing at.
+  _updateDoorFocus() {
+    const fleet = this.game.vehicles;
+    if (!fleet || this.vehicle || this.freecam) { this._clearDoorFocus(); return false; }
+    const held = !!(this.keys['AltLeft'] || this.keys['AltRight']);
+    if (!held) { this._clearDoorFocus(); return false; }
+
+    const D = CFG.vehicle.doors;
+    const near = fleet.within(this.pos, D.outlineRange);
+    if (!near.length) { this._clearDoorFocus(); return false; }
+
+    this.camera.getWorldDirection(_dir);
+    _from.copy(this.camera.position);
+    let target = null, targetVeh = null;
+    for (const v of near) {
+      v.group.updateMatrixWorld(true);
+      const d = v.doorAtReticle(_from, _dir, D.reticleRange, D.reticleCone);
+      if (d) { target = d; targetVeh = v; }
+    }
+    for (const v of near) v.setDoorOutline(true, v === targetVeh ? target : null);
+    this._outlined = near;
+
+    if (!target) {
+      this.game.hud.setPrompt('ALT — LOOK AT A DOOR', 0);
+      return true;
+    }
+    const opening = target.target < 0.5;
+    this.game.hud.setPrompt(`E — ${opening ? 'OPEN' : 'CLOSE'} ${target.node.name.replace(/^ref_/, '')}`, 0);
+    // Edge-triggered: E is a hold everywhere else in this file, and a door that
+    // flapped for as long as the key was down would be unusable.
+    if (this.keys['KeyE'] && this.locked && !this.doorHeld && !this.actionBusy()) {
+      targetVeh.toggleDoor(target);
+    }
+    this.doorHeld = !!this.keys['KeyE'];
+    return true;
+  }
+
+  _clearDoorFocus() {
+    if (this._outlined) {
+      for (const v of this._outlined) v.setDoorOutline(false, null);
+      this._outlined = null;
+    }
+    this.doorHeld = false;
   }
 
   // A vehicle in reach owns the interact key ahead of a crate, on exactly the
@@ -1267,6 +1331,7 @@ export class Player {
     this.ads = false;
     this.exitCooldown = 0.4;
     this.turretHeat = 0;
+    this._clearDoorFocus();    // no outlines left lit behind you
     this.viewmodel.visible = false;
     this.game.hud.setPrompt(null);
     this.game.hud.message('E TO GET OUT · CAPS LOCK TO CHANGE SEAT', 2.5);

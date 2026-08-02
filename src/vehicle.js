@@ -51,6 +51,20 @@ const _box = new THREE.Box3();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
 const DEG = Math.PI / 180;   // the linkage table is authored in degrees
+const _X = new THREE.Vector3(1, 0, 0);
+const _tmpBox = new THREE.Box3();
+const _mat = new THREE.Matrix4();
+
+// Door outlines. Shared materials — visibility is per LineSegments, so nothing
+// per-instance lives on the material and every hog can point at the same two.
+// depthTest off so a door reads through the bodywork in front of it, which is
+// the entire point of holding ALT.
+const _outlineDim = new THREE.LineBasicMaterial({
+  color: 0x7fd4ff, transparent: true, opacity: 0.55, depthTest: false,
+});
+const _outlineHot = new THREE.LineBasicMaterial({
+  color: 0xffd66e, transparent: true, opacity: 1, depthTest: false,
+});
 const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
 const _t3 = new THREE.Vector3();
@@ -195,6 +209,7 @@ export class Vehicle {
 
     this._measureTurret();
     this._measureLinkage();
+    this._measureDoors();
 
     // Hull sample points, from the authored collision shell if it is there and
     // the whole model's bounds if it is not. Corners only: the hull is convex
@@ -284,6 +299,118 @@ export class Vehicle {
       pitchAxis: inParentFrame(pitchRef, _v2),
       muzzleAxis: new THREE.Vector3().fromArray(bestAxis),
     };
+  }
+
+  // Doors. DISCOVERED rather than listed — anything named `ref_door*` is one —
+  // because the Warthog has seventeen and a hand-written list is a thing to
+  // forget to update when the rig changes. What discovery cannot tell us is
+  // which way a given node swings or how far: nothing in the GLB distinguishes
+  // a cab door from an engine panel. That comes from CFG overrides, and only
+  // the ones that differ from the default need saying.
+  //
+  // The outline is built here, once, as an EdgesGeometry child of the door
+  // itself. Parenting it to the door is the whole trick — it then swings with
+  // the thing it is outlining for free, and costs one hidden LineSegments per
+  // door the rest of the time.
+  _measureDoors() {
+    const D = V.doors;
+    this.doors = [];
+    const nodes = [];
+    this.group.traverse((o) => { if (/^ref_door/i.test(o.name || '')) nodes.push(o); });
+
+    for (const node of nodes) {
+      // Blender's dots are stripped by the loader; the override table is
+      // written in the authored spelling, so normalize both ends.
+      const key = Object.keys(D.overrides).find(
+        (k) => k.replace(/\./g, '').toLowerCase() === node.name.replace(/\./g, '').toLowerCase(),
+      );
+      const o = (key && D.overrides[key]) || {};
+      const axis = o.axis || D.defaultAxis;
+      const degrees = o.degrees === undefined ? D.defaultDegrees : o.degrees;
+
+      // Where the door IS, as opposed to where its hinge is — the ref sits on
+      // the pivot, which for a door is off to one side of the panel, and
+      // aiming at a hinge is not what anyone does.
+      _box.makeEmpty();
+      const edges = [];
+      node.traverse((c) => {
+        if (!c.isMesh || !c.geometry) return;
+        c.geometry.computeBoundingBox();
+        _box.union(_tmpBox.copy(c.geometry.boundingBox).applyMatrix4(c.matrixWorld));
+        const line = new THREE.LineSegments(
+          new THREE.EdgesGeometry(c.geometry, 28), _outlineDim,
+        );
+        line.visible = false;
+        line.renderOrder = 3;
+        line.frustumCulled = false;
+        c.add(line);
+        edges.push(line);
+      });
+      if (!edges.length) continue;
+
+      // Into the DOOR'S OWN space. `_box` was accumulated from child world
+      // matrices, so it is in chassis space; storing that and then applying the
+      // node's world matrix at query time would transform it twice, and the
+      // reticle would look for doors somewhere out past the far side of the
+      // vehicle. Converting once, here, is also what makes the centre swing
+      // with the door when it opens.
+      const centre = _box.getCenter(new THREE.Vector3())
+        .applyMatrix4(_mat.copy(node.matrixWorld).invert());
+
+      this.doors.push({
+        node, edges, axis: axis === 'x' ? _X : axis === 'z' ? _Z : _Y,
+        angle: degrees * DEG,
+        base: node.quaternion.clone(),
+        localCentre: centre,
+        open: 0,        // 0..1, eased
+        target: 0,
+      });
+    }
+  }
+
+  // Animated every frame regardless of sleep — a parked hog still has to be
+  // able to open its doors, and sleep is a PHYSICS optimisation.
+  updateDoors(dt) {
+    if (!this.doors || !this.doors.length) return;
+    const rate = dt / Math.max(0.01, V.doors.openTime);
+    for (const d of this.doors) {
+      if (d.open === d.target) continue;
+      const step = Math.min(rate, Math.abs(d.target - d.open));
+      d.open += Math.sign(d.target - d.open) * step;
+      d.node.quaternion.copy(d.base)
+        .multiply(_q2.setFromAxisAngle(d.axis, d.open * d.angle));
+    }
+  }
+
+  toggleDoor(d) { d.target = d.target > 0.5 ? 0 : 1; return d.target > 0.5; }
+
+  // Show or hide every door's outline, optionally marking one as the target.
+  setDoorOutline(on, target) {
+    if (!this.doors) return;
+    for (const d of this.doors) {
+      const mat = d === target ? _outlineHot : _outlineDim;
+      for (const e of d.edges) { e.visible = on; e.material = mat; }
+    }
+  }
+
+  doorWorldCentre(d, out) {
+    return out.copy(d.localCentre).applyMatrix4(d.node.matrixWorld);
+  }
+
+  // The door the crosshair is on: nearest to the ray by ANGLE, not by distance,
+  // so a big panel behind a small one does not win just for being closer to the
+  // camera. Returns null when nothing is both in range and near the crosshair.
+  doorAtReticle(origin, dir, range, cone) {
+    if (!this.doors) return null;
+    let best = null, bestAng = cone;
+    for (const d of this.doors) {
+      this.doorWorldCentre(d, _v1).sub(origin);
+      const dist = _v1.length();
+      if (dist > range || dist < 1e-3) continue;
+      const ang = Math.acos(Math.max(-1, Math.min(1, _v1.dot(dir) / dist)));
+      if (ang < bestAng) { bestAng = ang; best = d; }
+    }
+    return best;
   }
 
   // The visible linkage: A-arms, coil-overs, the steering wheel, the brake
@@ -1169,7 +1296,19 @@ export class VehicleManager {
       this.accum -= h;
       steps++;
     }
-    for (const v of this.vehicles) v.syncVisuals();
+    // Doors run on real frame time, not the physics accumulator, and outside
+    // the sleep check — a parked hog still has to be able to open a door.
+    for (const v of this.vehicles) { v.updateDoors(dt); v.syncVisuals(); }
+  }
+
+  // Every vehicle within `range` of a point. The ALT outline needs the set, not
+  // the nearest one.
+  within(pos, range) {
+    const out = [];
+    for (const v of this.vehicles) {
+      if (pos.distanceToSquared(v.group.position) <= range * range) out.push(v);
+    }
+    return out;
   }
 
   dispose() {

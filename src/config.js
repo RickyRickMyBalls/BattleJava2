@@ -421,6 +421,30 @@ export const CFG = {
       pitchMax: 0.85,
     },
 
+    // Doors. Hold ALT on foot and every door on a nearby vehicle outlines
+    // itself; put the reticle on one and E swings it.
+    //
+    // The parts are DISCOVERED (anything named ref_door*) rather than listed,
+    // because there are seventeen of them on the Warthog and a list is a thing
+    // to forget to update. What cannot be discovered is which way each one
+    // swings and how far — nothing in the GLB says whether a node is a cab
+    // door, an engine panel or the tailgate — so `overrides` corrects the
+    // default per node, and only the ones that differ need an entry.
+    doors: {
+      openTime: 0.55,        // seconds, closed to fully open
+      outlineRange: 14,      // metres at which ALT starts outlining a vehicle
+      reticleRange: 5,       // metres you must be inside to actually operate one
+      // How far off the crosshair a door may sit and still be the target, in
+      // radians. Generous, because doors are large and close.
+      reticleCone: 0.30,
+      defaultAxis: 'y',      // side doors hinge about their own vertical
+      defaultDegrees: 72,
+      overrides: {
+        // The tailgate drops rather than swings.
+        ref_door_trunk: { axis: 'x', degrees: -85 },
+      },
+    },
+
     // The visible linkage. None of this touches the physics — it exists so the
     // physics can be SEEN, and every gain here is a trim on a value already
     // derived from the rig's own geometry rather than a number invented here.
