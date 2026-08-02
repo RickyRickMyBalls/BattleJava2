@@ -330,7 +330,7 @@ export function createVehicleRange(assets) {
   if (template) {
     hog = new Vehicle('warthog', template.clone(true), null, world);
     group.add(hog.group);
-    hog.placeAt(0, 0, 0, 0);
+    hog.settleAt(0, 0, 0);
   }
 
   const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 2000);
@@ -366,7 +366,7 @@ export function createVehicleRange(assets) {
   function reset() {
     if (!hog) return;
     accum = 0;            // no stale time carried into a fresh run
-    hog.placeAt(0, rangeHeight(0, 0), 0, 0);
+    hog.settleAt(0, 0, 0);   // on its springs, not dropped onto them
     hog.steerAngle = 0;
     for (const w of hog.wheels) { w.spin = 0; w.slip = 0; }
     perf.accelT = null; perf.brakeD = null; perf._t0 = null; perf._bx = null; perf.top = 0;

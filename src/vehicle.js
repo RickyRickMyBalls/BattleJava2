@@ -547,6 +547,85 @@ export class Vehicle {
     this.syncVisuals();
   }
 
+  // Place it the way it would come to rest: ON the ground plane through its own
+  // four contact points, tilted to match, with every spring already at its
+  // static compression.
+  //
+  // Spawning level at the highest corner (which is what placeAt does) leaves
+  // the downhill wheels dangling, so the whole vehicle drops onto its springs
+  // and slides while it settles — measured peaking at 2.6 m/s at the blue HQ
+  // before it caught. Nothing about that is wrong physics; it is just a
+  // vehicle being dropped rather than parked.
+  //
+  // The height falls out of the suspension geometry rather than being another
+  // constant: at rest a contact point sits at chassis-local y = 0 (the strut
+  // top is `radius + travel*(1-sag)` up and the ray to the ground is
+  // `travel + radius - sag` long), so the group origin belongs exactly ON the
+  // plane, not above it.
+  settleAt(x, z, yaw) {
+    const sin = Math.sin(yaw), cos = Math.cos(yaw);
+    const pts = [];
+    for (const w of this.wheels) {
+      const wx = x + cos * w.localXZ.x + sin * w.localXZ.z;
+      const wz = z - sin * w.localXZ.x + cos * w.localXZ.z;
+      pts.push(new THREE.Vector3(wx, this.groundAt(wx, wz), wz));
+    }
+    if (pts.length < 4) { this.placeAt(x, this.groundAt(x, z), z, yaw); return; }
+
+    // Normal from the diagonals — four points rarely lie on a plane exactly,
+    // and the diagonal cross product is the least-squares-ish answer for a
+    // rectangle without solving anything.
+    _v1.copy(pts[3]).sub(pts[0]);
+    _v2.copy(pts[2]).sub(pts[1]);
+    _v3.copy(_v1).cross(_v2).normalize();
+    if (_v3.y < 0) _v3.negate();
+    if (!Number.isFinite(_v3.x) || _v3.y < 0.2) _v3.set(0, 1, 0);   // degenerate
+
+    // Chassis basis: +X left, +Y up, +Z forward. The requested heading is
+    // projected onto the plane so the vehicle faces where it was asked to
+    // without leaning out of it.
+    _fwd.set(sin, 0, cos);
+    _fwd.addScaledVector(_v3, -_fwd.dot(_v3)).normalize();
+    _side.copy(_v3).cross(_fwd);                 // up x forward = left
+    _mat.makeBasis(_side, _v3, _fwd);
+    this.quat.setFromRotationMatrix(_mat);
+
+    const c = pts[0].add(pts[1]).add(pts[2]).add(pts[3]).multiplyScalar(0.25);
+    this.pos.copy(this.com).applyQuaternion(this.quat).add(c);
+
+    // Geometry alone is not enough on a slope. `_probe` samples the ground
+    // DIRECTLY BELOW the strut top while the ray itself runs along the chassis,
+    // and those are different points once the vehicle is tilted — it reads
+    // t = h / cos^2(theta) rather than h, so a hog placed exactly on the plane
+    // starts UNDER-compressed and settles anyway. At 25 degrees it started at
+    // zero compression and dropped the whole way onto its springs.
+    //
+    // Rather than invert that analytically (and have the inversion drift the
+    // moment the probe changes), solve it WITH the probe: nudge the height
+    // along the chassis up-axis until the mean compression is the static sag.
+    // One pass is nearly exact because the relationship is linear in height;
+    // the loop is there for the ground moving under the strut as it shifts.
+    _t1.set(0, 1, 0).applyQuaternion(this.quat);
+    for (let iter = 0; iter < 8; iter++) {
+      let mean = 0;
+      for (const w of this.wheels) {
+        _t2.copy(w.localHard).sub(this.com).applyQuaternion(this.quat).add(this.pos);
+        mean += this.rayLen - (_t2.y - this.groundAt(_t2.x, _t2.z)) / _t1.y;
+      }
+      const err = this.sagLen - mean / this.wheels.length;
+      if (Math.abs(err) < 1e-4) break;
+      this.pos.addScaledVector(_t1, -err);
+    }
+
+    this.vel.set(0, 0, 0);
+    this.angVel.set(0, 0, 0);
+    this.steerAngle = 0;
+    this.flipped = false;
+    this.flipTimer = 0;
+    this.wake();
+    this.syncVisuals();
+  }
+
   wake() { this.asleep = false; this.stillTimer = 0; }
 
   // Ground height under a point. Same two-tier rule every other entity uses —
@@ -1267,17 +1346,10 @@ export class VehicleManager {
     const v = new Vehicle(key, group, team, this.game.world);
     this.game.scene.add(group);
 
-    // Sit it on the highest ground under its four wheels so no corner starts
-    // buried. The springs take it from there.
-    let ground = -Infinity;
-    for (const w of v.wheels) {
-      const wx = x + Math.sin(yaw) * w.localXZ.z + Math.cos(yaw) * w.localXZ.x;
-      const wz = z + Math.cos(yaw) * w.localXZ.z - Math.sin(yaw) * w.localXZ.x;
-      ground = Math.max(ground, this._groundAt(wx, wz));
-    }
-    if (ground === -Infinity) ground = this._groundAt(x, z);
-
-    v.placeAt(x, ground, z, yaw);
+    // Placed the way it would come to rest — on the plane through its own four
+    // contact points, tilted to match, springs already at static compression —
+    // rather than level at the highest corner with the rest left to fall.
+    v.settleAt(x, z, yaw);
     this.vehicles.push(v);
     return v;
   }
