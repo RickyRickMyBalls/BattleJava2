@@ -426,7 +426,7 @@ export function createVehicleRange(assets) {
     hog.input.brake = back && rolling ? 1 : 0;
     hog.input.handbrake = !!keys['Space'];
     hog.input.steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
-    if (fwd || back || hog.input.steer) hog.wake();
+    if (fwd || back || hog.input.steer || hog.input.handbrake) hog.wake();
 
     // The leftover is CARRIED between frames. It used to be a local, so every
     // frame threw away whatever did not divide evenly into a substep, and the

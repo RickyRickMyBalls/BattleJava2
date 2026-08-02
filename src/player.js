@@ -1413,7 +1413,7 @@ export class Player {
       v.input.brake = back && rolling ? 1 : 0;
       v.input.handbrake = live && !!this.keys['Space'];
       v.input.steer = steer;
-      if (fwd || back || steer) v.wake();
+      if (fwd || back || steer || v.input.handbrake) v.wake();
     }
 
     // The ring chases where the gunner is looking. Aimed here rather than in

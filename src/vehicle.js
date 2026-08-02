@@ -642,7 +642,10 @@ export class Vehicle {
   // ---------------------------------------------------------------- step --
 
   step(h) {
-    if (this.asleep && !this.crewed) { this._syncWheelVisuals(); return; }
+    // A crewed vehicle can sleep too now (see _sleepCheck), so this no longer
+    // asks whether anyone is aboard — only whether anyone is asking it to move.
+    // `_updateDriving` wakes it on the first frame of any input.
+    if (this.asleep) { this._syncWheelVisuals(); return; }
     const T = this.tune;
 
     // Steering eases toward the held direction, and full lock is only available
@@ -843,12 +846,21 @@ export class Vehicle {
     const driven = this.wheels.length;
     let braking = this.input.brake * T.brakeForce / driven;
     if (this.input.handbrake && !w.front) braking += T.handbrakeForce / 2;
-    // Parking brake: with nobody AT THE WHEEL the vehicle holds itself. Keyed
-    // on the driver's seat rather than on the vehicle being empty, because a
-    // gunner riding alone is not driving and should not be able to roll away.
-    // The `stop` clamp below is what makes this a hold rather than a shove — it
-    // can arrest the contact patch but never drag it backwards.
-    if (!this.driver && Math.abs(this.speed) < T.parkBrakeSpeed) {
+    // Hill hold. Keyed on NOBODY ASKING IT TO MOVE, not on nobody being aboard
+    // — that was the first version and it released the brake the instant you
+    // sat down, so a hog parked on a slope rolled away the moment it was
+    // occupied, which is the one moment you are watching it.
+    //
+    // A real vehicle does not drop its handbrake because someone got in. This
+    // holds whenever there is no throttle and no brake input, which covers the
+    // empty vehicle, the driver sitting still, and the driver who has just
+    // lifted off — and releases the instant the throttle is touched.
+    //
+    // Starting from rest it never lets the vehicle build speed at all: the
+    // `stop` clamp below sizes the force to exactly arrest the contact patch,
+    // so at low speed it asks for very little and gets it.
+    const idle = this.input.throttle === 0 && this.input.brake === 0 && !this.input.handbrake;
+    if (idle && Math.abs(this.speed) < T.parkBrakeSpeed) {
       braking += T.parkBrake * budget;
     }
     if (braking > 0) {
@@ -1081,12 +1093,23 @@ export class Vehicle {
     this.syncVisuals();
   }
 
+  // Sleep is what actually STOPS a vehicle, not the brake. The hill hold above
+  // can only ever leave a residual creep of `gravity_along * substep`: it
+  // zeroes the contact patch's velocity and then gravity puts a step's worth
+  // straight back, every step. Measured at 0.03-0.14 m/s, invisible per frame
+  // and a metre a minute if you sit and watch it.
+  //
+  // So the condition is NOBODY ASKING IT TO MOVE, not nobody aboard. That was
+  // the original rule and it meant an occupied vehicle could never settle —
+  // the empty one on the same slope drifted 0.07 m while the seated one
+  // drifted 1.07 m, on identical speeds, purely because only one of them was
+  // allowed to fall asleep.
   _sleepCheck(h) {
     const T = this.tune;
     const still = this.vel.lengthSq() < T.sleepSpeed * T.sleepSpeed
       && this.angVel.lengthSq() < T.sleepSpin * T.sleepSpin
-      && !this.crewed
-      && this.input.throttle === 0 && this.input.brake === 0;
+      && this.input.throttle === 0 && this.input.brake === 0
+      && this.input.steer === 0 && !this.input.handbrake;
     this.stillTimer = still ? this.stillTimer + h : 0;
     if (this.stillTimer > T.sleepDelay) {
       this.asleep = true;
