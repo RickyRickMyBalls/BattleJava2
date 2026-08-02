@@ -500,6 +500,55 @@ export class DeployScreen {
     this.post = { rtColor, rtNormal, material, quadScene, quadCam, normalMat: new THREE.MeshNormalMaterial() };
   }
 
+  // Compile everything this screen renders, behind the loading bar. Called from
+  // game.prewarm; without it the first deploy of a match paid for all of it on
+  // screen — measured at 138 shader programs on the Valhalla map, spread across
+  // opening the map and the dive in.
+  //
+  // Three separate program sets, because this screen differs from the FPS view
+  // on two axes three keys its cache on:
+  //   - `transparent`, flipped on every world material by _applyMapStyle (it is
+  //     the `opaque` flag in the program key)
+  //   - the output colour space: the colour and normal passes go through render
+  //     targets (linear), the dive renders the same dimmed scene to the canvas
+  //     (sRGB)
+  // compile() draws nothing, so binding the canvas for the third set is safe
+  // with the lobby still on screen.
+  async prewarm(renderer) {
+    const scene = this.game.scene;
+    const prevTarget = renderer.getRenderTarget();
+    const compileAll = async () => {
+      if (renderer.compileAsync) await renderer.compileAsync(scene, this.camera);
+      else renderer.compile(scene, this.camera);
+    };
+    if (!this.post) this._initPost(renderer);
+    const p = this.post;
+    try {
+      this._applyMapStyle(true);
+      renderer.setRenderTarget(p.rtColor);
+      await compileAll();
+      renderer.setRenderTarget(null);
+      await compileAll();
+      // The normal-edge pass runs through scene.overrideMaterial, which
+      // compile() does not look at — this one has to be a real draw. It goes to
+      // an off-screen target, so nothing lands on the canvas.
+      for (const o of this._ghosts) o.visible = false;
+      scene.overrideMaterial = p.normalMat;
+      renderer.setRenderTarget(p.rtNormal);
+      renderer.render(scene, this.camera);
+      scene.overrideMaterial = null;
+      for (const o of this._ghosts) o.visible = true;
+      // the composite quad's own shader — it draws to the canvas, so warm it
+      // with the canvas bound or it compiles the variant nothing then uses
+      renderer.setRenderTarget(null);
+      if (renderer.compileAsync) await renderer.compileAsync(p.quadScene, p.quadCam);
+      else renderer.compile(p.quadScene, p.quadCam);
+    } finally {
+      this._applyMapStyle(false);
+      renderer.setRenderTarget(prevTarget);
+    }
+  }
+
   // Render the map view. Styled (dimmed + outlines) normally; plain during the
   // deploy dive so the world "comes back to life" as you drop in.
   renderFrame(renderer) {

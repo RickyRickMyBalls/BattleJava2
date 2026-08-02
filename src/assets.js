@@ -186,28 +186,52 @@ function boneNameSignature(boneMap) {
 // every texture from scratch. Each surface therefore has to prewarm itself,
 // with its own renderer, scene and camera.
 //
-// `objects` may be empty: the offscreen render still forces everything already
-// in the scene, which is how a late-arriving map or stage gets warmed.
-export async function prewarm(renderer, scene, camera, objects = []) {
+// `objects` may be empty: the compile pass still walks everything already in
+// the scene, which is how a late-arriving map or stage gets warmed.
+//
+// Two axes have to be covered separately, and getting either wrong leaves a
+// hitch that looks like "the first time you see X":
+//
+//   CULLING — `renderer.render` only touches what this one camera can see, so
+//   warming by rendering leaves every off-screen material cold. `compile()`
+//   walks the whole scene graph instead and is the primary pass here. On a GLB
+//   map the difference was 57 programs: the terrain and props outside the spawn
+//   view, all compiling the first time the deploy map looked down at them.
+//
+//   COLOUR SPACE — three forces LinearSRGBColorSpace whenever a render target
+//   is bound (WebGLPrograms.getParameters), and the output colour space is part
+//   of the program key. So the canvas pass and any off-screen pass need
+//   SEPARATE program sets, and which one you get depends purely on what was
+//   bound when the warm ran. Pass `offscreen: true` for a surface that also
+//   renders through a target (the match: deploy-map outline pass, scope
+//   screens) to warm both.
+export async function prewarm(renderer, scene, camera, objects = [], opts = {}) {
   const group = new THREE.Group();
   for (const o of objects) group.add(o);
   scene.add(group);
-  try {
-    if (renderer.compileAsync) await renderer.compileAsync(group, camera, scene);
+  const prevTarget = renderer.getRenderTarget();
+  const compileAll = async () => {
+    if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
     else renderer.compile(scene, camera);
-    // compileAsync covers shaders only — geometry buffers and textures still
-    // upload lazily on first draw. One offscreen render forces all of it
-    // (weapon and character meshes have frustumCulled=false, so all get drawn).
-    // sRGB, matching the canvas. The output colour space is part of three's
-    // program key, so warming into a default (linear) target compiles a variant
-    // the real frame cannot use and every material compiles again on screen.
-    const rt = new THREE.WebGLRenderTarget(8, 8, { colorSpace: THREE.SRGBColorSpace });
-    const prev = renderer.getRenderTarget();
+  };
+  const rt = new THREE.WebGLRenderTarget(8, 8);
+  try {
+    // 1. Programs for the canvas pass. compile() does not draw, so binding the
+    //    canvas here is safe even with a loading screen up.
+    renderer.setRenderTarget(null);
+    await compileAll();
+
+    // 2. Programs for the off-screen passes (linear output), same coverage.
     renderer.setRenderTarget(rt);
+    if (opts.offscreen) await compileAll();
+
+    // 3. compile() covers shaders only — geometry buffers and textures still
+    //    upload lazily on first draw. One throwaway render forces those. It is
+    //    frustum-culled, which is exactly why it is no longer the whole story.
     renderer.render(scene, camera);
-    renderer.setRenderTarget(prev);
-    rt.dispose();
   } finally {
+    renderer.setRenderTarget(prevTarget);
+    rt.dispose();
     scene.remove(group);
   }
 }

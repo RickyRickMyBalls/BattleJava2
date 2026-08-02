@@ -589,8 +589,19 @@ export const CFG = {
       // itself up. That is how real suspension is specced, and it means
       // changing the mass does not silently change the ride height — the two
       // knobs stay independent, which is what makes them tunable by hand.
-      travel: 0.34,                // total strut travel, metres
-      sag: 0.38,                   // fraction of travel used at rest
+      // These two set the RIDE FREQUENCY, and mass does not come into it. The
+      // spring rate is derived from mass, so it cancels:
+      //     ride Hz = sqrt(gravity / (travel * sag)) / 2pi
+      // At 0.34 / 0.38 that was 1.88 Hz — race-car stiff, and the reason the
+      // hog rode light and left the ground over every bump. 0.5 / 0.5 puts it
+      // at 1.35 Hz, which is road-car territory. Measured down the washboard:
+      // all four wheels airborne 11% of the time before, 0% after.
+      //
+      // Raising `mass` to fix that feel is the instinctive move and a dead end
+      // — doubled to 6000 kg the frequency stayed at exactly 1.88 Hz and the
+      // peak upward velocity got worse.
+      travel: 0.5,                 // total strut travel, metres
+      sag: 0.5,                    // fraction of travel used at rest
       damping: 0.55,               // fraction of critical, on compression
       dampingRebound: 0.85,        // higher on the way back out, as on a real damper
       // Load transferred across each axle per metre of compression difference,
@@ -614,8 +625,8 @@ export const CFG = {
       // 1.2 * 18 = 21.6. So full throttle spends over half the tyre's budget,
       // and asking for a corner at the same time overdraws it. That ratio is
       // the drift, and it is the number to move if the hog feels planted.
-      driveForce: 36000,           // N at a standstill, summed over driven wheels
-      topSpeed: 25,                // m/s where drive force has fallen to zero
+      driveForce: 66000,           // N at a standstill, summed over driven wheels
+      topSpeed: 35,                // m/s where drive force has fallen to zero
       // The gearbox. Tractive force at a standstill is `lowGear` x driveForce,
       // decaying to 1.0 by `lowGearSpeed`. Without it there is no torque
       // multiplication where a hill needs it and the measured max sustained

@@ -326,11 +326,17 @@ export class Game {
     this.player.applyLoadout(this.playerLoadout);
     // The 64 soldiers and the map are already in the scene and draw themselves;
     // the clones cover weapons and characters nobody happens to be holding or
-    // wearing yet.
+    // wearing yet. `offscreen` because a match renders through render targets
+    // as well as to the canvas (scope screens, the deploy map's outline pass),
+    // and those need their own program set — see prewarm's header.
     await prewarm(renderer, this.scene, this.camera,
-      [...weaponClones(this.assets), ...characterClones(this.assets)]);
+      [...weaponClones(this.assets), ...characterClones(this.assets)],
+      { offscreen: true });
     // The scope pass renders through its own target, so warm that path too.
     this.player.renderScope(renderer, this.scene);
+    // The deploy map is a third render path again (dimmed materials), and it is
+    // the first thing the player ever sees of a match.
+    if (this.deployScreen) await this.deployScreen.prewarm(renderer);
   }
 
   cycleTimeScale() {
