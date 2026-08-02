@@ -339,6 +339,7 @@ export function createVehicleRange(assets) {
 
   const keys = {};
   let active = false;
+  let accum = 0;          // physics time carried between frames — see update()
   // A number field has focus for most of a tuning session, and WASDRC are all
   // real keystrokes there. Without this, nudging a value with the keyboard
   // drives the hog off the range.
@@ -364,6 +365,7 @@ export function createVehicleRange(assets) {
 
   function reset() {
     if (!hog) return;
+    accum = 0;            // no stale time carried into a fresh run
     hog.placeAt(0, rangeHeight(0, 0), 0, 0);
     hog.steerAngle = 0;
     for (const w of hog.wheels) { w.spin = 0; w.slip = 0; }
@@ -426,9 +428,24 @@ export function createVehicleRange(assets) {
     hog.input.steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
     if (fwd || back || hog.input.steer) hog.wake();
 
+    // The leftover is CARRIED between frames. It used to be a local, so every
+    // frame threw away whatever did not divide evenly into a substep, and the
+    // sim ran slow and lumpy: at 60 Hz a frame is 16.7 ms against an 8.3 ms
+    // step, so any frame that dipped below two full steps discarded up to
+    // 8.3 ms of time. On a 144 Hz display it is worse than slow — the frame
+    // (6.9 ms) is SHORTER than one substep, the while loop never runs at all,
+    // and the vehicle simply never moves.
+    //
+    // VehicleManager has always done this correctly; this copy did not, which
+    // is exactly why the shared step lives on Vehicle and only the pump differs.
     const h = CFG.vehicle.substep;
-    let acc = Math.min(dt, h * CFG.vehicle.maxSubsteps);
-    while (acc >= h) { hog.step(h); acc -= h; }
+    accum = Math.min(accum + dt, h * CFG.vehicle.maxSubsteps);
+    let steps = 0;
+    while (accum >= h && steps < CFG.vehicle.maxSubsteps) {
+      hog.step(h);
+      accum -= h;
+      steps++;
+    }
     hog.syncVisuals();
 
     // 0 -> 20 m/s, and the distance from full speed to a stop under the brake.
