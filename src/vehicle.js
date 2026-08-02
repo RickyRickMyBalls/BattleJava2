@@ -1,8 +1,8 @@
 // Vehicles — chassis, suspension and tyres.
 //
-// See VEHICLE_PLAN.md for the whole arc. This module is Phase 1 (spawn) plus
-// Phase 2 (drive), and it stops there deliberately: no seats but the driver's,
-// no turret, no damage.
+// See VEHICLE_PLAN.md for the whole arc. This module is Phase 1 (spawn),
+// Phase 2 (drive) and Phase 5 (crew: five seats and the ring gun). It stops
+// there deliberately: no damage model, no bots at the wheel.
 //
 // THE MODEL: a raycast vehicle. The chassis is a rigid body with full 3-DOF
 // rotation; each of the four corners casts a ray for the ground, a spring
@@ -56,6 +56,13 @@ const _t3 = new THREE.Vector3();
 const _hullHit = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
 const _hullPoint = new THREE.Vector3();
 const _hullProbe = new THREE.Vector3();
+
+// Shortest signed representation of an angle. The turret tracks the gunner's
+// look, and without this a target across the +/-PI seam sends the ring the long
+// way round.
+function wrapPi(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
 
 function teamOfMarker(name) {
   if (/_BLUE/i.test(name)) return TEAM.BLUE;
@@ -118,7 +125,6 @@ export class Vehicle {
     this.vel = new THREE.Vector3();
     this.angVel = new THREE.Vector3();
 
-    this.driver = null;                  // Player, when one is in the seat
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: false };
     this.steerAngle = 0;                 // radians, eased toward the input
     this.speed = 0;                      // signed forward speed, m/s — for HUD/AI
@@ -126,6 +132,13 @@ export class Vehicle {
     this.stillTimer = 0;
     this.flipped = false;                // on its roof and settled; see _flipCheck
     this.flipTimer = 0;
+
+    // Crew. One entry per CFG.vehicle.seats def; `occupant` is a Player or a
+    // Soldier (Phase 7) or null. The driver is seat 0 by convention and is
+    // exposed as a getter so the physics never has to know about seating.
+    this.seats = V.seats.map((def) => ({ def, occupant: null }));
+    this.turretYaw = 0;                  // radians, relative to the chassis
+    this.turretPitch = 0;
 
     this.wheels = [];
     this.hullPoints = [];                // chassis-frame hull sample points
@@ -179,6 +192,8 @@ export class Vehicle {
       this.wheels.push(w);
     }
 
+    this._measureTurret();
+
     // Hull sample points, from the authored collision shell if it is there and
     // the whole model's bounds if it is not. Corners only: the hull is convex
     // enough that eight points catch anything a 6 m vehicle can drive into, and
@@ -205,6 +220,68 @@ export class Vehicle {
         }
       }
     }
+  }
+
+  // The turret's two hinges. Both axes are DERIVED rather than assumed, the way
+  // the wheel spin sign is: "yaw is local Y and pitch is local Z" happens to be
+  // true of this rig and is exactly the sort of thing a re-export quietly
+  // changes. What is actually true regardless is that the ring turns about the
+  // chassis's up, and the gun elevates about the axis square to both that and
+  // its own barrel.
+  //
+  // Each axis is stored in its node's PARENT frame, because that is the frame
+  // `Object3D.quaternion` lives in — which is also why the rotation is applied
+  // by pre-multiplying the authored base rather than replacing it.
+  _measureTurret() {
+    const yawRef = this.refs['ref_turret_base_rotate_yaw'];
+    const pitchRef = this.refs['ref_gun_turret_handle_rotate_pitch'];
+    const muzzle = this.refs['ref_muzzle_gunner'];
+    this.turret = null;
+    if (!yawRef || !pitchRef || !muzzle) {
+      if (yawRef || pitchRef || muzzle) {
+        console.warn(`[vehicle] ${this.key}: turret rig incomplete — no gunner`);
+      }
+      return;
+    }
+    const inParentFrame = (node, worldAxis) => {
+      _q1.identity();
+      if (node.parent) node.parent.getWorldQuaternion(_q1);
+      return worldAxis.clone().applyQuaternion(_q1.invert()).normalize();
+    };
+
+    // The barrel, as the rig has it: muzzle minus the elevation pivot.
+    const pivot = pitchRef.getWorldPosition(new THREE.Vector3());
+    const tip = muzzle.getWorldPosition(new THREE.Vector3());
+    _v1.copy(tip).sub(pivot);
+    // Elevation axis: square to both the barrel and up. Points to the chassis's
+    // LEFT, and a positive rotation about left pitches the muzzle DOWN — hence
+    // the negation where it is applied.
+    _v2.copy(_Y).cross(_v1).normalize();
+
+    // Which of the muzzle empty's own axes points down the barrel. Derived, for
+    // the third time in this file and for the third good reason: assuming +Z
+    // put the rounds out of the side of the gun at exactly 90 degrees, because
+    // ref_muzzle_gunner carries a baked -90 degree Y. The barrel's true
+    // direction is the one thing we can measure — tip minus pivot — so the
+    // local axis is whichever best agrees with it.
+    muzzle.getWorldQuaternion(_q1);
+    _v3.copy(_v1).normalize();
+    let bestAxis = null, bestDot = -Infinity;
+    for (const a of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      const d = _v2.set(a[0], a[1], a[2]).applyQuaternion(_q1).dot(_v3);
+      if (d > bestDot) { bestDot = d; bestAxis = a; }
+    }
+    // Recompute the elevation axis now that _v2 has been reused above.
+    _v2.copy(_Y).cross(_v3).normalize();
+
+    this.turret = {
+      yawRef, pitchRef, muzzle,
+      yawBase: yawRef.quaternion.clone(),
+      pitchBase: pitchRef.quaternion.clone(),
+      yawAxis: inParentFrame(yawRef, _Y),
+      pitchAxis: inParentFrame(pitchRef, _v2),
+      muzzleAxis: new THREE.Vector3().fromArray(bestAxis),
+    };
   }
 
   _deriveConstants() {
@@ -282,7 +359,7 @@ export class Vehicle {
   // ---------------------------------------------------------------- step --
 
   step(h) {
-    if (this.asleep && !this.driver) { this._syncWheelVisuals(); return; }
+    if (this.asleep && !this.crewed) { this._syncWheelVisuals(); return; }
     const T = this.tune;
 
     // Steering eases toward the held direction, and full lock is only available
@@ -334,11 +411,11 @@ export class Vehicle {
     // The ground runs whenever the suspension is not doing the job — inverted,
     // airborne, or moving. A hog sitting level on four loaded springs is the
     // one case that can skip it.
-    if (!upright || this.driver || this.vel.lengthSq() > 0.25
+    if (!upright || this.crewed || this.vel.lengthSq() > 0.25
       || this.wheels.some((w) => !w.grounded)) this._collideGround(h);
     // Eight BVH queries per substep is the most expensive thing in here, and a
     // parked hog cannot drive into anything. Everything that moves still pays.
-    if (this.driver || this.vel.lengthSq() > 0.25) this._collideHull(h);
+    if (this.crewed || this.vel.lengthSq() > 0.25) this._collideHull(h);
 
     // Last resort, and it runs UNCONDITIONALLY — it used to sit at the bottom
     // of the wall-collision routine, behind an early return that fires whenever
@@ -675,7 +752,7 @@ export class Vehicle {
     const T = this.tune;
     const still = this.vel.lengthSq() < T.sleepSpeed * T.sleepSpeed
       && this.angVel.lengthSq() < T.sleepSpin * T.sleepSpin
-      && !this.driver
+      && !this.crewed
       && this.input.throttle === 0 && this.input.brake === 0;
     this.stillTimer = still ? this.stillTimer + h : 0;
     if (this.stillTimer > T.sleepDelay) {
@@ -692,6 +769,17 @@ export class Vehicle {
     _v1.copy(this.com).applyQuaternion(this.quat);
     this.group.position.copy(this.pos).sub(_v1);
     this._syncWheelVisuals();
+    this._syncTurret();
+  }
+
+  _syncTurret() {
+    const t = this.turret;
+    if (!t) return;
+    t.yawRef.quaternion.copy(t.yawBase)
+      .premultiply(_q2.setFromAxisAngle(t.yawAxis, this.turretYaw));
+    // Negated: a positive rotation about the LEFT axis pitches the muzzle down.
+    t.pitchRef.quaternion.copy(t.pitchBase)
+      .premultiply(_q2.setFromAxisAngle(t.pitchAxis, -this.turretPitch));
   }
 
   _syncWheelVisuals() {
@@ -716,21 +804,96 @@ export class Vehicle {
     return r.getWorldPosition(out);
   }
 
-  enter(player) { this.driver = player; this.wake(); }
+  // Seat 0 by convention. A getter so the physics can ask "is anyone driving"
+  // without knowing that seating exists at all.
+  get driver() { return this.seats[0].occupant; }
+  get crewed() { return this.seats.some((s) => s.occupant); }
+  seatOf(who) { return this.seats.findIndex((s) => s.occupant === who); }
 
-  exit() {
-    this.driver = null;
-    this.input.throttle = 0;
-    this.input.brake = 0;
-    this.input.steer = 0;
-    this.input.handbrake = false;
+  // Where a seat is in the world. Prefers the rig's own empty and falls back to
+  // a chassis-frame offset for the seats the GLB does not author (the tailgate
+  // riders — VEHICLE_PLAN.md open question 3).
+  seatWorld(i, out) {
+    const d = this.seats[i].def;
+    if (d.ref && this.refs[d.ref]) return this.refs[d.ref].getWorldPosition(out);
+    return out.fromArray(d.offset).applyQuaternion(this.quat).add(this.group.position);
   }
 
-  // Where a soldier stepping out should land: beside the driver's door, on the
-  // ground, clear of the hull.
-  exitPoint(out) {
-    _v1.set(1, 0, 0).applyQuaternion(this.quat);   // chassis left
-    out.copy(this.group.position).addScaledVector(_v1, 2.4);
+  // The eye for a seat. Read LIVE off the hierarchy rather than computed,
+  // because ref_camera_gunner hangs off the turret body and therefore yaws with
+  // the ring — which is the behaviour we want and would have to be re-derived
+  // by hand otherwise.
+  seatEye(i, out) {
+    const d = this.seats[i].def;
+    if (d.camera && this.refs[d.camera]) return this.refs[d.camera].getWorldPosition(out);
+    this.seatWorld(i, out);
+    out.y += 0.75;
+    return out;
+  }
+
+  // Which seat a soldier standing here would take: the nearest FREE one. No
+  // menu, no cycle key — walk round to the back of the hog and press E and you
+  // are on the tailgate, stand at the door and you are driving.
+  nearestFreeSeat(pos) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < this.seats.length; i++) {
+      if (this.seats[i].occupant) continue;
+      const d = pos.distanceToSquared(this.seatWorld(i, _v3));
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  enterSeat(i, who) {
+    if (i < 0 || i >= this.seats.length || this.seats[i].occupant) return false;
+    this.seats[i].occupant = who;
+    this.wake();
+    return true;
+  }
+
+  exitSeat(who) {
+    const i = this.seatOf(who);
+    if (i < 0) return;
+    this.seats[i].occupant = null;
+    if (i === 0) {
+      this.input.throttle = 0;
+      this.input.brake = 0;
+      this.input.steer = 0;
+      this.input.handbrake = false;
+    }
+  }
+
+  // Aim the ring. Rates rather than a snap, so a heavy gun reads as heavy and
+  // whipping the mouse does not teleport the barrel across the field.
+  aimTurret(yaw, pitch, dt) {
+    const T = V.turret;
+    const dy = wrapPi(yaw - this.turretYaw);
+    const my = T.yawRate * dt;
+    this.turretYaw = wrapPi(this.turretYaw + Math.max(-my, Math.min(my, dy)));
+    const want = Math.max(T.pitchMin, Math.min(T.pitchMax, pitch));
+    const mp = T.pitchRate * dt;
+    this.turretPitch += Math.max(-mp, Math.min(mp, want - this.turretPitch));
+  }
+
+  // Muzzle position and the direction the barrel actually points — not where
+  // the gunner is looking. They differ while the ring is still catching up, and
+  // the round has to leave the gun.
+  muzzle(outPos, outDir) {
+    if (!this.turret) return false;
+    this.turret.muzzle.getWorldPosition(outPos);
+    this.turret.muzzle.getWorldQuaternion(_q1);
+    outDir.copy(this.turret.muzzleAxis).applyQuaternion(_q1).normalize();
+    return true;
+  }
+
+  // Where a soldier stepping out should land: beside the vehicle on the side
+  // their seat is on, on the ground, clear of the hull.
+  exitPoint(out, seatIdx = 0) {
+    this.seatWorld(seatIdx, _v1);
+    _v2.copy(_v1).sub(this.group.position);
+    _v3.set(1, 0, 0).applyQuaternion(this.quat);          // chassis left
+    const side = _v2.dot(_v3) >= 0 ? 1 : -1;
+    out.copy(this.group.position).addScaledVector(_v3, 2.4 * side);
     out.y = this.groundAt(out.x, out.z);
     return out;
   }

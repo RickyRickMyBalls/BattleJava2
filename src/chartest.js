@@ -136,6 +136,10 @@ window.addEventListener('resize', () => {
 
 const chars = [];
 let mode = 'back'; // 'back' | 'grip' | 'fp' | 'ads' — the last two render through the first-person camera
+// Everything in WEAPONS that actually mounts in a pair of hands. A `mounted`
+// def (the Warthog's turret) has no model and no grip to tune.
+const HAND_WEAPONS = Object.keys(WEAPONS).filter((k) => !WEAPONS[k].mounted);
+
 const isFpMode = (m) => m === 'fp' || m === 'ads';
 // The vehicle range owns its own ground, camera and input. It is a tab rather
 // than its own page because the tuning workflow lives at one address, and
@@ -322,7 +326,9 @@ function buildPanel(assets) {
   }
 
   const wpnBtns = document.getElementById('wpnBtns');
-  for (const key of Object.keys(WEAPONS)) {
+  // `mounted` defs are bolted to a vehicle and have no GLB and no hand pose,
+  // so there is nothing here to tune for them.
+  for (const key of HAND_WEAPONS) {
     const b = document.createElement('button');
     b.textContent = key.toUpperCase();
     if (key === gripKey) b.classList.add('sel');
@@ -432,7 +438,7 @@ function buildPanel(assets) {
     if (mode === 'ads') dumpAds(); else dumpFp();
   }
   for (const row of wpnRows) {
-    for (const key of Object.keys(WEAPONS)) {
+    for (const key of HAND_WEAPONS) {
       const b = document.createElement('button');
       b.textContent = key.toUpperCase();
       b.dataset.key = key;

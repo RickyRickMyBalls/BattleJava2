@@ -327,7 +327,11 @@ export async function loadAssets(onProgress) {
   }
 
   // Weapons ---------------------------------------------------------------
+  // `mounted` defs have no GLB of their own — their geometry is part of the
+  // vehicle they are bolted to. They are still real weapon defs everywhere else
+  // (combat, tracers, audio); they just have nothing to load or to hold.
   for (const [key, def] of Object.entries(WEAPONS)) {
+    if (def.mounted) { tick(key); continue; }
     jobs.push(loadGLB(def.model).then((gltf) => {
       const scene = gltf.scene;
       scene.updateMatrixWorld(true);

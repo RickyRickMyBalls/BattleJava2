@@ -367,17 +367,52 @@ Purely cosmetic, and only possible once there is real motion to drive them.
   every other tuning tab in the project.
 - Steering wheel, throttle lever, pedals, brake lights, exhaust, headlights.
 
-### Phase 5 — Seats and the turret
+### Phase 5 — Seats and the turret ✅ DONE
 
-Passenger, gunner, tailgate riders. Enter/exit on the existing `E` interact key,
-folded into the priority chain in `_updateInteract` (casualties already win over
-crates there; a vehicle joins the same ordering rather than adding a second key).
+Five seats: driver, gunner, passenger, and two on the tailgate. Enter/exit on
+the existing `E`, folded into the priority chain in `_updateInteract`.
 
-The turret: `ref_turret_base_rotate_yaw` for yaw,
-`ref_gun_turret_handle_rotate_pitch` for pitch, `ref_muzzle_gunner` for the shot
-origin, and a `WEAPONS.hogturret` entry so it fires through
-`combat.firePlayerShot` like everything else rather than growing a private
-damage path.
+**Which seat you get is decided by which one you are standing nearest.** No
+menu and no cycle key — walk round to the back and press E and you are on the
+tailgate; stand at the door and you are driving. The prompt names the seat it
+is offering, so the input is the position of your feet.
+
+| Seat | Can do | Weapon |
+| --- | --- | --- |
+| driver | drive | none — both hands full |
+| gunner | the ring | `WEAPONS.hogturret` (M41 LAAG) |
+| passenger, rearLeft, rearRight | ride and shoot | their own carried weapon |
+
+Seats are a **table in config keyed to the rig's own empties**, not a class
+hierarchy — adding a seat to a vehicle is an entry in `CFG.vehicle.seats`.
+`ref_camera_gunner` hangs off `gun_turret_body` in the GLB and therefore yaws
+with the ring, which is why every seat's eye is read live off the hierarchy
+rather than computed.
+
+**The gunner's aim frame is the RING's, not the chassis's.** A gunner holding
+still on a target keeps holding it while the driver swerves underneath. That is
+the whole difference between a manned turret and a gun bolted to a car.
+
+**`mounted: true` is a new WEAPONS convention** — the geometry belongs to a
+vehicle, so `assets.js` loads no model for it and `/chartest.html`'s GRIP and
+VIEWMODEL tabs skip it. It is in no armoury pool, so it can never be selected
+as a loadout weapon; what puts it in front of you is the seat.
+
+**Three axes derived, not assumed**, and the third one earned it: turret yaw,
+gun elevation, and *which way the barrel points*. Assuming the muzzle empty's
+forward was `+Z` put rounds out of the side of the gun at exactly 90°, because
+`ref_muzzle_gunner` carries a baked −90° Y. All three are now measured off the
+rig at load — the barrel's true direction is tip-minus-pivot, and the local
+axis is whichever best agrees with it.
+
+Verified: seats resolve from every approach angle; ring tracks to a commanded
+0.9 rad yaw / 0.25 pitch and holds; 15 rounds in 2 s against 16 expected at
+480 rpm; recoil walks the aim up; passenger and tailgate riders fire their own
+weapons (15 rounds, magazine counting down); driver fires nothing.
+
+**Still open:** the tailgate seats are derived offsets because the GLB authors
+no empties for them (open question 3). Bodies are hidden while seated — there
+is no seated pose yet, so a marine would stand upright through the roll cage.
 
 ### Phase 6 — Damage, roadkill and repair
 

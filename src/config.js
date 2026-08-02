@@ -381,6 +381,46 @@ export const CFG = {
 
     enterRange: 4.0,     // metres from the driver's door to prompt
 
+    // Seats, addressed by the rig's own empties rather than by a class
+    // hierarchy — adding a seat to a vehicle is an entry in this list and
+    // nothing else. Order matters only for tie-breaks; which seat you get is
+    // decided by which one you are STANDING NEAREST, so walking round to the
+    // back of the hog and pressing E puts you on the tailgate without a menu.
+    //
+    //   ref    — where the body is parked. Null means the rig has no empty for
+    //            it and `offset` (chassis frame) stands in.
+    //   camera — the eye. Null falls back to the seat plus eye height.
+    //   role   — 'drive' | 'turret' | 'ride'
+    seats: [
+      { id: 'driver', label: 'DRIVE', role: 'drive',
+        ref: 'ref_seat_driver', camera: 'ref_camera_driver' },
+      // The gunner stands in the ring, so there is no seat empty by design —
+      // ref_camera_gunner hangs off gun_turret_body and therefore YAWS WITH THE
+      // TURRET, which is exactly right and is why the camera is read live off
+      // the hierarchy rather than computed.
+      { id: 'gunner', label: 'MAN THE TURRET', role: 'turret',
+        ref: null, offset: [0, 1.25, -1.55], camera: 'ref_camera_gunner' },
+      { id: 'passenger', label: 'RIDE SHOTGUN', role: 'ride',
+        ref: 'ref_seat_passenger', camera: 'ref_camera_passenger' },
+      // VEHICLE_PLAN.md open question 3: the tailgate riders have no authored
+      // empties, so these are derived and deliberately marked. Two more
+      // ref_seat_* in the GLB replaces both offsets and this comment.
+      { id: 'rearLeft', label: 'RIDE THE TAILGATE', role: 'ride',
+        ref: null, offset: [0.8, 1.15, -2.15], camera: null },
+      { id: 'rearRight', label: 'RIDE THE TAILGATE', role: 'ride',
+        ref: null, offset: [-0.8, 1.15, -2.15], camera: null },
+    ],
+
+    // The ring mount. It tracks the gunner's look rather than snapping to it,
+    // so a heavy gun reads as heavy and whipping the mouse does not teleport
+    // the barrel across the field.
+    turret: {
+      yawRate: 2.4,        // rad/s
+      pitchRate: 2.0,
+      pitchMin: -0.30,     // radians below level — the shield stops it going far
+      pitchMax: 0.85,
+    },
+
     // Landing on the roof. A flipped hog is a RECOVERABLE situation, not a lost
     // vehicle and not a soft-lock — which is what it was, because the hull had
     // no ground collision and an inverted chassis has its suspension switched
@@ -1447,6 +1487,29 @@ export const WEAPONS = {
     ai: { aiMin: 0, range: 55, burst: [1, 2], interval: 0.28, pause: [0.6, 1.2], spread: 0.010 },
   },
 
+  // --- Mounted ---------------------------------------------------------------
+  // `mounted: true` means the GEOMETRY BELONGS TO A VEHICLE, not to a pair of
+  // hands. It is in WEAPONS for the same reason the tools are: this registry is
+  // everything that can shoot, and combat.js, the tracer pool and the audio
+  // mixer all read a def off it. What `mounted` buys is an exemption from the
+  // three systems that assume a def owns a GLB — assets.js does not load a
+  // model for it, and /chartest.html's GRIP and VIEWMODEL tabs skip it, because
+  // there is no hand pose to tune on something bolted to a roll cage.
+  //
+  // It is not in any armoury pool, so it can never be selected as a loadout
+  // weapon; what puts it in front of you is sitting in the gunner's seat.
+  hogturret: {
+    name: 'M41 LAAG', mounted: true,
+    mode: 'auto', rpm: 480, dmg: 17, mag: 200, reserve: 800, reload: 4.5,
+    // No ADS: it is a ring-mounted gun with iron sights you do not lean into.
+    // The hip figure is the only spread it has, and it is tight because the
+    // mount is doing the stabilising a soldier's arms cannot.
+    spreadHip: 0.012, spreadAds: 0.012, adsFov: 55,
+    falloff: [90, 320, 0.62], range: 520,
+    tracer: { style: 'bolt', color: [1, 0.78, 0.42], len: 7, speed: 560, every: 1, opacity: 0.6 },
+    snd: { key: 'shot', rate: 0.72, vol: 0.8 },
+  },
+
   // --- Tools ---------------------------------------------------------------
   // Not a weapon, and in WEAPONS on purpose. This registry is not "guns" — it is
   // everything that mounts in a pair of hands, and four systems already walk it:
@@ -1573,6 +1636,7 @@ for (const [k, def] of Object.entries(WEAPONS)) {
   // their own tier rather than falling through to 'primary'. Without this line
   // a welder would be labelled a primary weapon by anything that reads `slot`.
   def.slot = def.tool ? 'tool'
+    : def.mounted ? 'mounted'
     : SIDEARM_POOL.includes(k) ? 'sidearm'
       : SPECIALIST_POOL.includes(k) ? 'specialist'
         : 'primary';

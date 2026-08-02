@@ -188,8 +188,10 @@ export class Player {
     // hands over to `_updateDriving` and the camera is owned by
     // `updateVehicleCamera`, which runs AFTER the sim step (see game.update).
     this.vehicle = null;
+    this.vehicleSeatIdx = -1;
     this.exitCooldown = 0;   // stops one E press exiting the car it just entered
     this.rightTimer = 0;     // held-E progress toward righting a flipped one
+    this.turretCooldown = 0; // rate limit for the ring gun
     // Eased chase heading. Null means "no history" — snap to the car's heading
     // on the next frame rather than sweeping in from whatever it was last time.
     this.vCamYaw = null;
@@ -1048,12 +1050,16 @@ export class Player {
     }
 
     this.rightTimer = 0;
-    if (v.driver) {
-      this.game.hud.setPrompt('WARTHOG — SEAT TAKEN', 0);
+    // Which seat you get is decided by which one you are STANDING NEAREST, so
+    // the prompt names it and walking round the vehicle changes the offer. No
+    // menu, no cycle key — the position of your feet is the input.
+    const i = v.nearestFreeSeat(this.pos);
+    if (i < 0) {
+      this.game.hud.setPrompt('WARTHOG — FULL', 0);
       return true;
     }
-    this.game.hud.setPrompt('E — DRIVE WARTHOG', 0);
-    if (this.keys['KeyE'] && this.locked && !this.actionBusy()) this.enterVehicle(v);
+    this.game.hud.setPrompt(`E — ${v.seats[i].def.label}`, 0);
+    if (this.keys['KeyE'] && this.locked && !this.actionBusy()) this.enterVehicle(v, i);
     return true;
   }
 
@@ -1222,16 +1228,29 @@ export class Player {
   // driving rather than growing a second pair: every consumer of them
   // (mouselook, sensitivity, the exit heading) wants the same numbers, and two
   // sets would need reconciling on every transition instead of two.
-  enterVehicle(v) {
-    if (this.vehicle || !v || v.driver || v.flipped) return false;
+  // Which seat this is, and what it lets you do. Read a lot, so it is a getter
+  // rather than duplicated state that could disagree with the vehicle's.
+  get vehicleSeat() {
+    return this.vehicle ? this.vehicle.seats[this.vehicleSeatIdx] : null;
+  }
+  get vehicleRole() {
+    const s = this.vehicleSeat;
+    return s ? s.def.role : null;
+  }
+
+  enterVehicle(v, seatIdx = -1) {
+    if (this.vehicle || !v || v.flipped) return false;
+    const i = seatIdx >= 0 ? seatIdx : v.nearestFreeSeat(this.pos);
+    if (!v.enterSeat(i, this)) return false;
     this.vehicle = v;
-    v.enter(this);
-    this.yaw = 0;              // looking straight down the bonnet
+    this.vehicleSeatIdx = i;
+    this.yaw = 0;              // looking straight ahead down the chassis
     this.pitch = 0;
     this.vCamYaw = null;       // snap the chase heading, do not sweep in
     this.firing = false;
     this.ads = false;
     this.exitCooldown = 0.4;
+    this.turretHeat = 0;
     this.viewmodel.visible = false;
     this.game.hud.setPrompt(null);
     this.game.hud.message('E TO GET OUT', 2);
@@ -1241,9 +1260,10 @@ export class Player {
   exitVehicle() {
     const v = this.vehicle;
     if (!v) return;
-    v.exitPoint(_exit);
+    v.exitPoint(_exit, this.vehicleSeatIdx);
+    v.exitSeat(this);
     this.vehicle = null;
-    v.exit();
+    this.vehicleSeatIdx = -1;
     // The relative look becomes an absolute one again, so stepping out leaves
     // you facing where you were looking rather than snapping to a world axis.
     // Built from the EASED chase heading, not the car's, so the hand-off is
@@ -1267,39 +1287,94 @@ export class Player {
     const s = this.soldier;
     this.exitCooldown = Math.max(0, this.exitCooldown - dt);
 
-    const drive = this.locked && !this.game.menuOpen;
-    const fwd = drive && !!this.keys['KeyW'];
-    const back = drive && !!this.keys['KeyS'];
-    let steer = 0;
-    if (drive && this.keys['KeyA']) steer += 1;   // +X is chassis left
-    if (drive && this.keys['KeyD']) steer -= 1;
+    const live = this.locked && !this.game.menuOpen;
+    const role = this.vehicleRole;
 
-    // S is brake-then-reverse rather than a dedicated key: while there is
-    // forward speed to kill it brakes, and only once stopped does it back up.
-    // A separate reverse key would be a key nobody presses in a panic.
-    const rolling = v.speed > 0.6;
-    v.input.throttle = fwd ? 1 : (back && !rolling ? -1 : 0);
-    v.input.brake = back && rolling ? 1 : 0;
-    v.input.handbrake = drive && !!this.keys['Space'];
-    v.input.steer = steer;
-    if (fwd || back || steer) v.wake();
+    // Only the driver's seat touches the controls. Everyone else's WASD does
+    // nothing, which is the point of there being seats at all.
+    if (role === 'drive') {
+      const fwd = live && !!this.keys['KeyW'];
+      const back = live && !!this.keys['KeyS'];
+      let steer = 0;
+      if (live && this.keys['KeyA']) steer += 1;   // +X is chassis left
+      if (live && this.keys['KeyD']) steer -= 1;
 
-    if (drive && this.keys['KeyE'] && this.exitCooldown <= 0) {
+      // S is brake-then-reverse rather than a dedicated key: while there is
+      // forward speed to kill it brakes, and only once stopped does it back up.
+      // A separate reverse key would be a key nobody presses in a panic.
+      const rolling = v.speed > 0.6;
+      v.input.throttle = fwd ? 1 : (back && !rolling ? -1 : 0);
+      v.input.brake = back && rolling ? 1 : 0;
+      v.input.handbrake = live && !!this.keys['Space'];
+      v.input.steer = steer;
+      if (fwd || back || steer) v.wake();
+    }
+
+    // The ring chases where the gunner is looking. Aimed here rather than in
+    // the camera pass because it is INPUT — the barrel is a thing in the world
+    // that has to be stepped with everything else, and the camera then reports
+    // where it ended up.
+    if (role === 'turret') {
+      v.aimTurret(this.yaw, this.pitch, dt);
+      this._fireTurret(dt, live);
+    }
+
+    if (live && this.keys['KeyE'] && this.exitCooldown <= 0) {
       this.exitVehicle();
       return;
     }
 
     // The body rides in the seat. It stays in `allSoldiers` and stays
-    // shootable — a driver is not invulnerable, they are just not walking.
+    // shootable — a passenger is not invulnerable, they are just not walking.
     s.speed2D = 0;
     s.sprinting = false;
     s.crouching = false;
     s.airborne = false;
     s.aiming = false;
     s.setMoveDir(0, 0, 0);
-    this.viewmodel.visible = false;
-    this.firing = false;
     this.lookSens = HIP_SENS;
+    // A rider keeps their own weapon in hand; the gunner's is bolted to the
+    // vehicle and the driver has both hands full. Only the DRIVER's trigger is
+    // cleared — the gunner's `firing` is what holds the ring gun down, and
+    // clearing it here let exactly one round out before the flag was gone
+    // again on the next frame.
+    this.viewmodel.visible = role === 'ride' && !this.freecam && !this.thirdPerson;
+    if (role === 'drive') this.firing = false;
+
+    // A rider is a rifleman who happens to be sitting down, so they run the
+    // real weapon path — cadence, reload, ammo, the lot — rather than a second
+    // simplified copy of it. `moving` is false and `speed` zero because the
+    // sway those drive belongs to legs, and theirs are not doing anything.
+    if (role === 'ride') {
+      this._updateActions(dt);
+      this._updateWeapon(dt, false, 0);
+      const w = this.weapon;
+      if (!w.def.tool) {
+        this.game.hud.setAmmo(w.mag, w.reserve, w.def.mag);
+        if (this.ammoDisplay) this.ammoDisplay.set(w.mag);
+      }
+      this.prevFiring = this.firing;
+    }
+  }
+
+  // The M41 on the ring. It fires through combat.firePlayerShot like every
+  // other weapon rather than growing a private damage path — what differs is
+  // only where the round starts and which way the barrel is actually pointing,
+  // which is NOT where the gunner is looking while the ring is still catching
+  // up. Firing along the look would put rounds through the shield.
+  _fireTurret(dt, live) {
+    const def = WEAPONS.hogturret;
+    const v = this.vehicle;
+    this.turretCooldown = Math.max(0, (this.turretCooldown || 0) - dt);
+    if (!live || !this.firing || this.turretCooldown > 0) return;
+    if (!v.muzzle(_muzzle, _dir)) return;
+    this.turretCooldown = 60 / def.rpm;
+    _from.copy(_muzzle);
+    this.game.combat.firePlayerShot(_from, _dir, def, def.spreadHip, _muzzle);
+    this.game.audio.playShot(def);
+    // Kick goes into the LOOK, so the ring drifts off target under sustained
+    // fire the way a real mount does, and settling it back is the gunner's job.
+    this.pitch = Math.min(1.45, this.pitch + 0.004 + Math.random() * 0.003);
   }
 
   // Camera and seat, AFTER the physics has run. Called from game.update once
@@ -1313,10 +1388,20 @@ export class Player {
 
     // Seat the body and keep the controller's own position with it, so squad
     // follow, objective distance and `playerActive` all track the vehicle.
-    const seat = v.refWorld('ref_seat_driver', _seat) || v.group.position;
+    const i = this.vehicleSeatIdx;
+    const seat = v.seatWorld(i, _seat);
     this.pos.set(seat.x, seat.y - P.eyeHeight, seat.z);
     s.pos.copy(this.pos);
     s.yaw = v.yaw;
+
+    // The gunner's frame is the RING's, not the chassis's. The ring lags the
+    // look, so building the view off the chassis instead would swing the whole
+    // world every time the hog turned under a gunner holding still on a target.
+    if (this.vehicleRole === 'turret') {
+      this._updateTurretCamera(v, dt);
+      this.syncBodyVisibility();
+      return;
+    }
 
     // The view frame is built from the car's HEADING — its forward flattened
     // onto the horizontal plane — not from its full orientation. Roll and pitch
@@ -1357,6 +1442,33 @@ export class Player {
       this.camera.updateProjectionMatrix();
     }
     this.syncBodyVisibility();
+  }
+
+  // The gunner rides the ring. `ref_camera_gunner` hangs off the turret body in
+  // the GLB, so it already yaws with the mount — the eye is read straight off
+  // the live hierarchy and the only thing built here is the orientation.
+  //
+  // Aim is expressed against the TURRET, not the chassis, so a gunner holding
+  // still on a target keeps holding it while the driver swerves underneath.
+  // That is the whole difference between a manned turret and a gun bolted to a
+  // car, and it is why `this.yaw` for this seat is chassis-relative but the
+  // camera is ring-relative.
+  _updateTurretCamera(v, dt) {
+    const eye = v.seatEye(this.vehicleSeatIdx, _eye);
+    this.camera.position.copy(eye);
+    _fwd.set(0, 0, 1).applyQuaternion(v.quat);
+    const heading = Math.atan2(_fwd.x, _fwd.z);
+    _level.setFromAxisAngle(_YAXIS, Math.PI + heading + v.turretYaw);
+    _level.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+    _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
+    _drive.premultiply(v.quat);
+    _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+    this.camera.quaternion.copy(_level).slerp(_drive, CFG.vehicle.camera.tiltFP);
+    if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
+      this.camera.fov = HIP_FOV;
+      this.camera.updateProjectionMatrix();
+    }
+    this.lookSens = HIP_SENS;
   }
 
   // Same shape as the infantry boom (_applyBoom): pull in hard the instant
