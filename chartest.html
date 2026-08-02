@@ -18,6 +18,9 @@
       overflow-y: auto; background: rgba(8, 20, 32, 0.92); border: 1px solid rgba(127,212,255,0.35);
       padding: 12px; font-size: 11px;
     }
+    /* The vehicle tab shows a four-corner telemetry column that does not fit
+       the character panel's width. */
+    #panel.wide { width: 390px; }
     #panel h1 { font-size: 12px; letter-spacing: 3px; margin-bottom: 8px; color: #e8f4fc; }
     fieldset { border: 1px solid #24404f; margin-bottom: 10px; padding: 8px; }
     legend { padding: 0 6px; letter-spacing: 2px; color: #ffd66e; }
@@ -38,6 +41,14 @@
       width: 100%; height: 130px; background: #0c1826; color: #9fd4ff; border: 1px solid #24404f;
       font-family: Consolas, monospace; font-size: 10px; padding: 6px; white-space: pre; overflow: auto;
     }
+    /* Telemetry is fixed-pitch on purpose: the per-wheel bars only line up as a
+       column if the glyphs do, and reading four corners at a glance is the
+       whole point of showing them. */
+    #vehTel {
+      background: #0c1826; border: 1px solid #24404f; color: #9fd4ff;
+      font-family: Consolas, monospace; font-size: 10px; line-height: 1.35;
+      padding: 6px; margin-bottom: 10px; white-space: pre; overflow-x: auto;
+    }
     .hint { color: #46606f; margin-top: 6px; letter-spacing: 1px; }
   </style>
 </head>
@@ -50,6 +61,7 @@
       <button data-mode="grip">GRIP</button>
       <button data-mode="fp">VIEWMODEL</button>
       <button data-mode="ads">ADS</button>
+      <button data-mode="veh">VEHICLE</button>
     </div>
     <div class="btns" id="animBtns">
       <button data-anim="idle" class="sel">IDLE</button>
@@ -76,6 +88,14 @@
         <button id="adsResetBtn">RESET</button>
       </div>
       <div id="adsSection"></div>
+    </div>
+    <div id="vehMode" style="display:none">
+      <div class="btns">
+        <button id="vehReset">RESET (R)</button>
+        <button id="vehCam">CAM: CHASE (C)</button>
+      </div>
+      <pre id="vehTel"></pre>
+      <div id="vehInputs"></div>
     </div>
     <textarea id="out" readonly></textarea>
     <div class="hint" id="hint">values update live · paste block into soldier.js BACK</div>

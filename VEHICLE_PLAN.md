@@ -304,18 +304,55 @@ spins the hog 180 degrees from one tap at 20 m/s. That is what a locked axle
 does and the model is behaving; whether it is the *feel* wanted is a tuning
 call, not a code one.
 
-### Phase 3 — The tuning range
+### Phase 3 — The tuning range ✅ DONE
 
-A `VEHICLE` tab in `/chartest.html`: flat ground, a ramp, a bank, live sliders
-for mass, COM offset, spring rate, damper rate, grip coefficient, torque curve,
-steer limit and speed-sensitive steer falloff. Values paste back into
-`CFG.vehicle.warthog` exactly the way the `BACK`, `GRIP` and `VIEWMODEL` tabs
-already work.
+A `VEHICLE` tab in `/chartest.html`, built on `src/vehiclerange.js`. WASD to
+drive, Space handbrake, R reset, C cycles CHASE / DRIVER / SIDE / FRONT. 25 live
+sliders across BODY, SUSPENSION, DRIVE, STEERING and TYRES, and a paste-ready
+`CFG.vehicle.warthog` block that updates as you turn them.
 
 **Locked:** this is how the project tunes — build the UI, do not guess the
-numbers. It is listed as its own phase rather than folded into Phase 2 because
-it is the tool that *finishes* Phase 2, and treating it as optional polish is
-how Phase 2 ends up hand-tuned badly and never revisited.
+numbers. It is its own phase rather than polish folded into Phase 2 because it
+is the tool that *finishes* Phase 2, and treating it as optional is how Phase 2
+ends up hand-tuned badly once and never revisited.
+
+Two decisions make it an instrument rather than a sandbox:
+
+**The ground is analytic.** `rangeHeight(x, z)` is a function; the mesh is
+displaced from it and the vehicle's ground query calls it directly, so what you
+see is what you drive on to the millimetre. map-3 cannot give that — its
+flattest authored ground still steps 0.73 m over 4 m, which is terrain to test
+ON and useless to tune AGAINST.
+
+**The centre lane (x = 0) is flat for the full 300 m**, verified in code, and
+every feature is placed to keep it that way. The jump originally sat at z = 90
+down the middle, so every acceleration run launched off it and the 0-20 time and
+braking distance were being measured *through a jump*. Measurements are only
+worth having if the surface under them is known.
+
+Features, each answering one question: **JUMP** (does it land on the suspension
+or its face — 4 wheels airborne, bump stop 0.138 m, 207 kN peak), **WASHBOARD**
+(is the damping right or does it pogo), **CAMBER** dome (how much lean before it
+lets go), **STEP** kerb (does the hull climb it — it does not), **BOWL**
+(constant-radius, for watching the tyre budget run out). Control run on the flat
+lane: 0 airborne, compression 0.091–0.16 around the 0.129 sag, 0.0 degrees lean.
+
+It reports numbers, because suspension is not tunable by vibes — "feels floaty"
+is a roll angle and a damper ratio and you cannot see either without being told.
+Lateral g, body lean, pitch, body slip angle, per-corner compression bar + load +
+slip + AIR/STOP flags, and two stopwatch figures that are impossible to eyeball:
+**0-20 m/s** and **braking distance to a stop**.
+
+**The parameterization is the point.** Spring rate is derived, never authored:
+`k = mass * g / (4 * travel * sag)`. Verified live — taking the hog from 3000 to
+4500 kg moved the spring from 71,053 to 106,579 N/m and left ride height
+untouched, settling at 80,999 N against 81,000 expected. Mass and ride height
+stay independent knobs, which is the only reason they are tunable by hand.
+
+`Vehicle.retune()` exists for this tab: the strut top's height is a function of
+`travel` and `sag`, so re-deriving the constants is not enough on its own —
+without moving the hardpoint, changing the spring would change the ride height
+as a side effect.
 
 ### Phase 4 — The parts that move because the physics moved
 

@@ -233,6 +233,18 @@ export class Vehicle {
     this.invInertia = new THREE.Vector3(1 / this.inertia.x, 1 / this.inertia.y, 1 / this.inertia.z);
   }
 
+  // Re-read the tuning block after a live edit. The tuning range changes these
+  // numbers while the vehicle is driving, and re-deriving the constants is not
+  // enough on its own: the strut top's height is a function of `travel` and
+  // `sag`, so moving either without moving the hardpoint would change the ride
+  // height as a side effect of changing the spring.
+  retune() {
+    this._deriveConstants();
+    const y = this.tune.wheelRadius + this.tune.travel * (1 - this.tune.sag);
+    for (const w of this.wheels) w.localHard.y = y;
+    this.wake();
+  }
+
   get yaw() {
     _v1.set(0, 0, 1).applyQuaternion(this.quat);
     return Math.atan2(_v1.x, _v1.z);

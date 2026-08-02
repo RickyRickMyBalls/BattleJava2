@@ -10,6 +10,7 @@ import { loadAssets } from './assets.js';
 import { makeWeaponMount, makeBackMount, setHeldWeapon, BACK, GRIP } from './soldier.js';
 import { WEAPONS, FP_DEFAULT, ADS_DEFAULT, ASSET_PATHS } from './config.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
+import { createVehicleRange } from './vehiclerange.js';
 
 const app = document.getElementById('app');
 const loadmsg = document.getElementById('loadmsg');
@@ -54,7 +55,8 @@ const ground = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x2c3440, roughness: 0.95 })
 );
 scene.add(ground);
-scene.add(new THREE.GridHelper(RANGE_R * 2, Math.round(RANGE_R * 4), 0x3a5566, 0x24303c));
+const grid = new THREE.GridHelper(RANGE_R * 2, Math.round(RANGE_R * 4), 0x3a5566, 0x24303c);
+scene.add(grid);
 
 // ---- alignment targets (fp / ads modes) ---------------------------------
 // Sight alignment is a yes/no question, not a guess: bullseyes sit dead ahead
@@ -135,6 +137,11 @@ window.addEventListener('resize', () => {
 const chars = [];
 let mode = 'back'; // 'back' | 'grip' | 'fp' | 'ads' — the last two render through the first-person camera
 const isFpMode = (m) => m === 'fp' || m === 'ads';
+// The vehicle range owns its own ground, camera and input. It is a tab rather
+// than its own page because the tuning workflow lives at one address, and
+// because loadAssets already pulls the Warthog — a second page would download
+// 38 MB again for the same model.
+let range = null;
 let fpUpdate = null; // set by buildPanel: per-frame move/shoot logic for fp/ads modes
 let fpPreRender = null; // set by buildPanel: scope-screen pass, runs before the main render
 const BOOT_ID = Date.now();
@@ -235,6 +242,10 @@ function dumpAds() {
   });
   document.getElementById('out').value =
     `// ADS pose -> paste into each def in config.js WEAPONS\n${lines.join('\n')}`;
+}
+
+function dumpVehicle() {
+  if (range) document.getElementById('out').value = range.dump();
 }
 
 function buildPanel(assets) {
@@ -667,11 +678,22 @@ function buildPanel(assets) {
     b.onclick = () => {
       document.querySelectorAll('#modeBtns button').forEach((x) => x.classList.toggle('sel', x === b));
       mode = b.dataset.mode;
+      const veh = mode === 'veh';
       document.getElementById('backMode').style.display = mode === 'back' ? 'block' : 'none';
       document.getElementById('gripMode').style.display = mode === 'grip' ? 'block' : 'none';
       document.getElementById('fpMode').style.display = mode === 'fp' ? 'block' : 'none';
       document.getElementById('adsMode').style.display = mode === 'ads' ? 'block' : 'none';
-      controls.enabled = !isFpMode(mode);
+      document.getElementById('vehMode').style.display = veh ? 'block' : 'none';
+      // The character line-up and the proving ground are different worlds at
+      // the same origin; showing both at once puts a Warthog through six
+      // marines. The anim row is theirs too, so it goes with them.
+      for (const c of chars) c.mesh.visible = !veh;
+      ground.visible = !veh;
+      grid.visible = !veh;
+      document.getElementById('animBtns').style.display = veh ? 'none' : 'flex';
+      panel.classList.toggle('wide', veh);
+      if (range) range.setActive(veh);
+      controls.enabled = !isFpMode(mode) && !veh;
       cross.style.display = isFpMode(mode) ? 'block' : 'none';
       targets.visible = isFpMode(mode);
       if (!isFpMode(mode) && document.pointerLockElement) document.exitPointerLock();
@@ -679,6 +701,7 @@ function buildPanel(assets) {
         mode === 'grip' ? 'values update live · paste grip lines into config.js WEAPONS'
         : mode === 'fp' ? 'first-person view · paste fp lines into config.js WEAPONS'
         : mode === 'ads' ? 'aimed · RMB aims when LOCK is off · paste ads lines into config.js WEAPONS'
+        : veh ? 'WASD drive · SPACE handbrake · R reset · C camera · paste block into config.js CFG.vehicle'
         : 'values update live · paste block into soldier.js BACK';
       if (mode === 'grip') { holdEverywhere(gripKey); buildGripInputs(); dumpGrips(); }
       else if (isFpMode(mode)) {
@@ -687,6 +710,7 @@ function buildPanel(assets) {
         buildAdsInputs();
         if (mode === 'ads') dumpAds(); else dumpFp();
       }
+      else if (veh) dumpVehicle();
       else dumpValues();
     };
   }
@@ -741,15 +765,41 @@ async function boot() {
     chars.push(entry);
   });
 
+  range = createVehicleRange(assets);
+  scene.add(range.group);
+  resizeCams.push(range.camera);
+  // Same shape as __ctGet/__ctFrame above: a handle for headless verification,
+  // since rAF halts whenever this tab is not composited.
+  window.__ctRange = range;
+  window.__ctScene = { renderer, scene, camera };
+
   loadmsg.style.display = 'none';
   panel.style.display = 'block';
   buildPanel(assets);
+
+  range.buildInputs(document.getElementById('vehInputs'), dumpVehicle);
+  document.getElementById('vehReset').onclick = () => range.reset();
+  document.getElementById('vehCam').onclick = () => {
+    // Same cycle the C key drives, so the button is a label as much as a
+    // control — the name updates from the range either way (see the frame loop).
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC' }));
+  };
 
   // singleton: if a stale HMR instance's loop is still alive, it stops itself
   const token = {};
   window.__ctToken = token;
   const clock = new THREE.Clock();
+  const telEl = document.getElementById('vehTel');
+  const camBtn = document.getElementById('vehCam');
   const frame = (dt) => {
+    if (mode === 'veh') {
+      range.update(dt);
+      telEl.textContent = range.telemetry();
+      camBtn.textContent = `CAM: ${range.camName} (C)`;
+      window.__ctDebug = { mode, cam: range.camName };
+      renderer.render(scene, range.camera);
+      return;
+    }
     for (const c of chars) c.mixer.update(dt);
     if (controls.enabled) controls.update();
     if (isFpMode(mode) && fpUpdate) fpUpdate(dt);
