@@ -249,13 +249,19 @@ export class Player {
       if (e.code === 'KeyF') this.game.toggleFreecam();
       if (e.code === 'KeyO' && !this.freecam) this.setThirdPerson(!this.thirdPerson);
       if (e.code === 'KeyP') this.game.togglePause();
-      // T is context-sensitive rather than moved: in a vehicle it changes
-      // seats, and everywhere else it stays the time-scale cycle it has always
-      // been. The two can never both apply, so neither had to give up the key.
-      if (e.code === 'KeyT') {
-        if (this.vehicle) { if (!repeat) this.changeSeat(); }
-        else this.game.cycleTimeScale();
-      }
+      if (e.code === 'KeyT') this.game.cycleTimeScale();
+      // Seat change. Caps Lock is a deliberate choice and it is worth knowing
+      // what it costs: the OS owns the key, so the caps state still TOGGLES
+      // underneath us and preventDefault cannot stop it. Harmless while the
+      // pointer is locked and nobody is typing, but it survives an alt-tab.
+      //
+      // It also reports differently per platform — Windows and Linux fire
+      // keydown/keyup on the physical press, macOS fires keydown when the LED
+      // comes on and keyup when it goes off, so a Mac would see this key as
+      // held down every other press. The `repeat` guard makes that harmless
+      // (it would still change seat once per press) but it is the reason this
+      // binding is worth a second look if the game ever leaves Windows.
+      if (e.code === 'CapsLock' && this.vehicle && !repeat) this.changeSeat();
       if (!this.freecam) {
         // Number keys follow the loadout's slot order: 1-2 weapons, 3-4 gadgets.
         // Grenade and melee get their own keys when those slots are implemented.
@@ -1263,7 +1269,7 @@ export class Player {
     this.turretHeat = 0;
     this.viewmodel.visible = false;
     this.game.hud.setPrompt(null);
-    this.game.hud.message('E TO GET OUT · T TO CHANGE SEAT', 2.5);
+    this.game.hud.message('E TO GET OUT · CAPS LOCK TO CHANGE SEAT', 2.5);
     return true;
   }
 
