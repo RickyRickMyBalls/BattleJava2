@@ -9,25 +9,69 @@ import { buildMapCollision } from './collision.js';
 const TARGET_MAX_DIM = 900;   // largest XZ extent after normalization (meters)
 const BAKE_COLS = 384;
 
-export function loadMap(mapDef, renderer, onProgress) {
-  return new Promise((resolve, reject) => {
-    const loader = new GLTFLoader();
-    loader.load(
-      mapDef.url,
-      (gltf) => {
-        try {
-          resolve(prepareMap(mapDef, gltf, renderer));
-        } catch (e) {
-          reject(e);
-        }
-      },
-      (e) => {
-        if (onProgress && e.total > 0) onProgress(e.loaded / e.total);
-        else if (onProgress) onProgress(Math.min(0.95, e.loaded / 200e6));
-      },
-      reject
-    );
+// Fetching the GLB is split from preparing it so the download can start while
+// the player is still in the lobby picking a kit. map-3.glb is 235 MB — more
+// than half the whole payload — and it used to be fetched only after START
+// GAME, which is the player sitting and watching a bar for all of it.
+//
+// Only the DOWNLOAD is prefetched, deliberately. prepareMap bakes a heightfield
+// on the GPU and builds collision BVHs, and running either while the lobby is
+// animating would hitch the very screen the prefetch exists to hide behind.
+//
+// url -> { promise, progress, listeners }
+const gltfCache = new Map();
+
+// Start (or join) the download for `mapDef`. Safe to call repeatedly and on
+// procedural maps, which have nothing to fetch. Nothing cancels an in-flight
+// fetch when the player switches maps — GLTFLoader has no abort, and the entry
+// stays cached, so switching back is instant rather than wasted.
+export function prefetchMap(mapDef) {
+  if (!mapDef || mapDef.type !== 'glb' || !mapDef.url) return null;
+  const url = mapDef.url;
+  const cached = gltfCache.get(url);
+  if (cached) return cached;
+
+  const entry = { progress: 0, listeners: new Set() };
+  entry.promise = new Promise((resolve, reject) => {
+    new GLTFLoader().load(url, resolve, (e) => {
+      // Servers that send no Content-Length report total 0; the rough scale
+      // keeps the bar moving instead of pinning it at zero for the whole load.
+      entry.progress = e.total > 0 ? e.loaded / e.total : Math.min(0.95, e.loaded / 200e6);
+      for (const fn of entry.listeners) fn(entry.progress);
+    }, reject);
   });
+  // A failed prefetch must not poison the retry at START GAME.
+  entry.promise.catch(() => { if (gltfCache.get(url) === entry) gltfCache.delete(url); });
+  gltfCache.set(url, entry);
+  return entry;
+}
+
+// How far along `mapDef`'s prefetch is, 0..1. The lobby rebuilds its map rows
+// from scratch on every click, so it needs to read this back rather than rely
+// on having held on to the entry.
+export function mapLoadProgress(mapDef) {
+  const entry = mapDef && mapDef.url ? gltfCache.get(mapDef.url) : null;
+  return entry ? entry.progress : 0;
+}
+
+export async function loadMap(mapDef, renderer, onProgress) {
+  const entry = prefetchMap(mapDef);
+  if (onProgress) {
+    onProgress(entry.progress);   // report where the prefetch already got to
+    entry.listeners.add(onProgress);
+  }
+  try {
+    const gltf = await entry.promise;
+    if (onProgress) onProgress(1);
+    // One-shot: prepareMap mutates the gltf in place — it rescales and reparents
+    // the root and hides the collision shells — so a second match on this map
+    // has to parse its own copy. By then the bytes are in the browser's HTTP
+    // cache, so that refetch is cheap.
+    gltfCache.delete(mapDef.url);
+    return prepareMap(mapDef, gltf, renderer);
+  } finally {
+    entry.listeners.delete(onProgress);
+  }
 }
 
 // Maps are authored with FC_* marker empties: FC_HQ_BLUE / FC_HQ_RED,

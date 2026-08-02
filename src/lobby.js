@@ -10,6 +10,7 @@ import { makeWeaponMount, setHeldWeapon } from './soldier.js';
 import { LobbyRoam } from './lobbyroam.js';
 import { LoadoutBar } from './loadoutbar.js';
 import { prewarm, weaponClones, characterClones } from './assets.js';
+import { prefetchMap, mapLoadProgress } from './maps.js';
 
 const LOBBY_IDLE = CFG.lobbyIdle;
 
@@ -478,7 +479,34 @@ export class Lobby {
     this._renderLists();
     this.refreshPreview();
     this.setStatus('');
+    this._prefetchSelectedMap();
     if (this.roam) this.roam.refreshHint();
+  }
+
+  // Start pulling the selected map's GLB the moment the lobby is up, so the
+  // download overlaps the time the player spends picking a kit instead of
+  // landing entirely behind the START GAME bar. See prefetchMap in maps.js.
+  //
+  // Progress goes onto that map's OWN row rather than the status line: the
+  // player has not committed to launching yet, and a status line reading
+  // "LOADING…" while they browse would say the wrong thing.
+  _prefetchSelectedMap() {
+    const def = MAPS[this.session.mapId];
+    const entry = prefetchMap(def);
+    // Unsubscribe first either way — a procedural map has no download, and the
+    // previous map's listener must not keep writing to a row it no longer owns.
+    if (this._mapProgressOff) this._mapProgressOff();
+    this._mapProgressOff = null;
+    if (!entry) return;
+    const listener = (p) => this._setMapProgress(def.id, p);
+    entry.listeners.add(listener);
+    this._mapProgressOff = () => entry.listeners.delete(listener);
+    listener(entry.progress);
+  }
+
+  _setMapProgress(mapId, p) {
+    const bar = this.el.maps.querySelector(`.lb-row[data-map="${mapId}"] .lb-row-progress > div`);
+    if (bar) bar.style.width = `${Math.round(p * 100)}%`;
   }
 
   hidePanels() {
@@ -524,11 +552,15 @@ export class Lobby {
     for (const m of Object.values(MAPS)) {
       const row = document.createElement('div');
       row.className = 'lb-row' + (s.mapId === m.id ? ' sel' : '');
+      row.dataset.map = m.id;
       row.innerHTML = `<div class="lb-row-name">${m.name.toUpperCase()} <span class="lb-tag">${m.tag}</span></div>` +
         `<div class="lb-row-desc">${m.desc}</div>` +
         `<div class="lb-row-progress"><div></div></div>`;
-      row.onclick = () => { s.mapId = m.id; this._renderLists(); };
+      row.onclick = () => { s.mapId = m.id; this._renderLists(); this._prefetchSelectedMap(); };
       this.el.maps.appendChild(row);
+      // Rows are rebuilt from scratch on every click, so a download already in
+      // flight has to have its bar redrawn or it appears to reset to zero.
+      this._setMapProgress(m.id, mapLoadProgress(m));
     }
   }
 
