@@ -764,6 +764,14 @@ export class Vehicle {
     const driven = this.wheels.length;
     let braking = this.input.brake * T.brakeForce / driven;
     if (this.input.handbrake && !w.front) braking += T.handbrakeForce / 2;
+    // Parking brake: with nobody AT THE WHEEL the vehicle holds itself. Keyed
+    // on the driver's seat rather than on the vehicle being empty, because a
+    // gunner riding alone is not driving and should not be able to roll away.
+    // The `stop` clamp below is what makes this a hold rather than a shove — it
+    // can arrest the contact patch but never drag it backwards.
+    if (!this.driver && Math.abs(this.speed) < T.parkBrakeSpeed) {
+      braking += T.parkBrake * budget;
+    }
     if (braking > 0) {
       // Clamp so a brake can stop the contact patch but never drag it backwards
       // within one substep — that is what makes hard braking judder otherwise.

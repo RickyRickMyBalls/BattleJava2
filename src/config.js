@@ -633,6 +633,19 @@ export const CFG = {
       handbrakeForce: 40000,       // rear axle only
       rollResist: 0.015,           // Coulomb, as a fraction of wheel load
       airDrag: 5,                  // N per (m/s)^2
+      // Parking brake. With nobody at the wheel there is no braking force at
+      // all, and Coulomb rolling resistance is ZERO at zero speed — so a hog
+      // spawned on any slope rolls away, and because it never comes to rest it
+      // never sleeps either.
+      //
+      // Expressed as a fraction of available grip rather than a force, so it
+      // scales with load and holds the same GRADIENT whatever the vehicle
+      // weighs: 0.9 of mu 1.2 holds to tan(theta) = 1.08, about 47 degrees.
+      // Past that it slips, which is what a real handbrake does.
+      parkBrake: 0.9,
+      // Only below a crawl. A hog already rolling downhill with nobody in it
+      // coasts to a stop rather than stopping dead the moment you step out.
+      parkBrakeSpeed: 2.5,
 
       // --- Steering -------------------------------------------------------
       // Speed-sensitive: full lock is available when parking and roughly a
