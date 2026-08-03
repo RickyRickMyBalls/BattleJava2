@@ -62,9 +62,25 @@ the label before treating anything in them as a requirement.
 
 ## Asset kit & authoring conventions (owner authors in Blender; code follows names)
 
-- `source/` is the Vite publicDir (served at `/UNSC/...`, `/animations/...`, `/Maps/...`).
-  **Excluded from git.** Owner has a live Blender bridge (BlenderMCP, TCP port 9876);
-  Blender 5.2 at `G:\Steam\steamapps\common\Blender`.
+- Two asset trees. `source/` is the **local master kit** — everything the owner has
+  ever exported, ~1.9 GB, **excluded from git**. `public/` is the Vite publicDir
+  (served at `/UNSC/...`, `/animations/...`, `/Maps/...`), holds **only what the code
+  actually references**, compressed, and **is what ships**. Owner has a live Blender
+  bridge (BlenderMCP, TCP port 9876); Blender 5.2 at
+  `G:\Steam\steamapps\common\Blender`.
+- **After exporting anything from Blender, run `npm run assets`** (= `assets:sync`
+  then `assets:compress`). Sync copies referenced files `source/` → `public/` and
+  lists what nothing loads; compress re-encodes textures to WebP (cap 2048px) and
+  quantizes geometry, in place and idempotently. Skipping this re-inflates the repo —
+  raw map exports run 100-235 MB each, and **GitHub rejects any file over 100 MB**.
+  - Both transforms ride on extensions three r170 decodes natively
+    (`EXT_texture_webp`, `KHR_mesh_quantization`), so no loader/decoder wiring.
+  - `tools/compress-assets.mjs` deliberately does **not** use flatten / join /
+    instance / prune / dedup: the game resolves objects by name, and those passes
+    drop or merge the marker empties below. Every file is gated on a before/after
+    name diff and reverted if any name is lost. Keep it that way.
+  - Compression is lossy on textures. `source/` is the master you re-derive from —
+    never compress `source/` in place, and never point publicDir back at it.
 - **Adding a character body** is two edits: one `ASSET_PATHS.characters` entry
   (`key: { url, height }`) plus the `model:` field on the class that wears it.
   `assets.js` walks that map — no loader list to keep in sync. Also add a `BACK`
