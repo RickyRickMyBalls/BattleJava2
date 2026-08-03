@@ -2,5 +2,9 @@ node_modules/
 dist/
 debug/
 
-# Raw asset kit (large binaries, managed outside git)
-source/
+# Local Blender working files and automatically-created backup files.
+# Playable exports in source/ are versioned through Git LFS instead.
+*.blend
+*.blend1
+**/__pycache__/
+*.pyc
