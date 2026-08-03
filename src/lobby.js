@@ -214,7 +214,7 @@ export class Lobby {
     this.scene.add(this.dust);
 
     // parked Mongoose as set dressing (lazy, non-blocking)
-    new GLTFLoader().load('/UNSC/Land Vehicles/mongoose.glb', (gltf) => {
+    new GLTFLoader().load(`${import.meta.env.BASE_URL}UNSC/Land Vehicles/mongoose.glb`, (gltf) => {
       const m = gltf.scene;
       m.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(m);
@@ -261,7 +261,7 @@ export class Lobby {
   // FC_CHAR (character spot), FC_PROP_VEHICLE, FC_CAM. Replaces the
   // procedural backdrop screens when present.
   _loadStage() {
-    new GLTFLoader().load('/other/lobby_stage.glb', (gltf) => {
+    new GLTFLoader().load(`${import.meta.env.BASE_URL}other/lobby_stage.glb`, (gltf) => {
       const root = gltf.scene;
       root.updateMatrixWorld(true);
       const markers = {};

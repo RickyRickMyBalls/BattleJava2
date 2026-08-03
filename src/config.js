@@ -2520,3 +2520,20 @@ export const ASSET_PATHS = {
     empty: '/UNSC/weapons/pistol/empty_sound.mp3',
   },
 };
+
+// Public assets normally live at the site root during local development. On
+// GitHub Pages this project is hosted under /BattleJava2/, so make every
+// configured asset URL respect Vite's deployment base while keeping local
+// paths unchanged.
+const assetBase = import.meta.env.BASE_URL.replace(/\/$/, '');
+function withDeploymentBase(value) {
+  if (typeof value === 'string') return value.startsWith('/') ? `${assetBase}${value}` : value;
+  if (value && typeof value === 'object') {
+    for (const key of Object.keys(value)) value[key] = withDeploymentBase(value[key]);
+  }
+  return value;
+}
+[
+  CFG, WEAPONS, CLASSES, LOADOUTS, GADGETS, BEACON, GLOBAL_GADGETS,
+  GRENADES, MELEE, GAME_TYPES, MAPS, ASSET_PATHS,
+].forEach(withDeploymentBase);

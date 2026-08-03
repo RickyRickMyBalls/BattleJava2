@@ -33,6 +33,9 @@ function debugSavePlugin() {
 }
 
 export default defineConfig({
+  // GitHub Pages serves this project under /BattleJava2/, rather than at the
+  // domain root.  Vite uses this for all bundled-module URLs.
+  base: process.env.GITHUB_ACTIONS ? '/BattleJava2/' : '/',
   // Serve the raw asset kit directly: /UNSC/..., /animations/..., /Maps/...
   publicDir: 'source',
   plugins: [debugSavePlugin()],
