@@ -840,6 +840,14 @@ export const CFG = {
   scopeRender: {
     everyNFrames: 2,   // ~30Hz on the glass; imperceptible, halves the cost
     cullRadius: 2.2,   // soldier bounding sphere for the manual frustum test
+    // MSAA on the scope target. The canvas is created with antialias:true but a
+    // WebGLRenderTarget defaults to samples:0, so until now the one view in the
+    // game that most needs AA had none: at fov 5 a soldier at 300 m is a couple
+    // of pixels of high-contrast edge against sky, and that crawls. Cheaper per
+    // unit of quality than raising `size`, because it costs resolve bandwidth
+    // rather than another full scene traversal. WebGL2 only; harmless if the
+    // context refuses it.
+    samples: 4,
   },
 
   // Combat audio, distance side. Level alone is a weak distance cue: what tells
@@ -1534,7 +1542,7 @@ export const WEAPONS = {
     // the image has no parallax against the round; pos/rot are nudges from that
     // — both zero is already correct, and pos is now the one to leave alone.
     // fov IS the magnification.
-    scope: { material: 'sniper_screen', fov: 5, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
+    scope: { material: 'sniper_screen', fov: 5, pos: [0, 0, 0], rot: [0, 0, 0], size: 512 },
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,
     ads: { pos: [0.15, -0.195, -0.435], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },
@@ -1562,7 +1570,7 @@ export const WEAPONS = {
     fp: { pos: [0.12, 0.18, -0.43], rot: [0, 0, 0] },
     // Screen material is authored with emissive black and no base map, unlike
     // the sniper's — scopedisplay.js forces emissive white so the render shows.
-    scope: { material: 'Spartan-Laser_screen', fov: 8, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
+    scope: { material: 'Spartan-Laser_screen', fov: 8, pos: [0, 0, 0], rot: [0, 0, 0], size: 512 },
     mode: 'charge', chargeTime: 1.1, rpm: 40, dmg: 150, mag: 5, reserve: 5, reload: 3.0,
     spreadHip: 0.004, spreadAds: 0.0015, adsFov: 30,
     ads: { pos: [0.18, -0.195, -0.405], rot: [0, 0, 0], scale: 1, sens: 1, speed: 12 },

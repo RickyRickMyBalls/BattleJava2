@@ -72,12 +72,18 @@ export function createScopeDisplay(gunModel, def) {
   const ext = [bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z].sort((a, b) => b - a);
   const aspect = cfg.aspect || (ext[1] > 1e-6 ? ext[0] / ext[1] : 1);
 
+  // `size` is the target's HEIGHT — width follows from the quad's own aspect,
+  // measured above. 256 left the sniper's glass rendering at 620x256 into a
+  // footprint of roughly 850x342 CSS px, so ~2x linear upscale before the
+  // display's pixel ratio is even applied.
   const size = cfg.size || 256;
   const rt = new THREE.WebGLRenderTarget(Math.round(size * aspect), size, {
     depthBuffer: true,
     // Written as sRGB so sampling it as an emissiveMap (which decodes sRGB)
     // round-trips to the colours the main pass produced.
     colorSpace: THREE.SRGBColorSpace,
+    // See CFG.scopeRender.samples — the canvas antialiases, this target did not.
+    samples: SR.samples || 0,
   });
 
   // Fit the render onto whatever UV rect the quad carries, in whatever
