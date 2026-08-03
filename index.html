@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Frontline Command — 32v32 Prototype</title>
+  <title>BattleJava 2 — 32v32 Prototype</title>
   <style>
     :root {
       --hud-cyan: #7fd4ff;
@@ -779,7 +779,12 @@
       height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
     }
     #startScreen h1 {
-      font-size: 64px; font-weight: 200; letter-spacing: 18px; color: #e8f4fc; text-align: center; line-height: 1.15;
+      /* One long word on one line: 64px/18px is 590px wide, so it would spill out
+         of a narrow window. clamp() holds the full size down to ~900px wide and
+         scales below that — desktop looks exactly as authored. */
+      font-size: clamp(26px, 7vw, 64px); font-weight: 200;
+      letter-spacing: clamp(6px, 2vw, 18px);
+      color: #e8f4fc; text-align: center; line-height: 1.15; white-space: nowrap;
       text-shadow: 0 0 40px rgba(127, 212, 255, 0.25);
     }
     .ss-sub { font-size: 12px; letter-spacing: 6px; color: #6e93a8; }
@@ -1322,7 +1327,7 @@
   </div>
 
   <div id="loading">
-    <h1>Frontline Command</h1>
+    <h1>BattleJava 2</h1>
     <div class="sub">32 v 32 &mdash; SECTOR CONTROL PROTOTYPE</div>
     <div id="loadbar"><div></div></div>
     <div id="loadmsg">Initializing…</div>
@@ -1330,7 +1335,7 @@
 
   <div id="startScreen">
     <div class="ss-inner">
-      <h1>FRONTLINE<br>COMMAND</h1>
+      <h1>BATTLEJAVA 2</h1>
       <div class="ss-sub">32 v 32 &mdash; COMBINED ARMS PROTOTYPE</div>
       <button id="ssStart">ENTER LOBBY</button>
       <div class="ss-version">PROTOTYPE BUILD</div>
