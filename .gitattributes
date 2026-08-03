@@ -1,0 +1,20 @@
+# Compressing the shipped asset kit (WebP textures + KHR_mesh_quantization)
+# brought every file under GitHub's 100 MB limit, so Git LFS is not needed.
+# Mark the binaries explicitly so no platform ever applies EOL translation.
+*.glb  binary
+*.gltf binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.wav  binary
+*.mp3  binary
+
+# Keep source and text assets normalised across Windows / CI checkouts.
+*.js   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.svg  text eol=lf

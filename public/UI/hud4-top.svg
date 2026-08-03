@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="-981.5 -299.1 2560 1440" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="hud4-top-visor-fade" x1="0" y1="-299.1" x2="0" y2="-61.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#01080d" stop-opacity=".31"/>
+      <stop offset=".4" stop-color="#061821" stop-opacity=".21"/>
+      <stop offset=".76" stop-color="#0c3040" stop-opacity=".085"/>
+      <stop offset="1" stop-color="#45c7ef" stop-opacity=".0125"/>
+    </linearGradient>
+    <linearGradient id="hud4-shield-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d4f7ff"/>
+      <stop offset=".28" stop-color="#83d9f7"/>
+      <stop offset="1" stop-color="#2b87ba"/>
+    </linearGradient>
+    <linearGradient id="hud4-health-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fc8e7"/>
+      <stop offset=".48" stop-color="#276e9d"/>
+      <stop offset="1" stop-color="#102f50"/>
+    </linearGradient>
+    <linearGradient id="hud4-ammo-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d8f8ff"/>
+      <stop offset=".3" stop-color="#7cd9f6"/>
+      <stop offset="1" stop-color="#247eac"/>
+    </linearGradient>
+    <filter id="hud4-line-glow" x="-12%" y="-120%" width="124%" height="340%">
+      <feGaussianBlur stdDeviation="2.1" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="hud4-meter-glow" x="-20%" y="-70%" width="140%" height="240%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .cls-1, .cls-2, .cls-4 { fill: none; stroke-linecap: square; stroke-linejoin: bevel; vector-effect: non-scaling-stroke; }
+      .cls-1 { stroke: #69d5f6; stroke-width: 1.25px; }
+      .cls-2 { stroke: #69d5f6; stroke-width: 1.6px; filter: url(#hud4-line-glow); }
+      .cls-4 { stroke: #54bee4; stroke-width: 1.05px; opacity: .52; }
+      .hud4-top-visor-fill, .hud4-top-visor-extension { fill: url(#hud4-top-visor-fade); stroke: none; }
+    </style>
+  </defs>
+  <g>
+    <g id="health">
+      <path class="cls-1" d="M83.2-130.2c18.4.8,36.8,1.6,55.2,2.2"/>
+      <path class="cls-1" d="M77-138.2l2.9,7.8c-20.6-.9-41.1-2-61.6-3.2l-2.5-7.8,9-14.8c19.8,1.1,39.6,2.2,59.4,3l-7.2,15h0Z"/>
+      <path class="cls-1" d="M80.3-138l7.2-15c18,.8,36,1.5,54,2.1l-5.2,15.1,2.1,7.7c-18.4-.6-36.8-1.3-55.2-2.2l-2.9-7.8Z"/>
+      <path class="cls-1" d="M193.1-126.6c-17.2-.4-34.4-.9-51.6-1.4l-2.1-7.7,5.2-15.1c16.8.5,33.7,1,50.5,1.4l-3.4,15.2s1.4,7.7,1.4,7.7Z"/>
+      <path class="cls-1" d="M194.9-134.2l1.4,7.7c16.4.4,32.9.6,49.4.8l-.7-7.7,1.7-15.3c-16.1-.2-32.2-.4-48.3-.8l-3.4,15.2Z"/>
+      <path class="cls-1" d="M297.5-148.3c-15.9,0-31.9,0-47.8-.2l-1.7,15.3.7,7.7c16.3.2,32.5.3,48.8.3,0,0,0-23,0-23Z"/>
+      <path class="cls-1" d="M299.5-148.3c15.9,0,31.9,0,47.8-.2l1.7,15.3-.7,7.7c-16.3.2-32.5.3-48.8.3,0,0,0-23,0-23Z"/>
+      <path class="cls-1" d="M402.1-134.2l-1.4,7.7c-16.4.4-32.9.6-49.4.8l.7-7.7-1.7-15.3c16.1-.2,32.2-.4,48.3-.8l3.4,15.2Z"/>
+      <path class="cls-1" d="M403.9-126.6c17.2-.4,34.4-.9,51.6-1.4l2.1-7.7-5.2-15.1c-16.8.5-33.7,1-50.5,1.4l3.4,15.2s-1.4,7.7-1.4,7.7Z"/>
+      <path class="cls-1" d="M516.7-138l-7.2-15c-18,.8-36,1.5-54,2.1l5.2,15.1-2.1,7.7c18.4-.6,36.8-1.3,55.2-2.2l2.9-7.8Z"/>
+      <path class="cls-1" d="M520-138.2l-2.9,7.8c20.6-.9,41.1-2,61.6-3.2l2.5-7.8-9-14.8c-19.8,1.1-39.6,2.2-59.4,3l7.2,15h0Z"/>
+    </g>
+    <g id="top-detail">
+      <path class="cls-4" d="M1203.4-266.6h-126.6l-31.9,31.9c-50.9,8.1-101.8,15.4-152.9,21.8l-24-24c-151.5,18.5-303.9,29.5-456.5,33.2l-14.3,14.3c-65.8,1.4-131.7,1.4-197.5,0l-14.3-14.3c-152.6-3.7-305-14.7-456.5-33.2l-24,24c-51.1-6.5-102.1-13.7-152.9-21.8l-31.9-31.9h-126.6"/>
+      <path class="cls-4" d="M1391.1-244.5h-136.4l-133.2,121.7c-151.4,26.3-304,45.3-457.3,57l-51.6-76.7c77.2-5.1,154.2-12,231-20.8l48.4-49.6"/>
+      <polyline class="cls-4" points="1044.6 -242.8 1074.4 -272.6 1108 -272.6 1108 -276.8"/>
+      <polyline class="cls-4" points="1112.4 -276.8 1177.2 -276.8 1186.2 -283.2 1320.6 -283.2"/>
+      <path class="cls-4" d="M-794.1-244.5h136.4l133.2,121.7c151.4,26.3,304,45.3,457.3,57L-15.6-142.4c-77.2-5.1-154.2-12-231-20.8l-48.4-49.6"/>
+      <polyline class="cls-4" points="-447.6 -242.8 -477.4 -272.6 -511 -272.6 -511 -276.8"/>
+      <polyline class="cls-4" points="-515.4 -276.8 -580.2 -276.8 -589.2 -283.2 -723.6 -283.2"/>
+    </g>
+    <g id="boost"><path class="cls-2" d="M-88.4-73.4l14.7-21.9c-141-11-281.4-28.3-420.9-51.7l-27.2,18.6c143.6,24.9,288.2,43.2,433.4,54.9Z"/></g>
+    <g id="ammo"><path class="cls-2" d="M685.4-73.4l-14.7-21.9c141-11,281.4-28.3,420.9-51.7l27.2,18.6c-143.6,24.9-288.2,43.2-433.4,54.9Z"/></g>
+    <g id="shield"><path class="cls-1" d="M23.3-159.4c91.6,5.3,183.4,8,275.2,8s183.6-2.7,275.2-8l9.2,14.8c86.5-5.2,172.8-12.7,258.9-22.5l45.2-45.2-20.4-20.4c-150.5,18.3-301.8,29.3-453.3,32.9l-14.3,14.3c-66.9,1.4-133.9,1.4-200.9,0l-14.3-14.3c-151.6-3.7-302.8-14.7-453.3-32.9l-20.4,20.4,45.2,45.2c86.1,9.9,172.4,17.4,258.9,22.5,0,0,9.2-14.8,9.2-14.8Z"/></g>
+    <g id="top-helmet">
+      <path class="hud4-top-visor-fill" d="M1391.1-240.5h-134.9l-132.9,121.5c-152.7,26.6-306.6,45.7-461.2,57.4l-54.2-80.6c-7.6.5-15.2,1-22.8,1.4l-3.5,10.9c-188.7,11.2-377.9,11.2-566.6,0l-3.5-10.9c-7.6-.5-15.2-.9-22.8-1.4l-54.2,80.6c-154.6-11.7-308.5-30.9-461.2-57.4l-132.9-121.5h-134.9v-58.6h2185.6Z"/>
+      <path class="cls-2" d="M1391.1-240.5h-134.9l-132.9,121.5c-152.7,26.6-306.6,45.7-461.2,57.4l-54.2-80.6c-7.6.5-15.2,1-22.8,1.4l-3.5,10.9c-188.7,11.2-377.9,11.2-566.6,0l-3.5-10.9c-7.6-.5-15.2-.9-22.8-1.4l-54.2,80.6c-154.6-11.7-308.5-30.9-461.2-57.4l-132.9-121.5h-134.9"/>
+    </g>
+    <g id="extend-tl"><rect class="hud4-top-visor-extension" x="-981.5" y="-299.1" width="187.4" height="58.6"/></g>
+    <g id="extend-tr"><rect class="hud4-top-visor-extension" x="1391.1" y="-299.1" width="187.4" height="58.6"/></g>
+  </g>
+</svg>

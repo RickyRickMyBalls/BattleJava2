@@ -1,7 +1,8 @@
 // The visor: the helmet frame drawn across the top of the screen.
 //
-// The art is authored in CAD and lives at `source/UI/hud4-top.svg`, served out
-// of the Vite publicDir at `/UI/...`. This module owns how that file is MOUNTED
+// The art is authored in CAD, mastered in `source/UI/`, and exported to
+// `public/UI/hud4-top.svg` — the Vite publicDir, served at `/UI/...`. Exporting
+// a new SVG needs no code change. This module owns how that file is MOUNTED
 // and driven, never how it looks — re-export the SVG and the game picks the new
 // one up with no code change. That is the whole reason it is fetched at runtime
 // instead of pasted into index.html.

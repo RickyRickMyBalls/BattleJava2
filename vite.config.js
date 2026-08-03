@@ -18,7 +18,7 @@ function debugSavePlugin() {
             const ext = url.searchParams.get('ext') === 'png' ? 'png' : 'jpg';
             // dir=textures writes into the served asset tree (for generated tiling textures)
             const dir = url.searchParams.get('dir') === 'textures'
-              ? path.resolve('source/other/textures')
+              ? path.resolve('public/other/textures')
               : path.resolve('debug');
             const m = body.match(/^data:image\/\w+;base64,(.+)$/);
             if (!m) { res.statusCode = 400; res.end('bad'); return; }
@@ -36,8 +36,10 @@ export default defineConfig({
   // GitHub Pages serves this project under /BattleJava2/, rather than at the
   // domain root.  Vite uses this for all bundled-module URLs.
   base: process.env.GITHUB_ACTIONS ? '/BattleJava2/' : '/',
-  // Serve the raw asset kit directly: /UNSC/..., /animations/..., /Maps/...
-  publicDir: 'source',
+  // Serve the shipped asset set directly: /UNSC/..., /animations/..., /Maps/...
+  // public/ holds ONLY the assets the code actually references; source/ stays the
+  // local master kit (untracked) that these are exported from.
+  publicDir: 'public',
   plugins: [debugSavePlugin()],
   server: {
     // 5199 stays the default (5173 is taken), so `npm run dev` is unchanged.
