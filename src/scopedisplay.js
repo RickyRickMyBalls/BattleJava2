@@ -14,6 +14,20 @@
 // use — which is what makes it show what you are about to hit. pos/rot in
 // config are nudges on top of that, not the primary aim.
 //
+// It is also POSITIONED at the main camera, not at the glass, and that is not a
+// shortcut. A camera parked on the glass looking parallel to the eye ray is a
+// SECOND ray, offset by however far the optic sits off the bore — measured at
+// 8.7 cm (down) on the sniper and 17 cm (down and right) on the laser. Parallel
+// rays never converge, so the target centred in the glass sat that far off the
+// bullet's path at 10 m and at 400 m alike: a 0.26 m head sphere missed by a
+// third of a radius, on the two weapons that can least afford it. In frame it
+// reads worst up close, where the fixed offset is the largest share of a 5 deg
+// view — 20% of a half-frame at 10 m, 8% at 25 m.
+//
+// Rendering from the eye makes the glass a magnified crop of the centre of the
+// screen, which is exactly what the round is aimed at. Verified: a point placed
+// on the bullet ray projects to NDC (0, 0) in the scope at 10, 25, 80 and 300 m.
+//
 // Only the player's mounted gun gets one. The material is a driven clone (see
 // drivenmaterial.js) so the 63 AI rifles sharing the cached model keep their
 // baked screens instead of all displaying the player's view.
@@ -158,13 +172,12 @@ export function createScopeDisplay(gunModel, def) {
       // Deferred to the first render: the gun has to be mounted and its
       // matrices current before the quad's screen axes mean anything.
       if (!fitted) { fitUv(mainCamera); fitted = true; }
-      screen.updateMatrixWorld();
-      screen.getWorldPosition(_pos);
-
-      // Aim with the crosshair, then apply the per-weapon nudge.
+      // Sit on the eye and aim with the crosshair, then apply the per-weapon
+      // nudge. `_pos` is the EYE, not the glass — see the parallax note above.
       mainCamera.getWorldQuaternion(_q);
       _q.multiply(rotQ);
       camera.quaternion.copy(_q);
+      mainCamera.getWorldPosition(_pos);
       camera.position.copy(_pos).add(_off.set(offset[0], offset[1], offset[2]).applyQuaternion(_q));
       camera.updateMatrixWorld();
 

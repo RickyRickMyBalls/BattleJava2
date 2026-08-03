@@ -752,6 +752,25 @@ export const CFG = {
     // = 3.2, which is also close to the AI's own 3.4 walk speed.
     walkMult: 0.5,
     crouchMult: 0.55,
+    // Aiming costs mobility. Without it the movement spread penalty was the only
+    // thing discouraging a walking ADS shot, and a spread penalty you can walk
+    // into at full speed is one players never notice they are paying.
+    adsMult: 0.55,
+    // Movement aim penalty, in radians of added spread at full speed.
+    //
+    // Hip ADDS `moveSpread`: spreadHip runs 0.01-0.042, so a flat 0.02 is a real
+    // cost everywhere without erasing a weapon's identity.
+    //
+    // ADS MULTIPLIES instead — `spread *= 1 + adsMoveSpread * speedFrac`. The ADS
+    // figures span 15x (0.0012 sniper to 0.018 SMG), so the constant that was a
+    // nudge for the SMG was a 7.7x blowout for the sniper: walking put a sniper
+    // round 1.5 m off at 200 m, which is well past a torso sphere. Scaling the
+    // weapon's own figure keeps the cost proportional across the whole armoury.
+    //
+    // Both scale with how fast you are ACTUALLY going, so `adsMult` above feeds
+    // straight back in — walking or crouch-walking already costs less than a jog.
+    moveSpread: 0.02,
+    adsMoveSpread: 1.5,
     respawnDelay: 5,
     // How long after a weapon swap before you may fire, in seconds. Was hardcoded
     // at 0.4 in player.switchWeapon for every gun alike, which left the sidearm
@@ -1510,9 +1529,11 @@ export const WEAPONS = {
     grip: { pos: [0.08, 0.45, 0.02], rot: [-1.5, -0.25, -1.5] },
     fp: { pos: [0.15, 0.1, 0.02], rot: [0, 0, 0] },
     // Live scope screen. `material` is matched case-insensitively against the
-    // authored material name. The camera sits at that mesh and is boresighted
-    // to the crosshair (see scopedisplay.js), so pos/rot are nudges from that
-    // — both zero is already correct. fov IS the magnification.
+    // authored material name. The camera sits at the EYE and is boresighted to
+    // the crosshair (see scopedisplay.js) rather than sitting on the glass, so
+    // the image has no parallax against the round; pos/rot are nudges from that
+    // — both zero is already correct, and pos is now the one to leave alone.
+    // fov IS the magnification.
     scope: { material: 'sniper_screen', fov: 5, pos: [0, 0, 0], rot: [0, 0, 0], size: 256 },
     mode: 'semi', rpm: 46, dmg: 80, mag: 4, reserve: 20, reload: 3.2,
     spreadHip: 0.03, spreadAds: 0.0012, adsFov: 22,

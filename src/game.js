@@ -285,7 +285,12 @@ export class Game {
   // exactly two screens and silently breaks at three: whichever one closed last
   // would clear a flag the third still needs. Asking all of them, in one place,
   // is the version that survives a fourth.
+  // The session owns `menuOpen` (see above), outlives every match, and holds the
+  // same three screens — and it needs this method in its own right, because the
+  // armoury is handed the session as its host before a Game exists. So when
+  // there is a session it owns the derivation too: one copy, not two to drift.
   refreshMenuOpen() {
+    if (this.session) { this.session.refreshMenuOpen(); return; }
     this.menuOpen = !!(
       (this.armory && this.armory.visible)
       || (this.deployScreen && this.deployScreen.visible)

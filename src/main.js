@@ -64,6 +64,27 @@ const session = {
   deployScreen: null,
   armory: null,
   lobby: null,
+  pauseMenu: null,         // set below, once the page's one PauseMenu exists
+
+  // "Is any screen holding the keyboard?", derived rather than remembered.
+  //
+  // This object is handed to LoadoutMenu as its host and is the ONLY host it
+  // ever gets — `game.armory = menu` points the match at the menu, never the
+  // menu at the match. So every Game method the armoury calls has to exist here
+  // too, and this one did not: `menu.hide()` threw on the way out, after it had
+  // set `visible = false` but before it hid the overlay. APPLY LOADOUT looked
+  // dead, and `menuOpen` stayed stuck true — which also killed TAB into the
+  // lobby range and the player's own input guards.
+  //
+  // Game.refreshMenuOpen delegates here whenever a session exists, so there is
+  // one derivation rather than two that drift.
+  refreshMenuOpen() {
+    this.menuOpen = !!(
+      (this.armory && this.armory.visible)
+      || (this.deployScreen && this.deployScreen.visible)
+      || (this.pauseMenu && this.pauseMenu.visible)
+    );
+  },
 };
 selectClass(session, 'assault');   // points playerLoadout at Assault's slot 1
 
@@ -79,6 +100,7 @@ let launching = false;
 // launching a second match does not leave it pointed at the first.
 loadSettings();
 const pauseMenu = new PauseMenu({ get game() { return game; } });
+session.pauseMenu = pauseMenu;
 
 // Settings that live on objects rather than being read where they are used.
 // Audio is the only one today: the mixer gain is a node, so it has to be written

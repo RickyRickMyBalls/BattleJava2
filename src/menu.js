@@ -1596,9 +1596,13 @@ export class LoadoutMenu {
   }
 
   hide() {
+    // Order matters twice over. `refreshMenuOpen` asks this screen whether it is
+    // up, so `visible` has to be false before it runs — but the OVERLAY does
+    // not, and leaving that write until last is what turned one throw inside
+    // that call into a screen with no way out. The DOM goes first now.
     this.visible = false;
-    this.game.refreshMenuOpen();
     this.el.overlay.style.display = 'none';
+    this.game.refreshMenuOpen();
   }
 
   refresh() {

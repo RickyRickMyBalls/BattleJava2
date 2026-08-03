@@ -25,6 +25,10 @@ const _level = new THREE.Quaternion();   // horizon-locked view frame
 const _lookPitch = new THREE.Quaternion();
 const _YAXIS = new THREE.Vector3(0, 1, 0);
 const _XAXIS = new THREE.Vector3(1, 0, 0);
+const _snapPos = new THREE.Vector3();    // viewmodel pose saved across a snap measure
+const _snapRot = new THREE.Euler();
+const _glass = new THREE.Vector3();
+const NO_SNAP = { x: 0, y: 0 };
 
 // Shortest signed difference between two angles. The chase camera eases toward
 // the car's heading, and without this a heading crossing +/-PI would send it the
@@ -423,6 +427,10 @@ export class Player {
 
     this.recoil = 0;
     this.bobTime = 0;
+    // How much of the bob is currently applied, 0..1. Eased rather than a hard
+    // flag so the gun settles instead of snapping when you stop. See the note
+    // in the aim pose — this exists so an aimed optic comes to rest ON centre.
+    this.bobAmt = 0;
     // Lerped holder state. Z is tracked apart from viewmodel.position.z because
     // recoil is added on top of it every frame and would otherwise be lerped in.
     this.vmZ = HIP_POS[2];
@@ -455,6 +463,8 @@ export class Player {
       if (this.ammoDisplay) this.ammoDisplay.set(this.weapon.mag);
       // live scope screen (weapons with a `scope` block in config)
       this.scopeDisplay = createScopeDisplay(model, this.weapon.def);
+      // Measured off the gun that just mounted, so it cannot outlive it.
+      this._snap = null;
       // re-tag every mount: the gun that just joined is still on layer 0
       tagViewmodelLayer(this.viewmodel);
     } else {
@@ -463,6 +473,53 @@ export class Player {
     }
     this.game.hud.setWeaponName(this.weapon.def.name);
     this._syncBodyWeapons();
+  }
+
+  // Put the optic ON the crosshair instead of trusting `ads.pos` to have landed
+  // it there by hand. The round goes down the camera's forward axis and the HUD
+  // crosshair is `left:50%; top:50%` over a full-viewport canvas, so the
+  // crosshair IS the bullet — but the sniper's glass was projecting 24 px left
+  // and 71 px above it, and at adsFov 22 the receiver fills the middle of the
+  // screen. The only thing you can see through sat off the mark you aim with,
+  // which is the whole of "the bullet does not go where the reticle is".
+  //
+  // The holder is a direct child of the camera, so d(glass)/d(holder) is the
+  // identity: shifting the holder by minus the glass's camera-space x/y lands
+  // it exactly, in ONE step, not iteratively. Measured with the aimed rot and
+  // scale already applied, because both move the glass. Same arithmetic as
+  // /chartest.html's ADS SNAP button, which only ever ran on demand — this runs
+  // for every scoped weapon, every mount.
+  //
+  // Iron sights get nothing: there is no authored mesh to measure, so `ads.pos`
+  // remains the hand-tuned answer for them (see the note on ADS_DEFAULT).
+  _adsSnap() {
+    if (this._snap) return this._snap;
+    const sd = this.scopeDisplay;
+    if (!sd || !sd.screen) { this._snap = NO_SNAP; return this._snap; }
+    const ads = this.weapon.def.ads || ADS_DEFAULT;
+    const vm = this.viewmodel;
+    _snapPos.copy(vm.position);
+    _snapRot.copy(vm.rotation);
+    const scale0 = vm.scale.x;
+
+    const rot = ads.rot || ZERO3;
+    vm.position.set(ads.pos[0], ads.pos[1], ads.pos[2]);
+    vm.rotation.set(rot[0], rot[1], rot[2]);
+    vm.scale.setScalar(ads.scale ?? 1);
+    vm.updateWorldMatrix(true, true);
+
+    // The GEOMETRY's centre, not the mesh origin: the screen is authored as part
+    // of the weapon and keeps its origin, which sits well below the glass.
+    sd.screen.geometry.computeBoundingBox();
+    sd.screen.geometry.boundingBox.getCenter(_glass).applyMatrix4(sd.screen.matrixWorld);
+    this.camera.worldToLocal(_glass);
+    this._snap = { x: -_glass.x, y: -_glass.y };
+
+    vm.position.copy(_snapPos);
+    vm.rotation.copy(_snapRot);
+    vm.scale.setScalar(scale0);
+    vm.updateWorldMatrix(true, true);
+    return this._snap;
   }
 
   // Keep the third-person body carrying what the viewmodel shows. Hooked into
@@ -1647,6 +1704,11 @@ export class Player {
     if (boosting) speed *= sprintMult;
     if (this.walking) speed *= P.walkMult;
     if (this.crouching) speed *= P.crouchMult;
+    // Aiming slows you, and that is half of the movement spread fix: the ADS
+    // penalty scales with `speed / P.speed`, so slowing the aimed walk pays for
+    // itself twice. Guarded on the same condition as the aim pose — a welder has
+    // no sights, so holding RMB with one out must not slow the walk to no end.
+    if (this.ads && !this.weapon.def.tool) speed *= P.adsMult;
 
     let wx = 0, wz = 0;
     if (moving) {
@@ -1752,8 +1814,22 @@ export class Player {
     if (moving && this.onGround) this.bobTime += dt * (s.sprinting ? 11 : 7.5);
     const bobA = aim ? 0.004 : 0.012;
     const base = aim ? ads.pos : HIP_POS;
-    const vx = base[0] + Math.sin(this.bobTime) * bobA;
-    const vy = base[1] + Math.abs(Math.cos(this.bobTime)) * bobA;
+    // Scoped weapons correct `ads.pos` onto the crosshair; see _adsSnap. Zero
+    // for everything else, so the hip pose and iron sights are untouched.
+    const snap = aim ? this._adsSnap() : NO_SNAP;
+    // The aimed bob has to VANISH when you stand still, and that is not polish.
+    // The vertical term is |cos|, which never goes negative — it is a DC offset,
+    // not a wobble — and `bobTime` only advances while moving, so it freezes at
+    // whatever phase your last footstep left it on. At hip that is 5 px and part
+    // of the authored feel. Aimed, the sniper's glass sits 8 cm from the eye,
+    // where the same 4 mm is 64 px: the sight would come to rest at a different
+    // height every time you stopped walking, which is exactly the "rounds do not
+    // go where I am pointing" the crosshair could never explain. Hip is
+    // untouched; only the aimed pose eases its bob out.
+    this.bobAmt += (((moving && this.onGround) ? 1 : 0) - this.bobAmt) * Math.min(1, dt * 8);
+    const bobK = aim ? this.bobAmt : 1;
+    const vx = base[0] + snap.x + Math.sin(this.bobTime) * bobA * bobK;
+    const vy = base[1] + snap.y + Math.abs(Math.cos(this.bobTime)) * bobA * bobK;
     this.viewmodel.position.x += (vx - this.viewmodel.position.x) * k;
     this.viewmodel.position.y += (vy - this.viewmodel.position.y) * k;
     this.vmZ += (base[2] - this.vmZ) * k;
@@ -2029,7 +2105,16 @@ export class Player {
     w.mag--;
 
     let spread = this.ads ? def.spreadAds : def.spreadHip;
-    if (moving) spread += 0.02 * (speed / P.speed) * (this.ads ? 0.4 : 1);
+    // Moving costs accuracy, but the two stances charge for it differently: hip
+    // adds a constant, ADS scales the weapon's own figure. A single constant
+    // cannot serve both ends of a 15x range of ADS spreads — see the note on
+    // CFG.player.moveSpread. `speed` is post-`adsMult`, so aiming has already
+    // bought part of the discount by slowing the walk down.
+    if (moving) {
+      const frac = speed / P.speed;
+      if (this.ads) spread *= 1 + P.adsMoveSpread * frac;
+      else spread += P.moveSpread * frac;
+    }
     if (this.crouching) spread *= 0.65;
     spread += this.heat;
     this.heat = Math.min(0.04, this.heat + 0.004);
