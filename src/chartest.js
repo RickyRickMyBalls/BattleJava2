@@ -12,6 +12,7 @@ import { WEAPONS, FP_DEFAULT, ADS_DEFAULT, ASSET_PATHS } from './config.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { createVehicleRange } from './vehiclerange.js';
 import { createSeatRange } from './seatrange.js';
+import { createAirRange, MANOEUVRES } from './airrange.js';
 
 const app = document.getElementById('app');
 const loadmsg = document.getElementById('loadmsg');
@@ -150,6 +151,11 @@ let range = null;
 // The seat fitting bay rides on the range's hog rather than loading a second
 // one — same reason the range is a tab and not its own page.
 let seatRange = null;
+// The air range owns its own sky, ground and Pelican. Separate from the vehicle
+// range rather than a mode on it: they share no ground, no camera rig and no
+// input scheme, and the one thing they would share — the physics — already
+// lives on Vehicle.
+let airRange = null;
 let fpUpdate = null; // set by buildPanel: per-frame move/shoot logic for fp/ads modes
 let fpPreRender = null; // set by buildPanel: scope-screen pass, runs before the main render
 const BOOT_ID = Date.now();
@@ -297,6 +303,10 @@ function dumpVehicle() {
 
 function dumpSeats() {
   if (seatRange) document.getElementById('out').value = seatRange.dump();
+}
+
+function dumpAir() {
+  if (airRange) document.getElementById('out').value = airRange.dump();
 }
 
 function buildPanel(assets) {
@@ -733,14 +743,16 @@ function buildPanel(assets) {
       mode = b.dataset.mode;
       const veh = mode === 'veh';
       const seat = mode === 'seat';
+      const air = mode === 'air';
       // Both tabs show the proving ground; only VEHICLE lets you drive it.
-      const onRange = veh || seat;
+      const onRange = veh || seat || air;
       document.getElementById('backMode').style.display = mode === 'back' ? 'block' : 'none';
       document.getElementById('gripMode').style.display = mode === 'grip' ? 'block' : 'none';
       document.getElementById('fpMode').style.display = mode === 'fp' ? 'block' : 'none';
       document.getElementById('adsMode').style.display = mode === 'ads' ? 'block' : 'none';
       document.getElementById('vehMode').style.display = veh ? 'block' : 'none';
       document.getElementById('seatMode').style.display = seat ? 'block' : 'none';
+      document.getElementById('airMode').style.display = air ? 'block' : 'none';
       // The character line-up and the proving ground are different worlds at
       // the same origin; showing both at once puts a Warthog through six
       // marines. The anim row is theirs too, so it goes with them.
@@ -751,13 +763,17 @@ function buildPanel(assets) {
       panel.classList.toggle('wide', onRange);
       if (range) { if (seat) range.setStatic(true); else range.setActive(veh); }
       if (seatRange) seatRange.setActive(seat);
+      // The two proving grounds are different worlds at the same origin, so
+      // only one may be visible — a 33 m Pelican parked through the ground
+      // range's camber dome is not a useful view of either.
+      if (airRange) airRange.setActive(air);
       // SEAT orbits with the mouse — it is a fitting bay, and the whole job is
       // getting your eye into the footwell from whatever angle shows the gap.
       if (seat && seatRange) {
         seatRange.buildInputs(document.getElementById('seatInputs'), dumpSeats);
         seatRange.focus(camera, controls);
       }
-      controls.enabled = !isFpMode(mode) && !veh;
+      controls.enabled = !isFpMode(mode) && !veh && !air;
       cross.style.display = isFpMode(mode) ? 'block' : 'none';
       targets.visible = isFpMode(mode);
       if (!isFpMode(mode) && document.pointerLockElement) document.exitPointerLock();
@@ -767,6 +783,7 @@ function buildPanel(assets) {
         : mode === 'ads' ? 'aimed · RMB aims when LOCK is off · paste ads lines into config.js WEAPONS'
         : veh ? 'WASD drive · SPACE handbrake · R reset · C camera · paste block into config.js CFG.vehicle'
         : seat ? 'orbit to look · watch GAP — negative is a boot through the floor · paste block into config.js CFG.vehicle.seats'
+        : air ? 'ARROWS aim · W throttle · SPACE/SHIFT climb-dive · R reset · C camera · run a manoeuvre for numbers you cannot eyeball'
         : 'values update live · paste block into soldier.js BACK';
       if (mode === 'grip') { holdEverywhere(gripKey); buildGripInputs(); dumpGrips(); }
       else if (isFpMode(mode)) {
@@ -777,6 +794,7 @@ function buildPanel(assets) {
       }
       else if (veh) dumpVehicle();
       else if (seat) dumpSeats();
+      else if (air) dumpAir();
       else dumpValues();
     };
   }
@@ -836,6 +854,10 @@ async function boot() {
   resizeCams.push(range.camera);
   // Built after the range because it seats bodies on the range's hog.
   seatRange = createSeatRange(assets, range);
+  airRange = createAirRange(assets);
+  scene.add(airRange.group);
+  resizeCams.push(airRange.camera);
+  window.__ctAir = airRange;
   window.__ctSeats = seatRange;
   // Same shape as __ctGet/__ctFrame above: a handle for headless verification,
   // since rAF halts whenever this tab is not composited.
@@ -847,6 +869,21 @@ async function boot() {
   buildPanel(assets);
 
   range.buildInputs(document.getElementById('vehInputs'), dumpVehicle);
+  airRange.buildInputs(document.getElementById('airInputs'), dumpAir);
+  document.getElementById('airReset').onclick = () => airRange.reset();
+  document.getElementById('airAll').onclick = () => airRange.startAll();
+  document.getElementById('airCam').onclick = () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC' }));
+  };
+  {
+    const row = document.getElementById('airRunBtns');
+    for (const name of MANOEUVRES) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.onclick = () => airRange.start(name);
+      row.appendChild(b);
+    }
+  }
   document.getElementById('vehReset').onclick = () => range.reset();
   document.getElementById('seatFocus').onclick = () => seatRange.focus(camera, controls);
   const autoBtn = document.getElementById('vehAuto');
@@ -867,6 +904,8 @@ async function boot() {
   const telEl = document.getElementById('vehTel');
   const seatTelEl = document.getElementById('seatTel');
   const camBtn = document.getElementById('vehCam');
+  const airTelEl = document.getElementById('airTel');
+  const airCamBtn = document.getElementById('airCam');
   // Sampled at the TOP of the frame, so renderer.info describes the frame that
   // was actually drawn rather than one that has not happened yet.
   const perf = makePerf(renderer);
@@ -878,6 +917,14 @@ async function boot() {
       camBtn.textContent = `CAM: ${range.camName} (C)`;
       window.__ctDebug = { mode, cam: range.camName };
       renderer.render(scene, range.camera);
+      return;
+    }
+    if (mode === 'air') {
+      airRange.update(dt);
+      airTelEl.textContent = airRange.telemetry();
+      airCamBtn.textContent = `CAM: ${airRange.camName} (C)`;
+      window.__ctDebug = { mode, cam: airRange.camName, run: airRange.running };
+      renderer.render(scene, airRange.camera);
       return;
     }
     if (mode === 'seat') {

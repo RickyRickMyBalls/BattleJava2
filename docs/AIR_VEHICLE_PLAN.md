@@ -692,15 +692,64 @@ the plumes do not light and the engines make no sound — phases 4 and 5. `E` at
 altitude is refused rather than dropping the pilot out, because `exitPoint` puts
 you on the ground beside the hull and from 300 m that is a teleport.
 
-### Phase 3 — The AIR tab in `/chartest.html`
+### Phase 3 — The AIR tab in `/chartest.html` ✅ DONE
 
-Sliders for every constant in Phase 2; live readouts for airspeed, angle of
-attack, bank, g and body rates; a paste-ready `CFG.vehicle.pelican` block.
+`src/airrange.js`. 28 live fields across ATTITUDE, BANK, THRUST, LIFT, DRAG and
+BODY & GEAR, four cameras (CHASE / COCKPIT / SIDE / TOP), free flight on the
+arrow keys, and a paste-ready `CFG.vehicle.pelican` block.
 
-**Non-optional, and it is its own phase rather than polish folded into Phase 2**
-— the same argument the VEHICLE tab won. A flight model hand-guessed once is a
-flight model nobody ever revisits, and "feels floaty" is a turn rate and a drag
-ratio that cannot be seen without being told.
+**Locked — the manoeuvres are SCRIPTED, from seeded initial conditions.** This
+is the air equivalent of the ground range's flat centre lane, and it matters
+more here rather than less.
+
+A hog can be driven down the same straight twice. **Nobody can hand-fly the same
+90° turn twice.** Numbers taken off a hand-flown turn are not comparable between
+two tunings, which makes them *worse than no numbers*, because they look like
+evidence. So every measurement places the aircraft at a known altitude, attitude
+and speed, and then flies it with a script. Free flight exists to feel a change
+between two runs, not to measure it.
+
+Six manoeuvres, each answering one question. Measured on the phase 2 values:
+
+| | Result |
+| --- | --- |
+| **TAKEOFF** — does it get off the pad, and how hard | to 20 m in **2.03 s**, peak climb 14.9 m/s |
+| **TOPSPEED** — what does it actually do, vs what is configured | **59.6 m/s** (215 km/h) against a configured 70; 0-40 in 2.9 s |
+| **TURN90** — the signature manoeuvre | 90° in **3.18 s**, drift **31.3°**, slide 22.0 m/s, bank 25°, radius 91 m, 60→44 m/s |
+| **TURN180** — the same, past the airframe's comfort | 180° in **5.08 s**, drift **52.2°**, slide 25.9 m/s, bank 38°, 60→34 m/s |
+| **HOVER** — does hands-off hold altitude | drift **−0.06 m over 10 s** |
+| **STOP** — what does letting go actually cost | half speed in 18.7 s / 770 m; **still 17.4 m/s after 45 s / 1363 m** |
+
+**Top speed emerging 15% below the configured `topSpeed` is the model working
+as designed** — thrust falls off toward that figure and drag finishes the job,
+so there is no speed clamp anywhere and the real number has to be measured.
+
+**Drift is the number this tab exists for.** If it ever reads near zero the
+model has started writing velocity from the look direction, which is the exact
+failure this whole design is built to avoid — and it is invisible from the
+cockpit, because a ship that turns instantly and a ship that drifts look the
+same from inside one.
+
+**Two instrument bugs, both caught by distrusting the instrument:**
+
+1. **`STOP` reported a result when it had actually hit its own time cap.** A cap
+   reported as a measurement is precisely the "looks like evidence" failure the
+   scripted design exists to prevent, so it now leads with time-to-half-speed
+   (which always completes) and says **DID NOT STOP** in as many words when it
+   times out.
+2. **The range was too small for its own test.** `STOP` reported 880 m, which
+   was exactly `R − 20` — the aircraft was pinned against `clampToMap`, and a
+   wall does not fail loudly, it just stops the aircraft and reads as drag it
+   does not have. The range went to 1400 m and the straight-line runs now start
+   at the far edge. Every other figure was unchanged, which is what says the
+   wall had not been contaminating them.
+
+**What the numbers say about the model, for whoever tunes it next:** the
+Pelican coasts almost forever. `dragLong` is deliberately an order of magnitude
+under the lateral and vertical terms — that is the wing — but the consequence is
+that releasing the throttle at cruise costs 770 m to shed half your speed. That
+may be exactly the heavy, spacecraft-like feel wanted, or it may be too much;
+it is now a number on a panel rather than a thing nobody had looked at.
 
 ### Phase 4 — Wings, plumes and engines
 

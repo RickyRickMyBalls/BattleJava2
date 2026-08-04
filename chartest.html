@@ -75,6 +75,7 @@
       <button data-mode="ads">ADS</button>
       <button data-mode="veh">VEHICLE</button>
       <button data-mode="seat">SEAT</button>
+      <button data-mode="air">AIR</button>
     </div>
     <div class="btns" id="animBtns">
       <button data-anim="idle" class="sel">IDLE</button>
@@ -110,6 +111,16 @@
       </div>
       <pre id="vehTel"></pre>
       <div id="vehInputs"></div>
+    </div>
+    <div id="airMode" style="display:none">
+      <div class="btns">
+        <button id="airReset">RESET (R)</button>
+        <button id="airCam">CAM: CHASE (C)</button>
+        <button id="airAll">RUN ALL</button>
+      </div>
+      <div class="btns" id="airRunBtns"></div>
+      <pre id="airTel"></pre>
+      <div id="airInputs"></div>
     </div>
     <div id="seatMode" style="display:none">
       <div class="btns">

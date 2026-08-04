@@ -128,7 +128,14 @@ the label before treating anything in them as a requirement.
 - `/chartest.html` — the tuning range: BACK tab (stowed-gun transform per character →
   paste into `BACK` in soldier.js), GRIP tab (per-weapon hand grip → `WEAPONS[k].grip`),
   VIEWMODEL tab (first-person offsets → `WEAPONS[k].fp`; FPS controls: click to lock,
-  WASD, LMB fire). Values transfer 1:1 into config.
+  WASD, LMB fire), VEHICLE + SEAT tabs (the ground proving range and the seat
+  fitting bay → `CFG.vehicle.*`), AIR tab (the Pelican's flight model →
+  `CFG.vehicle.pelican`). Values transfer 1:1 into config.
+- The AIR tab measures with SCRIPTED manoeuvres from seeded states, not by
+  hand-flying: nobody can fly the same 90° turn twice, so hand-flown numbers are
+  not comparable between tunings. `DRIFT` (velocity vs nose) is the one to watch
+  — near zero means the flight model has started writing velocity from the look
+  direction, and that is invisible from inside the cockpit.
 - Owner hand-tunes values and pastes blocks back; build tuning UIs rather than
   guessing numbers.
 
