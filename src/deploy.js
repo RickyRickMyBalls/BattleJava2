@@ -233,17 +233,23 @@ export class DeployScreen {
   // choice just fall out from under me" check in _updateMarkers all read this,
   // which is why a rally beacon becomes a spawn option here and nowhere else.
   _spawnPoints() {
-    const team = this.game.playerTeam;
-    const hq = this.game.world.hqDefs[team];
-    const pts = [{ id: 'hq', x: hq.x, z: hq.z }];
+    // HQ and held sectors come from `game.spawnOptionsFor`, which is also what
+    // the AI respawn and the squad beacon rule read. This screen used to
+    // re-derive the same list, so the spawn topology was written twice and a
+    // mode that changed it would have had to change both — see the AXIS note
+    // on that method.
+    const pts = this.game.spawnOptionsFor(this.game.playerTeam)
+      .map((p) => ({ id: p.id, x: p.x, z: p.z }));
     // The squad's rally, while it stands. Listed straight after HQ because it
     // is the forward option, and it can vanish between two frames of this
     // screen being open — the enemy can be shooting it right now — which the
-    // per-frame revalidation below already handles.
+    // per-frame revalidation below already handles. It stays out of
+    // `spawnOptionsFor` on purpose: for a bot the rally OUTRANKS every sector
+    // rather than joining them, which is that method's whole shape.
     const rally = this.game.playerSquad && this.game.playerSquad.beacon;
-    if (rally) pts.push({ id: 'beacon', x: rally.pos.x, z: rally.pos.z });
-    for (const sec of this.game.world.sectors) {
-      if (sec.owner === team && !sec.contested) pts.push({ id: sec.id, x: sec.x, z: sec.z });
+    if (rally && this.game.rules.spawn.beacon) {
+      pts.splice(this.game.rules.spawn.hq ? 1 : 0, 0,
+        { id: 'beacon', x: rally.pos.x, z: rally.pos.z });
     }
     return pts;
   }

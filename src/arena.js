@@ -27,6 +27,7 @@
 //   gameOver, playerDead       [Player.requestLock]
 //   spectating                 [Combat: skip the player's own body]
 //   spectatedSoldier           [Soldier._updateAnim: full-rate anim for the feed]
+//   rules                      resolved match rules    [game.js six axes]
 //   onKill(attacker, victim)   [Soldier.die]
 //   onDown(victim, attacker)   [Soldier.goDown]
 //   onRevive(victim, by)       [Soldier.revive]
@@ -43,6 +44,7 @@
 
 import { TEAM } from './config.js';
 import { makeLoadout } from './loadout.js';
+import { resolveRules } from './rules.js';
 import { Combat } from './combat.js';
 import { GameAudio } from './audio.js';
 
@@ -119,6 +121,12 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     get playerLoadout() {
       return (session && session.playerLoadout) || makeLoadout('assault');
     },
+
+    // The lobby has no objectives, but it does share Player, Soldier and
+    // Combat with a real match — so it carries a rule set for the same reason
+    // it carries `playerTeam`: the day a shared module asks, the answer must
+    // not be undefined. Defaults, not a mode.
+    rules: resolveRules('conquest'),
 
     // The lobby is never over, never dead, never bleeding tickets.
     gameOver: false,

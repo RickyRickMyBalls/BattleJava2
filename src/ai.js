@@ -336,6 +336,11 @@ export class TeamBrain {
     // Score sectors: defend owned-but-threatened, attack nearest not-owned.
     const jobs = [];
     for (const sec of sectors) {
+      // AXIS: objective topology. A sector the rules will not let anyone take
+      // is not a job — under a chain lattice, scoring it anyway masses squads
+      // on a point they can stand in forever without the bar moving. Sectors
+      // we already OWN stay jobs regardless: holding is not capturing.
+      if (sec.owner !== this.team && !this.game.capturable(sec)) continue;
       if (sec.owner === this.team) {
         const threat = this._enemyPresence(sec);
         if (threat > 0) jobs.push({ sec, type: 'DEFEND', weight: 3 + threat, cap: 2 });
@@ -345,6 +350,9 @@ export class TeamBrain {
         jobs.push({ sec, type: sec.owner === null ? 'CAPTURE' : 'ATTACK', weight: 2 + (sec.owner !== null ? 0.5 : 1) - defense * 0.15, cap: 3 });
       }
     }
+    // Only reachable if a rule set locked every sector this team does not
+    // already own. Bail rather than fall through to `jobs[0]` at the bottom.
+    if (!jobs.length) return;
     jobs.sort((a, b) => b.weight - a.weight);
 
     // Greedy: each squad to best remaining job, preferring near squads.

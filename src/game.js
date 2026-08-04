@@ -16,6 +16,7 @@ import { GameAudio } from './audio.js';
 import { createBeamPool } from './repairtool.js';
 import { getSetting, onSettingChange } from './settings.js';
 import { prewarm, weaponClones, characterClones } from './assets.js';
+import { resolveRules } from './rules.js';
 
 const BLUE_NAMES = ['Reyes', 'Okafor', 'Tanaka', 'Silva', 'Novak', 'Baptiste', 'Kowalski', 'Iversen', 'Mbeki', 'Duarte', 'Halvorsen', 'Cross', 'Vega', 'Antar', 'Riley', 'Song', 'Petrov', 'Lindqvist', 'Moreau', 'Adeyemi', 'Castillo', 'Brandt', 'Oyelaran', 'Whitaker', 'Nakamura', 'Sorenson', 'Blake', 'Ferreira', 'Zhou', 'Kaminski', 'Dubois'];
 const RED_NAMES = ['Zar\'Kul', 'Vestam', 'Ontar', 'Krellus', 'Sar\'Vek', 'Molvane', 'Teth', 'Uzek', 'Rathkar', 'Volsun', 'Ekar', 'Themos', 'Drax', 'Onvelu', 'Kaidon', 'Serevu', 'Tulkar', 'Wren', 'Ossek', 'Varn', 'Ilmar', 'Zetes', 'Korag', 'Mendu', 'Sulvan', 'Orrek', 'Talvu', 'Nezar', 'Ukam', 'Rhoss', 'Ventar', 'Ghelan'];
@@ -26,6 +27,12 @@ export class Game {
     this.camera = camera;
     this.assets = assets;
     this.session = session || null;
+    // The match's rule set, resolved ONCE and frozen. Until now the lobby's
+    // game-type selector wrote `session.gameType` and nothing read it; this is
+    // the line that makes the choice mean something. A scripted or headless
+    // match with no session gets SECTOR CONTROL, which is what it has always
+    // silently been. See rules.js for what belongs here versus in `CFG`.
+    this.rules = resolveRules(this.session ? this.session.gameType : 'conquest');
     this.playerTeam = TEAM.BLUE;
     // the session owns the loadout so lobby customization carries into the game
     // No session (a scripted/headless match) gets its own kit; otherwise this
@@ -229,7 +236,10 @@ export class Game {
 
   onKill(attacker, victim) {
     this.hud.addKill(attacker, victim);
-    this.teams[victim.team].tickets -= 1;
+    // AXIS: death cost. In SECTOR CONTROL a body is a ticket; in a territorial
+    // mode this is 0 and the death is paid for in position and materiel
+    // instead. Nothing else about dying changes between the modes.
+    this.teams[victim.team].tickets -= this.rules.deathCost;
     if (victim.isPlayer) {
       this.hud.setDowned(0, false);
       this.hud.setPrompt(null);
@@ -487,7 +497,7 @@ export class Game {
     }
 
     this._updateCapture(dt);
-    this._updateTickets(dt);
+    this._updateEconomy(dt);
     this.combat.update(dt);
     this.supply.update(dt);
     this.structures.update(dt);
@@ -511,11 +521,25 @@ export class Game {
   // ai.js measures a rally's worth against exactly this list — if the two ever
   // disagreed, squads would plant rallies to shorten walks they were not
   // actually making.
+  //
+  // AXIS: spawn set. `id` is carried on every option because the deploy screen
+  // builds its marker list from this same call — the player's spawn rules and
+  // the AI's were written out twice before, which meant every future mode would
+  // have had to state its topology twice and keep the two honest.
   spawnOptionsFor(team) {
-    const opts = [{ x: this.world.hqDefs[team].x, z: this.world.hqDefs[team].z }];
-    for (const sec of this.world.sectors) {
-      if (sec.owner === team && !sec.contested) opts.push(sec);
+    const R = this.rules.spawn;
+    const hq = this.world.hqDefs[team];
+    const opts = [];
+    if (R.hq) opts.push({ id: 'hq', x: hq.x, z: hq.z });
+    if (R.sectors === 'held') {
+      for (const sec of this.world.sectors) {
+        if (sec.owner === team && !sec.contested) opts.push(sec);
+      }
     }
+    // A team with nowhere to come back is a soft-locked match, not a hard mode.
+    // Whatever a rule set says, HQ is the floor — `deploy.js` also falls back to
+    // the literal id 'hq' when a selection goes stale, and that has to resolve.
+    if (!opts.length) opts.push({ id: 'hq', x: hq.x, z: hq.z });
     return opts;
   }
 
@@ -563,6 +587,16 @@ export class Game {
     if (obj) { s.waypoint.set(obj.x, obj.y, obj.z); s.hasWaypoint = true; }
   }
 
+  // AXIS: objective topology. Whether the rules let this sector change hands at
+  // all, right now. 'open' is every sector always — five points live at once,
+  // which is what makes the current game read as Battlefield. A chain lattice
+  // answers from adjacency and produces a frontline instead; when it lands, it
+  // lands HERE and nowhere else. Consulted by `_updateCapture` and by the team
+  // brain in ai.js, which must not send squads at a point nobody can take.
+  capturable(sec) {
+    return this.rules.lattice === 'open';
+  }
+
   _updateCapture(dt) {
     for (const sec of this.world.sectors) {
       let blue = 0, red = 0;
@@ -573,9 +607,12 @@ export class Game {
           if (s.team === TEAM.BLUE) blue++; else red++;
         }
       }
+      // Contested is reported whether or not the sector is takeable: people ARE
+      // fighting in it, and a locked point that reads as calm would be a lie
+      // the HUD tells. Only the progress bar is gated.
       sec.contested = blue > 0 && red > 0;
       const net = Math.max(-3, Math.min(3, blue - red));
-      if (net !== 0) {
+      if (net !== 0 && this.capturable(sec)) {
         const dir = net > 0 ? 1 : -1; // + toward blue
         const attackingTeam = dir > 0 ? TEAM.BLUE : TEAM.RED;
         if (sec.owner !== attackingTeam) {
@@ -610,7 +647,15 @@ export class Game {
     sec.beamMat.color.setHex(c);
   }
 
-  _updateTickets(dt) {
+  // AXIS: economy — what the counter measures. Attrition is the only currency
+  // implemented; a territorial mode adds its accrual as a sibling branch here
+  // rather than as a second rate on this one, because the two count different
+  // things in different directions (see GAME_TYPE_PLAN.md → "Two economies").
+  _updateEconomy(dt) {
+    if (this.rules.economy === 'attrition') this._bleedTickets(dt);
+  }
+
+  _bleedTickets(dt) {
     this.bleedAccum += dt;
     if (this.bleedAccum >= CFG.bleedInterval) {
       this.bleedAccum -= CFG.bleedInterval;
@@ -625,14 +670,23 @@ export class Game {
     }
   }
 
+  // AXIS: victory. Only the CONDITION is per-mode; the end screen below is not,
+  // which is why the two are split — a score target or a full-chain capture
+  // should arrive at the same place by a different route.
   _checkWin() {
-    if (this.teams[0].tickets <= 0 || this.teams[1].tickets <= 0) {
-      this.gameOver = true;
-      const win = this.teams[1 - this.playerTeam].tickets <= 0;
-      const p = this.playerSoldier;
-      const mins = Math.floor(this.elapsed / 60);
-      const secs = Math.floor(this.elapsed % 60);
-      this.hud.showEnd(win, `${p.kills} kills · ${p.deaths} deaths · match time ${mins}:${String(secs).padStart(2, '0')}`);
+    if (this.gameOver) return;
+    if (this.rules.victory === 'ticketsZero') {
+      if (this.teams[0].tickets <= 0 || this.teams[1].tickets <= 0) {
+        this._endMatch(this.teams[1 - this.playerTeam].tickets <= 0);
+      }
     }
+  }
+
+  _endMatch(win) {
+    this.gameOver = true;
+    const p = this.playerSoldier;
+    const mins = Math.floor(this.elapsed / 60);
+    const secs = Math.floor(this.elapsed % 60);
+    this.hud.showEnd(win, `${p.kills} kills · ${p.deaths} deaths · match time ${mins}:${String(secs).padStart(2, '0')}`);
   }
 }

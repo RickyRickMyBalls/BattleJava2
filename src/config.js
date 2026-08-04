@@ -2514,10 +2514,24 @@ export const MELEE = {
   },
 };
 
+// Match types. Each entry's `rules` block is a DELTA over `DEFAULT_RULES` in
+// rules.js, resolved once per match into `game.rules` — see that file for what
+// belongs here and what stays a `CFG` number.
+//
+// SECTOR CONTROL's delta is empty in substance: it IS the default, and the
+// block below restates it deliberately so the preset can be read at a glance
+// next to the modes that will differ from it.
 export const GAME_TYPES = {
   conquest: {
     id: 'conquest', name: 'SECTOR CONTROL',
     desc: 'Capture and hold sectors to bleed enemy tickets. 32 v 32 combined arms.',
+    rules: {
+      lattice: 'open',
+      economy: 'attrition',
+      victory: 'ticketsZero',
+      deathCost: 1,
+      spawn: { hq: true, sectors: 'held', beacon: true },
+    },
   },
 };
 
