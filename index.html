@@ -762,6 +762,19 @@
       width: 38px; height: 38px; border: 2px solid; font-size: 11px; font-weight: 700; letter-spacing: 1px;
       background: rgba(8,20,32,0.62);
     }
+    /* Depot stock, hung above a sector/HQ marker. Amber rather than team blue:
+       it is a quantity, not an allegiance, and on a map already carrying blue
+       HQs and blue sectors a third blue thing reads as one of them. Matches the
+       cargo numbers on the canvas layer, which are the same substance moving. */
+    .dp-stock {
+      /* 9px, not 4: the sector capture arc is a ::before at inset -6px, so a
+         badge hugging the marker edge would sit on top of the progress ring. */
+      position: absolute; bottom: 100%; margin-bottom: 9px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: 0;
+      color: #ffd66e; background: rgba(4,10,18,0.72); padding: 2px 5px;
+      border: 1px solid rgba(255,214,110,0.35); white-space: nowrap; pointer-events: none;
+    }
+    .dp-stock.low { color: #ff5a4d; border-color: rgba(255,90,77,0.5); }
     .dp-hq.own::after {
       content: 'DEPLOY'; position: absolute; top: 100%; margin-top: 5px; left: 50%; transform: translateX(-50%);
       font-size: 8px; letter-spacing: 2px; color: var(--hud-cyan); font-weight: 400; white-space: nowrap;

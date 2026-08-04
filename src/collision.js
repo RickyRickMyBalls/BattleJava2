@@ -1,8 +1,14 @@
 // Mesh collision for GLB maps, built from Blender-authored parents:
-//   Collision_floor_parent — walkable surfaces (grounding via down-ray → tunnels work)
+//   Collision_floor_parent — surfaces you walk on (grounding via down-ray → tunnels work)
 //   Collision_wall_parent  — blocking shells (capsule push-out)
 //   Collision_cover_parent — optional; becomes AABB cover for LOS/bullet checks
 // Geometry is baked into world space so all queries use identity transforms.
+//
+// The two hulls are NOT the two parents. At load the floor parent is split by
+// slope: anything past GROUND_MAX_SLOPE is a wall, wherever it was authored, and
+// joins the wall parent's geometry in the blocking hull. So a parent is a hint
+// about intent, not a promise — a building can go in whole and come out with its
+// decks walkable and its flanks solid.
 
 import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
@@ -22,6 +28,62 @@ const _target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
 // clamped flat below the marker plane (wrong everywhere low). This is a sanity
 // leash on the answer, not a cost.
 const GROUND_REACH = 250;
+
+// Steepest surface you can stand on, in degrees off horizontal. Everything in a
+// floor parent past this is re-filed as a wall at load (see splitBySlope), which
+// is what lets a whole building be parented to Collision_floor_parent: its decks
+// hold you up, its flanks stop you, and nothing needs splitting in Blender.
+const GROUND_MAX_SLOPE = 70;
+const MIN_UP = Math.cos(GROUND_MAX_SLOPE * THREE.MathUtils.DEG2RAD);
+
+// Split a floor hull by that slope: what you can stand on, and what should be
+// stopping you. Doing this ONCE at build time beats testing every ray hit, and
+// it is strictly more useful, because the steep half is exactly the set of
+// surfaces that ought to block — so it gets folded into the wall hull below.
+// That is what lets one authored parent do both jobs: parent a whole building to
+// Collision_floor_parent and its decks hold you up while its flanks stop you.
+//
+// Geometry arrives as a world-space, position-only triangle soup (see
+// extractWorldGeometry), so a triangle is nine consecutive floats and its normal
+// is the raw cross product — no transform, no index indirection. Winding is not
+// to be trusted (an authored floor is just as walkable with its normal flipped),
+// hence the abs: what matters is how far off horizontal a surface lies, not
+// which way it faces.
+function splitBySlope(geo) {
+  const pos = geo.attributes.position.array;
+  const tris = Math.floor(pos.length / 9);
+  const flag = new Uint8Array(tris);   // 1 walkable, 2 steep, 0 degenerate
+  let nWalk = 0, nSteep = 0;
+  for (let t = 0; t < tris; t++) {
+    const i = t * 9;
+    const ax = pos[i], ay = pos[i + 1], az = pos[i + 2];
+    const ux = pos[i + 3] - ax, uy = pos[i + 4] - ay, uz = pos[i + 5] - az;
+    const vx = pos[i + 6] - ax, vy = pos[i + 7] - ay, vz = pos[i + 8] - az;
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-12) continue;   // zero-area: belongs in neither hull
+    if (Math.abs(ny) / len >= MIN_UP) { flag[t] = 1; nWalk++; } else { flag[t] = 2; nSteep++; }
+  }
+
+  const walk = nWalk ? new Float32Array(nWalk * 9) : null;
+  const steep = nSteep ? new Float32Array(nSteep * 9) : null;
+  let w = 0, s = 0;
+  for (let t = 0; t < tris; t++) {
+    if (flag[t] === 1) { walk.set(pos.subarray(t * 9, t * 9 + 9), w); w += 9; }
+    else if (flag[t] === 2) { steep.set(pos.subarray(t * 9, t * 9 + 9), s); s += 9; }
+  }
+  const soup = (arr) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    return g;
+  };
+  return {
+    walkable: walk ? soup(walk) : null,
+    steep: steep ? soup(steep) : null,
+    walkTris: nWalk,
+    steepTris: nSteep,
+  };
+}
 
 // Merge every mesh under `parent` into one world-space position-only geometry.
 // `filter(mesh)` optionally rejects meshes (the lobby stage uses it to drop sky
@@ -67,22 +129,41 @@ export class MapCollision {
     this.wallBvh = null;
 
     const floorGeo = floorParent ? extractWorldGeometry(floorParent) : null;
-    if (floorGeo) this.floorBvh = new MeshBVH(floorGeo);
+    const split = floorGeo ? splitBySlope(floorGeo) : null;
+    if (split && split.walkable) this.floorBvh = new MeshBVH(split.walkable);
 
+    // Authored walls plus the floor parent's own steep faces. Both are
+    // world-space position-only soups, so they merge without conversion.
     const wallGeo = wallParent ? extractWorldGeometry(wallParent) : null;
-    if (wallGeo) this.wallBvh = new MeshBVH(wallGeo);
+    const steepGeo = split ? split.steep : null;
+    const blocking = wallGeo && steepGeo
+      ? mergeGeometries([wallGeo, steepGeo], false)
+      : (wallGeo || steepGeo);
+    if (blocking) this.wallBvh = new MeshBVH(blocking);
+
+    // Reported by the map loader; the walkable/steep ratio is the fastest read
+    // on whether a map's floor parent is authored the way the code expects.
+    this.slopeSplit = split
+      ? { walkable: split.walkTris, steep: split.steepTris }
+      : { walkable: 0, steep: 0 };
   }
 
   // Height of the walkable surface beneath (x, y, z), looking down from just
   // above head height. Inside a tunnel the ray starts below the roof, so it
-  // finds the tunnel floor instead of the hill above it. Returns null if no
-  // floor within reach (caller falls back to the heightfield).
+  // finds the tunnel floor instead of the hill above it. Anything steeper than
+  // GROUND_MAX_SLOPE is skipped rather than stood on. Returns null if no floor
+  // within reach (caller falls back to the heightfield).
   groundAt(x, y, z, headroom = 1.4, reach = GROUND_REACH) {
     if (!this.floorBvh) return null;
-    _ray.origin.set(x, y + headroom, z);
+    const top = y + headroom;
+    _ray.origin.set(x, top, z);
     _ray.direction.copy(_down);
     const hit = this.floorBvh.raycastFirst(_ray, THREE.DoubleSide);
-    if (!hit || hit.distance > headroom + reach) return null;
+    if (!hit) return null;
+    // No slope test here on purpose: splitBySlope already kept the steep faces
+    // out of this hull, so the nearest hit IS the nearest standable surface and
+    // the ray falls through a wall to the deck below it for free.
+    if (hit.point.y < top - (headroom + reach)) return null;
     return hit.point.y;
   }
 

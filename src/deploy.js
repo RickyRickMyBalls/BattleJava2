@@ -9,6 +9,10 @@ import { LoadoutBar } from './loadoutbar.js';
 import { terrainHeight } from './world.js';
 
 const _v = new THREE.Vector3();
+// Separate from `_v` on purpose: `_project` writes `_v` every call, and the
+// vehicle heading is read across one. See the combat.js scratch-vector note —
+// this project has already paid for that mistake once.
+const _fwd = new THREE.Vector3();
 const EASE = (t) => t * t * (3 - 2 * t);
 
 // Helmet-cam mount relative to the head bone (meters, scale-compensated
@@ -208,21 +212,36 @@ export class DeployScreen {
       m.textContent = 'HQ';
       this.el.mapLayer.appendChild(m);
       const id = hq.team === team ? 'hq' : 'hq-enemy';
+      // Stock readout, OWN TEAM ONLY. What is in the enemy's warehouse is
+      // perfect intelligence nobody earned — and unlike most map information it
+      // could never be earned, since there is no scouting the inside of a
+      // building. Built only for the marker allowed to have one, so there is no
+      // hidden element a future edit can accidentally reveal.
+      const stock = hq.team === team ? m.appendChild(this._makeDepotLabel()) : null;
       m.addEventListener('mousedown', (e) => e.stopPropagation());
       if (hq.team === team) {
         m.title = 'Spawn at headquarters';
         m.onclick = () => this._select(id);
       }
-      this.markers.push({ id, el: m, x: hq.x, z: hq.z, spawnable: hq.team === team });
+      this.markers.push({
+        id, el: m, x: hq.x, z: hq.z, spawnable: hq.team === team,
+        stock, hq: hq.team === team ? hq : null,
+      });
     }
     for (const sec of this.game.world.sectors) {
       const m = document.createElement('div');
       m.className = 'dp-sector';
       m.textContent = sec.id;
       this.el.mapLayer.appendChild(m);
+      // A sector's depot is the number that actually decides what can be built
+      // at the front — you cannot build out of HQ unless you are standing in
+      // it. Every sector gets a label; `_updateMarkers` shows it only while the
+      // sector is ours, because ownership changes mid-screen.
+      const stock = this._makeDepotLabel();
+      m.appendChild(stock);
       m.addEventListener('mousedown', (e) => e.stopPropagation());
       m.onclick = () => { if (this._spawnOk(sec.id)) this._select(sec.id); };
-      this.markers.push({ id: sec.id, el: m, sec, x: sec.x, z: sec.z });
+      this.markers.push({ id: sec.id, el: m, sec, stock, x: sec.x, z: sec.z });
     }
     // The rally marker is built unconditionally and hidden when there is no
     // beacon, rather than built on demand: markers are only rebuilt on show(),
@@ -237,6 +256,16 @@ export class DeployScreen {
     bm.addEventListener('mousedown', (e) => e.stopPropagation());
     bm.onclick = () => { if (this._spawnOk('beacon')) this._select('beacon'); };
     this.markers.push({ id: 'beacon', el: bm, rally: true, x: 0, z: 0 });
+  }
+
+  // The stock badge that hangs under a depot marker. Hidden by default — a mode
+  // with no supply network never turns it on, and a sector shows one only while
+  // it is ours.
+  _makeDepotLabel() {
+    const s = document.createElement('span');
+    s.className = 'dp-stock';
+    s.style.display = 'none';
+    return s;
   }
 
   // Every place the player may enter the field. The single source of truth for
@@ -833,7 +862,24 @@ export class DeployScreen {
 
   _updateMarkers() {
     const team = this.game.playerTeam;
+    const logi = this.game.logistics;
     for (const m of this.markers) {
+      // Depot stock. Null logistics is a mode with no supply network at all, so
+      // every badge stays off and this costs one comparison a marker.
+      if (m.stock) {
+        const own = m.hq ? true : m.sec.owner === team;
+        const show = !!logi && own;
+        m.stock.style.display = show ? 'block' : 'none';
+        if (show) {
+          const home = m.hq ? logi.hqDepot(team) : null;
+          const v = m.hq ? (home ? home.stock : 0) : logi.stockOf(m.sec);
+          m.stock.textContent = Math.floor(v);
+          // Empty forward depots are the whole reason to look at this screen —
+          // it is where a supply run needs to go — so they are called out
+          // rather than left as a quiet zero among four healthy numbers.
+          m.stock.className = 'dp-stock' + (!m.hq && v < 50 ? ' low' : '');
+        }
+      }
       if (m.rally) {
         const b = this.game.playerSquad && this.game.playerSquad.beacon;
         m.el.style.display = b ? 'flex' : 'none';
@@ -905,6 +951,9 @@ export class DeployScreen {
       ctx.fill();
     }
 
+    this._drawVehicles();
+    this._drawCarriers();
+
     // You. Deliberately not a dot like everyone else: the loop above skips the
     // player's own soldier, and on a map you opened mid-fight the thing you
     // need first is which way you are FACING. Drawn in every mode — it is
@@ -929,6 +978,82 @@ export class DeployScreen {
         ctx.restore();
       }
     }
+  }
+
+  // Vehicles, in EVERY mode. Knowing where the hogs are is useful whether or
+  // not anything is being hauled in them, and drawing them is independent of
+  // the supply network — only the cargo number below depends on that.
+  //
+  // A chevron rather than a dot, oriented to heading, because the two things
+  // worth knowing about a vehicle at a glance are where it is pointed and
+  // whether anyone is in it. A hollow outline is an empty hog somebody could
+  // walk to; a filled one is crewed and already going somewhere.
+  _drawVehicles() {
+    const g = this.game;
+    const list = g.vehicles ? g.vehicles.vehicles : null;
+    if (!list) return;
+    const ctx = this.ctx;
+    for (const v of list) {
+      if (v.team !== g.playerTeam) continue;   // enemy armour is not free intel
+      const p = this._project(v.pos.x, v.pos.z);
+      if (p.behind) continue;
+      // Heading from the body's forward axis, mapped the same way the player
+      // arrow is: camera looks straight down, world +X is screen right.
+      _fwd.set(0, 0, 1).applyQuaternion(v.quat);
+      const a = Math.atan2(-_fwd.z, _fwd.x);
+      ctx.save();
+      ctx.translate(p.sx, p.sy);
+      ctx.rotate(a);
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(-4, 5.5);
+      ctx.lineTo(-1.5, 0);
+      ctx.lineTo(-4, -5.5);
+      ctx.closePath();
+      if (v.crewed) {
+        ctx.fillStyle = '#7fd4ff';
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = '#7fd4ff';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+      ctx.restore();
+      if (v.cargo > 0) this._cargoLabel(p.sx, p.sy - 11, v.cargo);
+    }
+  }
+
+  // Everyone hand-carrying, and NOBODY ELSE. Thirty-two labels reading zero
+  // would bury the four that matter — after the load gate in logistics.js only
+  // squads actually on a run carry anything, so absence is the signal. What is
+  // left is a moving trail of numbers between HQ and the front, which is the
+  // supply line made visible and the reason to open this screen.
+  _drawCarriers() {
+    const g = this.game;
+    if (!g.logistics) return;
+    for (const s of g.teams[g.playerTeam].soldiers) {
+      if (!s.alive || s.vehicle || s.cargo <= 0) continue;   // riders count as the hog's
+      const p = this._project(s.pos.x, s.pos.z);
+      if (p.behind) continue;
+      this._cargoLabel(p.sx, p.sy - 8, s.cargo);
+    }
+  }
+
+  // One cargo number. Stroked before filled so it stays readable over bright
+  // terrain — the dots below get away without it because they are solid shapes,
+  // and text does not.
+  _cargoLabel(sx, sy, amount) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = '600 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(4,10,18,0.85)';
+    ctx.strokeText(Math.floor(amount), sx, sy);
+    ctx.fillStyle = '#ffd66e';
+    ctx.fillText(Math.floor(amount), sx, sy);
+    ctx.restore();
   }
 
   _updateDeployButton() {
