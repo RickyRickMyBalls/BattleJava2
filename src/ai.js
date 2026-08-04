@@ -288,6 +288,11 @@ export class Squad {
     let best = null, bestD = A.seekRange;
     for (const v of list) {
       if (v.crewed || v.flipped) continue;
+      // The player's. Left alone even when the player is nowhere near it and
+      // even when it is the only thing on the field — a hog that is only
+      // sometimes there is worse than one that never is, because you plan
+      // around the one you can rely on.
+      if (v.reserved) continue;
       if (v.claimedBy && v.claimedBy !== this) continue;
       const d = lead.pos.distanceTo(v.pos);
       if (d < bestD) { bestD = d; best = v; }

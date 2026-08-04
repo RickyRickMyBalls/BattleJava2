@@ -367,8 +367,21 @@ export const CFG = {
     // Hogs per FC_VEHICLE_ marker, laid out across the marker's facing. The
     // markers carry position only — no rotation is authored on them — so
     // facing is derived (see VehicleManager._spawnAll) rather than read.
-    perSpawn: 2,
-    spacing: 5.0,        // metres between neighbours, measured across the line
+    //
+    // ONE per marker: the map authors a marker per vehicle, so the motor pool
+    // is arranged in Blender where it can be seen rather than by an offset
+    // applied here. It was 2, which quietly doubled every marker the moment a
+    // second one per team was added and parked hogs inside each other — a hull
+    // is 6.26 x 3.07 m and the pairs landed 1.5 m apart across.
+    perSpawn: 1,
+    spacing: 5.0,        // metres between neighbours, only used when perSpawn > 1
+    // A marker whose name carries this spawns ONE vehicle and flags it so no
+    // AI squad will ever claim it — the one the player can always walk to.
+    // Authored as its own empty (e.g. `FC_VEHICLE_BLUE_RESERVE`) rather than
+    // reserving one of an ordinary pair, because that would quietly take a hog
+    // off the team, and rather than an offset invented in code, because then
+    // the owner decides where it is parked.
+    reserveMarker: /_RESERVE/i,
 
     // Physics runs on a FIXED substep, not the frame's dt. A 0.05 s frame
     // (game.js clamps there) through a spring stiff enough to hold three tonnes

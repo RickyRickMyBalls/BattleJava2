@@ -147,6 +147,12 @@ export class Vehicle {
     this.stillTimer = 0;
     this.flipped = false;                // on its roof and settled; see _flipCheck
     this.flipTimer = 0;
+    // Set from the spawn marker. Bots never claim a reserved vehicle, so it is
+    // still sitting there when the player walks over. It does NOT stop the
+    // player's squad piling in once the player is aboard — that path goes
+    // through the vehicle the player occupies, not through claiming.
+    this.reserved = false;
+    this.claimedBy = null;               // the Squad that has called dibs
 
     // Crew. One entry per CFG.vehicle.seats def; `occupant` is a Player or a
     // Soldier (Phase 7) or null. The driver is seat 0 by convention and is
@@ -1498,15 +1504,24 @@ export class VehicleManager {
 
     for (const m of spawns) {
       const team = teamOfMarker(m.name);
+      // A marker whose name carries `_RESERVE` is the player's. It spawns ONE
+      // vehicle rather than a pair, and that vehicle is flagged so no squad
+      // will claim it — see Squad._findVehicle. The alternative was reserving
+      // one of the ordinary pair, which quietly takes a hog off the team that
+      // spawned it; a marker says what it is and can be parked where the owner
+      // wants it rather than at an offset invented in code.
+      const reserved = V.reserveMarker.test(m.name);
       // Markers carry POSITION ONLY — maps.js stores `getWorldPosition` and
       // drops the quaternion, and nothing in map-3 authors a rotation on them
       // anyway. Facing is therefore derived: point at the sector they would be
       // driven to, which reads as staged for the push rather than abandoned.
       const yaw = this._yawTowardNearestSector(m.x, m.z);
       const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-      for (let i = 0; i < V.perSpawn; i++) {
-        const off = (i - (V.perSpawn - 1) / 2) * V.spacing;
-        this.spawn('warthog', m.x + rx * off, m.z + rz * off, yaw, team);
+      const n = reserved ? 1 : V.perSpawn;
+      for (let i = 0; i < n; i++) {
+        const off = (i - (n - 1) / 2) * V.spacing;
+        const v = this.spawn('warthog', m.x + rx * off, m.z + rz * off, yaw, team);
+        if (v) v.reserved = reserved;
       }
     }
     console.log(`[vehicle] spawned ${this.vehicles.length} from ${spawns.length} marker(s)`);
