@@ -101,6 +101,7 @@ export class DeployScreen {
         </div>
         <div class="dp-pip" id="dpPip" style="display:none">
           <div class="dp-pip-head">
+            <span class="dp-pip-live">LIVE</span>
             <span id="dpPipName"></span>
             <span id="dpPipHp"></span>
             <button id="dpPipClose">✕</button>
@@ -863,6 +864,7 @@ export class DeployScreen {
   _updateMarkers() {
     const team = this.game.playerTeam;
     const logi = this.game.logistics;
+    const cam = this._camRect();
     for (const m of this.markers) {
       // Depot stock. Null logistics is a mode with no supply network at all, so
       // every badge stays off and this costs one comparison a marker.
@@ -891,6 +893,13 @@ export class DeployScreen {
       }
       const p = this._project(m.x, m.z);
       m.el.style.transform = `translate(${p.sx}px, ${p.sy}px) translate(-50%, -50%)`;
+      // Markers behind the feed hide rather than float in it. Nothing is lost:
+      // .dp-pip takes pointer events over that rect, so a marker under the cam
+      // was already unclickable — this only stops it looking like a bug.
+      // visibility, not display, so the rally beacon's own display toggle above
+      // stays the one thing deciding whether that marker exists at all.
+      m.el.style.visibility = cam && p.sx > cam.left && p.sx < cam.right
+        && p.sy > cam.top && p.sy < cam.bottom ? 'hidden' : 'visible';
       if (m.sec) {
         const sec = m.sec;
         const ownCls = sec.owner === TEAM.BLUE ? 'blue' : sec.owner === TEAM.RED ? 'red' : 'neutral';
@@ -978,6 +987,11 @@ export class DeployScreen {
         ctx.restore();
       }
     }
+
+    // Punch the battle cam out of the dot layer, last, so nothing drawn above
+    // survives inside the feed.
+    const cam = this._camRect();
+    if (cam) ctx.clearRect(cam.left, cam.top, cam.width, cam.height);
   }
 
   // Vehicles, in EVERY mode. Knowing where the hogs are is useful whether or
@@ -1121,10 +1135,23 @@ export class DeployScreen {
     }
   }
 
+  // Screen rect of the battle-cam picture, or null when there is no feed.
+  //
+  // The cam is a HOLE punched through this screen, not a panel drawn on top of
+  // it: _renderPip scissors the soldier's view into the main WebGL canvas,
+  // which sits UNDER #deploy. Everything the map draws above that canvas —
+  // the dot canvas, the marker layer — has to clear out of this rect or it
+  // bleeds through the feed. At the old thumbnail size that was a stray dot
+  // now and then; at 620px the cam covers a whole quadrant of the map.
+  _camRect() {
+    if (!this.watched || this.transition) return null;
+    const r = this.el.pipView.getBoundingClientRect();
+    return (r.width > 10 && r.height > 10) ? r : null;
+  }
+
   _renderPip(renderer) {
-    if (!this.watched || this.transition) return;
-    const rect = this.el.pipView.getBoundingClientRect();
-    if (rect.width < 10 || rect.height < 10) return;
+    const rect = this._camRect();
+    if (!rect) return;
 
     this.pipCamera.aspect = rect.width / rect.height;
     this.pipCamera.updateProjectionMatrix();

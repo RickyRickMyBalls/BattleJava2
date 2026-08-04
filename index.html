@@ -441,30 +441,74 @@
     .watchable { cursor: pointer; }
     .dp-mate.watchable:hover, .dp-slot.watchable:hover { color: var(--hud-cyan); border-color: var(--hud-cyan); }
 
-    /* ---- Helmet-cam feed ---- */
+    /* ---- Battle cam (helmet-cam feed) ---- */
+    /* Centre-LEFT and large, not a right-column thumbnail. The feed is not a
+       DOM video: deploy.js scissor-renders it into the main WebGL canvas at
+       #dpPipView's client rect, and that canvas sits UNDER #deploy (z-index
+       70). So no z-index on this panel can lift the picture above a panel that
+       covers it — only the border, header and scanlines rise. Its old rect
+       (right 24 / bottom 100, 322x202) was overlapped by three things at once:
+       the squad panel above it, the DEPLOY button through its title bar, and
+       the loadout bar across its lower 90px. The fix has to be geometric.
+       Nothing else is hidden to make room: the cam is sized to fit the empty
+       band it sits in, so the kit bar, DEPLOY and the sector readout all stay
+       exactly where they were.
+         top    — centre of the band between the sector readout (ends ~232) and
+                  the hint line above the kit bar.
+         width  — smallest of: a 620px cap, the gap to the squad panel, and
+                  whatever keeps the 16:9 box inside that band on a short
+                  window. The last two are why this is min() of three and not a
+                  fixed size; --kb-h is the kit bar's measured height.
+       No panel-wide background either: --hud-bg is 55% opaque, a tolerable tint
+       at thumbnail size and a veil over a 620px feed. Only the header is
+       tinted; the view stays a clean hole (see _camRect). */
     .dp-pip {
-      position: absolute; right: 24px; bottom: 100px; width: 322px;
-      background: var(--hud-bg); border: 1px solid var(--hud-cyan-dim); pointer-events: auto;
+      position: absolute; left: 24px;
+      top: calc((232px + 100vh - 40px - var(--kb-h, 174px)) / 2);
+      transform: translateY(-50%);
+      width: min(620px, calc(100vw - 340px), calc((100vh - 320px - var(--kb-h, 174px)) * 1.75));
+      border: 1px solid var(--hud-cyan-dim); pointer-events: auto;
+      box-shadow: 0 0 0 1px rgba(2,6,10,0.6), 0 18px 40px rgba(2,6,10,0.55);
     }
     .dp-pip-head {
-      display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-      font-size: 10px; letter-spacing: 2px; color: #cfe6f5;
-      border-bottom: 1px solid rgba(127,212,255,0.15);
+      display: flex; align-items: center; gap: 9px; padding: 7px 10px;
+      font-size: 11px; letter-spacing: 2px; color: #cfe6f5;
+      background: var(--hud-bg); border-bottom: 1px solid rgba(127,212,255,0.15);
     }
+    .dp-pip-live { display: flex; align-items: center; gap: 5px; font-size: 9px; letter-spacing: 2px; color: var(--hud-red); }
+    .dp-pip-live::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--hud-red); animation: dpPipLive 1.6s ease-in-out infinite;
+    }
+    @keyframes dpPipLive { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
     #dpPipHp { margin-left: auto; color: #3ddc7a; }
-    #dpPipClose { cursor: pointer; background: none; border: none; color: #6e93a8; font-size: 12px; }
+    #dpPipClose { cursor: pointer; background: none; border: none; color: #6e93a8; font-size: 13px; }
     #dpPipClose:hover { color: var(--hud-red); }
-    .dp-pip-view { height: 180px; position: relative; }
+    /* Height comes from the aspect ratio, so the cam scales with the viewport
+       instead of pinning 180px. Short-window fitting is handled by the width
+       formula above, so this stays exactly 16:9 at every size. */
+    .dp-pip-view { aspect-ratio: 16 / 9; position: relative; }
     .dp-pip-view::after {
       content: ''; position: absolute; inset: 0; pointer-events: none;
       background:
         repeating-linear-gradient(0deg, rgba(127,212,255,0.03) 0px, rgba(127,212,255,0.03) 1px, transparent 1px, transparent 3px),
         radial-gradient(ellipse at center, transparent 55%, rgba(2,6,10,0.5) 100%);
     }
+    /* Corner brackets: four L's drawn as eight 1px gradient bars. */
+    .dp-pip-view::before {
+      content: ''; position: absolute; inset: 8px; pointer-events: none; z-index: 2;
+      --b: linear-gradient(rgba(127,212,255,0.45), rgba(127,212,255,0.45));
+      background:
+        var(--b) 0 0 / 16px 1px, var(--b) 0 0 / 1px 16px,
+        var(--b) 100% 0 / 16px 1px, var(--b) 100% 0 / 1px 16px,
+        var(--b) 0 100% / 16px 1px, var(--b) 0 100% / 1px 16px,
+        var(--b) 100% 100% / 16px 1px, var(--b) 100% 100% / 1px 16px;
+      background-repeat: no-repeat;
+    }
     .dp-pip-kia {
       position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
-      font-size: 26px; letter-spacing: 8px; color: var(--hud-red);
-      text-shadow: 0 0 14px rgba(0,0,0,0.9); background: rgba(20,4,4,0.25); z-index: 1;
+      font-size: 40px; letter-spacing: 14px; color: var(--hud-red);
+      text-shadow: 0 0 14px rgba(2,6,10,0.9); background: rgba(20,4,4,0.25); z-index: 3;
     }
     .dp-squad-head { font-size: 10px; letter-spacing: 3px; color: #6e93a8; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
     #dpTeamBtn {
