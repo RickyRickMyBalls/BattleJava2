@@ -391,25 +391,59 @@ export const CFG = {
     //            it and `offset` (chassis frame) stands in.
     //   camera — the eye. Null falls back to the seat plus eye height.
     //   role   — 'drive' | 'turret' | 'ride'
+    //   anim   — the pose the occupant holds. Per seat rather than per role
+    //            because the two seated poses differ by what the hands are
+    //            doing, and that is a property of the seat.
+    //   pose   — optional { pos, rot } correction for the body ON this seat,
+    //            on top of the derived hips-onto-the-marker term. Falls back to
+    //            `seatPose` below. Tuned in the SEAT tab of /chartest.html —
+    //            do not type numbers in here by hand, that is what the tab is
+    //            for.
+    // Poses below are OWNER-TUNED in the SEAT tab and pasted back — the
+    // numbers are measured, not guessed, and are not to be "tidied".
     seats: [
-      { id: 'driver', label: 'DRIVE', role: 'drive',
-        ref: 'ref_seat_driver', camera: 'ref_camera_driver' },
+      { id: 'driver', label: 'DRIVE', role: 'drive', anim: 'drive',
+        ref: 'ref_seat_driver', camera: 'ref_camera_driver',
+        pose: { pos: [0, 0.35, -0.4], rot: [0, 0, 0] } },
       // The gunner stands in the ring, so there is no seat empty by design —
       // ref_camera_gunner hangs off gun_turret_body and therefore YAWS WITH THE
       // TURRET, which is exactly right and is why the camera is read live off
       // the hierarchy rather than computed.
-      { id: 'gunner', label: 'MAN THE TURRET', role: 'turret',
-        ref: null, offset: [0, 1.25, -1.55], camera: 'ref_camera_gunner' },
-      { id: 'passenger', label: 'RIDE SHOTGUN', role: 'ride',
-        ref: 'ref_seat_passenger', camera: 'ref_camera_passenger' },
+      //
+      // `idle` is the standing rifle idle, the closest the set has to hands on
+      // a mounted gun, and the 1.4 in the pose is the cost of anchoring a
+      // STANDING body by the hips onto a marker that was placed for an eye. The
+      // body also rides the chassis rather than the ring, so it does not turn
+      // with the barrel. Both want a purpose-authored gunner clip.
+      { id: 'gunner', label: 'MAN THE TURRET', role: 'turret', anim: 'idle',
+        ref: null, offset: [0, 1.25, -1.55], camera: 'ref_camera_gunner',
+        pose: { pos: [0, 1.4, -0.5], rot: [0, 0, 0] } },
+      { id: 'passenger', label: 'RIDE SHOTGUN', role: 'ride', anim: 'sit',
+        ref: 'ref_seat_passenger', camera: 'ref_camera_passenger',
+        pose: { pos: [0, 0.35, -0.4], rot: [0, 0, 0] } },
       // VEHICLE_PLAN.md open question 3: the tailgate riders have no authored
       // empties, so these are derived and deliberately marked. Two more
       // ref_seat_* in the GLB replaces both offsets and this comment.
-      { id: 'rearLeft', label: 'RIDE THE TAILGATE', role: 'ride',
-        ref: null, offset: [0.8, 1.15, -2.15], camera: null },
-      { id: 'rearRight', label: 'RIDE THE TAILGATE', role: 'ride',
-        ref: null, offset: [-0.8, 1.15, -2.15], camera: null },
+      //
+      // The ~3 rad yaw turns them to face out over the tailgate rather than
+      // forward down the chassis, which is what riding the back of a hog looks
+      // like, and the mirrored pose X puts each one over their own hip rather
+      // than both drifting the same way.
+      { id: 'rearLeft', label: 'RIDE THE TAILGATE', role: 'ride', anim: 'sit',
+        ref: null, offset: [0.8, 1.15, -2.15], camera: null,
+        pose: { pos: [-0.4, 0.35, -0.6], rot: [0, 3, 0] } },
+      { id: 'rearRight', label: 'RIDE THE TAILGATE', role: 'ride', anim: 'sit',
+        ref: null, offset: [-0.8, 1.15, -2.15], camera: null,
+        pose: { pos: [0.4, 0.35, -0.6], rot: [0, 3, 0] } },
     ],
+
+    // The fallback for a seat with no `pose` of its own — a new vehicle's
+    // seats start here. Stays at zero: the derived hips term is meant to carry
+    // the placement, so a non-zero default would be a correction applied to
+    // seats nobody has looked at yet. Per-seat poses above are where the real
+    // numbers live, and the SEAT tab of /chartest.html is where they come from.
+    // Rotations in radians.
+    seatPose: { pos: [0, 0, 0], rot: [0, 0, 0] },
 
     // The ring mount. It tracks the gunner's look rather than snapping to it,
     // so a heavy gun reads as heavy and whipping the mouse does not teleport
@@ -2503,6 +2537,12 @@ export const ASSET_PATHS = {
     // the shoulder, which is the butt-stroke read we want. 2.83 s as authored,
     // played compressed into `MELEE.bash.animSpan`; see the melee block above.
     melee: '/animations/ridle-block.glb',
+    // Seated. Two poses, not one: the driver's hands are on the wheel and the
+    // riders' are not, and one clip covering both would have every passenger
+    // steering an imaginary Warthog. Neither travels, so both are pinned by the
+    // seat transform rather than by `pos` — see `_seatMesh` in soldier.js.
+    drive: '/animations/driving/driving.glb',
+    sit: '/animations/sitting-idle/sitting-idle.glb',
   },
   audio: {
     shot: '/UNSC/weapons/battle-rifle/audio/battle-rifle-shot-1.mp3',

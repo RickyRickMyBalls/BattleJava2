@@ -410,9 +410,111 @@ Verified: seats resolve from every approach angle; ring tracks to a commanded
 480 rpm; recoil walks the aim up; passenger and tailgate riders fire their own
 weapons (15 rounds, magazine counting down); driver fires nothing.
 
-**Still open:** the tailgate seats are derived offsets because the GLB authors
-no empties for them (open question 3). Bodies are hidden while seated — there
-is no seated pose yet, so a marine would stand upright through the roll cage.
+**Seated bodies — done.** `driving.glb` for the driver, `sitting-idle.glb` for
+the riders; both were already in `source/` and neither had been synced.
+
+The body is **parented to the chassis frame**, not written from `pos` each
+frame. Two measured reasons: the mesh transform is written inside
+`_updateAnim`'s distance throttle, so a rider driven from `pos` updates every
+other frame past 60 m and visibly swims behind a hog at 20 m/s; and `pos` plus
+`yaw` carry a yaw and nothing else, so the 7.4° of cornering roll would lean a
+rider out of their own seat. Parenting buys roll, pitch and suspension travel
+for free. It mounts on `group` rather than the seat empty because the empties
+in this rig carry baked rotations — one clean frame beats five arbitrary ones.
+
+Ride height is **derived, not authored**: the hips are measured off the
+retargeted clip on this rig and the body dropped by that much, which lands the
+hips on the seat empty to 0 mm in Y and Z on all five seats, repeatably.
+
+Two traps, both found by measuring rather than looking:
+
+1. **A zero-length crossfade is scheduled, not applied.** three.js resolves it
+   on the next mixer step with a real dt, so measuring straight after
+   `playAnim` reads the OUTGOING pose — a standing marine, 18 cm of error, and
+   intermittent because it depended on what had been playing before. The fix is
+   to force the action weights before measuring.
+2. **Dying in a seat has to give the seat back.** Nothing did, because it cost
+   nothing while the body was invisible. A corpse now holds the slot shut and
+   rides along, so `onKill` and `onDown` both dismount.
+
+**Still open, and now visible rather than merely suspected:**
+
+| Seat | Reads as | Why |
+| --- | --- | --- |
+| driver, passenger | correct | the two seats the rig actually authors empties for |
+| tailgate ×2 | sunk into the rear bodywork | derived offsets — open question 3 |
+| gunner | stands, but shins in the deck, holds their own rifle, does not turn with the ring | no gunner pose exists, and the body mounts on the chassis rather than `ref_turret_base_rotate_yaw` |
+
+The driver's foot also hangs 0.18 m below the footwell — measured, pan at
+y = 0.65 against a toe at 0.471. That is a Mixamo leg drop longer than this cab
+is deep, and no single translation fixes both ends of a leg, so it wants an
+authored pose or a knee IK rather than a number. It is invisible at the 11 m
+chase distance and findable from a low side angle.
+
+### The SEAT tab ✅ DONE
+
+`src/seatrange.js`, riding on the VEHICLE tab's hog rather than loading a
+second one. All five seats are occupied at once — the tailgate riders only read
+as wrong *next to* a passenger who is right — and each by a different character,
+because a pose that only fits the marine is a pose that breaks on the next rig.
+
+**It shares the game's code.** `seating.js` holds `measureHipsRise` /
+`seatMeshOn` / `forcePose`, and both `Soldier.seatIn` and the tab call them.
+Nothing here owns a private copy of the arithmetic: a tuner that seats a marine
+even slightly differently from the match produces numbers that do not transfer,
+and that is worse than no tuner, because you would trust it.
+
+**It reports clearance**, which is the whole reason it earns its place. The
+failure is a boot through the floor pan and you cannot see it from outside the
+hog — the bodywork hides it at every angle a player will ever have. So the tab
+prints, per seat, the marker height, the hips, the toe, the floor beneath it and
+the signed **gap**. Negative is a boot through the bodywork. "Looks fine" is
+exactly how the 18 cm error survived.
+
+Finding that floor took three attempts, and the two failures are worth keeping:
+probing down from the **hips** hits the seat cushion the marine is sitting on
+(it called the driver's floor 0.937 against a real footwell of 0.65), and
+probing from just above the **toe** hits the seat's front lip overhanging the
+foot (1.024 — above the seat marker itself). What works is casting the whole
+column once from above the hull and taking the topmost surface *below the seat
+marker*: everything above the marker is seat, dash and wheel. A tailgate rider
+correctly reports **no floor at all** — their feet hang over open air.
+
+Two knobs per seat. **ANCHOR** moves the seat itself and is editable only for
+the derived seats; an authored `ref_seat_*` is shown read-only, because
+overriding an empty that exists puts config and the rig into silent
+disagreement and the fix for a wrong empty is in Blender. **POSE** is a per-seat
+`{ pos, rot }` correction on top of the derived hips term, falling back to
+`CFG.vehicle.seatPose`. The paste block emits the whole `seats` array rather
+than just the poses — the two are edited together, and splitting them is how one
+gets pasted and the other forgotten.
+
+`CFG.vehicle.seatPose` stays at zero — it is the fallback a new vehicle's seats
+start from, and a non-zero default would be a correction applied to seats nobody
+has looked at yet. The real numbers are the per-seat `pose` blocks.
+
+**Tuned, and the seats now read.** Owner-turned in the tab and pasted back:
+
+| Seat | Gap before | Gap after |
+| --- | --- | --- |
+| driver | −0.422 | −0.145 |
+| passenger | −0.381 | −0.065 |
+| gunner | −0.957 | **+0.441** — standing clear of the deck |
+| tailgate ×2 | (sunk in the bodywork) | seated on the tailgate, feet over open air |
+
+The tailgate riders take a ~3 rad yaw so they face out over the back rather
+than forward down the chassis, and a mirrored pose X so each sits over their own
+hip instead of both drifting the same way.
+
+**The tab's numbers transfer exactly**, which is the payoff of putting the
+arithmetic in `seating.js`: the same five poses measured in the match give hips
+at 1.356 / 1.357 / 1.500 / 2.649 against the tab's 1.356 / 1.357 / 1.500 /
+2.649. Nothing is re-derived on either side.
+
+Still outstanding, and unchanged by tuning: the gunner holds their own rifle in
+a standing idle and does not turn with the ring, and the tailgate seats are
+still derived offsets rather than authored empties (open question 3). Both want
+art, not numbers.
 
 ### Phase 6 — Damage, roadkill and repair
 

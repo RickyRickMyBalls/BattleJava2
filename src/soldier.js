@@ -6,6 +6,7 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { CFG, TEAM, WEAPONS, GRENADES, GADGETS, BIOFOAM } from './config.js';
 import { classPerk } from './loadout.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
+import { measureHipsRise, seatMeshOn, forcePose, poseFor } from './seating.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;
@@ -173,6 +174,13 @@ export class Soldier {
     // carries the per-weapon reload for its stretch.
     this.meleeing = false;
     this.meleeSpan = 0;
+
+    // Riding. Set by `seatIn`/`unseat`, and the two of them own the mesh's
+    // parent — while these are non-null the body hangs off the vehicle's own
+    // hierarchy and `pos`/`yaw` no longer drive its transform. See `_seatMesh`.
+    this.vehicle = null;
+    this.seatIdx = -1;
+    this.seatAnim = null;
 
     this.target = null;         // enemy Soldier
     this.thinkTimer = Math.random() * AI.thinkInterval;
@@ -399,6 +407,51 @@ export class Soldier {
       : (this.moveR >= 0 ? right : left);
   }
 
+  // ---------------------------------------------------------------- Riding --
+  // The arithmetic lives in `seating.js`, not here, because /chartest.html's
+  // SEAT tab has to place its preview bodies through exactly this path — a
+  // tuner that seats a marine differently from the game produces numbers that
+  // do not transfer. `pos` is still written by whoever is driving the occupant,
+  // since squad follow and objective distance read it; it just stops reaching
+  // the mesh while seated.
+  seatIn(vehicle, seatIdx, anim) {
+    if (!this.mesh || !vehicle) return false;
+    this.vehicle = vehicle;
+    this.seatIdx = seatIdx;
+    this.seatAnim = anim || 'sit';
+    // Fade 0 and then force the weights — see `forcePose`. Measuring the hips
+    // mid-crossfade reads the outgoing STANDING pose and sinks the body 18 cm.
+    // Instant is also the better look: nobody eases into a seat.
+    this.currentAnim = null;         // force the pose, whatever was playing
+    this.playAnim(this.seatAnim, 0);
+    forcePose(this.actions, this.seatAnim);
+    this._seatMesh();
+    return true;
+  }
+
+  unseat() {
+    if (!this.vehicle) return;
+    this.vehicle = null;
+    this.seatIdx = -1;
+    this.seatAnim = null;
+    if (this.mesh) {
+      this.game.scene.add(this.mesh);   // re-parents; add() removes from the old one
+      this.mesh.position.copy(this.pos);
+      this.mesh.quaternion.identity();
+      this.mesh.rotation.y = this.yaw;
+    }
+  }
+
+  // Re-park the mesh on its seat. Public because the SEAT tab re-runs it every
+  // time a slider moves, which is the whole point of the tab.
+  _seatMesh() {
+    const v = this.vehicle;
+    if (!v || !this.mesh) return;
+    const def = v.seats[this.seatIdx].def;
+    const rise = measureHipsRise(this.mesh, this.mixer, this.actions[this.seatAnim]);
+    seatMeshOn(v, this.seatIdx, this.mesh, rise, poseFor(def, CFG.vehicle.seatPose));
+  }
+
   // Which locomotion clip the current stance, speed and direction call for.
   //
   // Movement outranks the aim pose: `aim` is a stationary kneel, so letting a
@@ -407,6 +460,11 @@ export class Soldier {
   // with one.
   _locomotionAnim() {
     const moving = this.speed2D > 0.4;
+    // Riding outranks the entire set, including `airborne` — a hog can be in
+    // mid-air off a ridge and its crew are still sitting down. Which pose it is
+    // comes from the seat, because the driver's hands are on the wheel and a
+    // passenger's are not.
+    if (this.vehicle) return this.seatAnim;
     if (this.airborne) return 'jump';
     // Working on a casualty outranks the whole locomotion set, including the
     // gait: this is a committed action, and showing a run over it would be the
@@ -1373,7 +1431,10 @@ export class Soldier {
     }
 
     this.mixer.update(step);
-    if (this.mesh) {
+    // A seated body's transform belongs to the vehicle it is parented to, so
+    // this must not fight it — writing `pos` here would rip the rider out of
+    // the hog and drop them at the chassis origin, once per throttled frame.
+    if (this.mesh && !this.vehicle) {
       this.mesh.position.copy(this.pos);
       this.mesh.rotation.y = this.yaw;
     }

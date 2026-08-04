@@ -11,6 +11,7 @@ import { makeWeaponMount, makeBackMount, setHeldWeapon, BACK, GRIP } from './sol
 import { WEAPONS, FP_DEFAULT, ADS_DEFAULT, ASSET_PATHS } from './config.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { createVehicleRange } from './vehiclerange.js';
+import { createSeatRange } from './seatrange.js';
 
 const app = document.getElementById('app');
 const loadmsg = document.getElementById('loadmsg');
@@ -146,6 +147,9 @@ const isFpMode = (m) => m === 'fp' || m === 'ads';
 // because loadAssets already pulls the Warthog — a second page would download
 // 38 MB again for the same model.
 let range = null;
+// The seat fitting bay rides on the range's hog rather than loading a second
+// one — same reason the range is a tab and not its own page.
+let seatRange = null;
 let fpUpdate = null; // set by buildPanel: per-frame move/shoot logic for fp/ads modes
 let fpPreRender = null; // set by buildPanel: scope-screen pass, runs before the main render
 const BOOT_ID = Date.now();
@@ -289,6 +293,10 @@ function makePerf(renderer) {
 
 function dumpVehicle() {
   if (range) document.getElementById('out').value = range.dump();
+}
+
+function dumpSeats() {
+  if (seatRange) document.getElementById('out').value = seatRange.dump();
 }
 
 function buildPanel(assets) {
@@ -724,20 +732,31 @@ function buildPanel(assets) {
       document.querySelectorAll('#modeBtns button').forEach((x) => x.classList.toggle('sel', x === b));
       mode = b.dataset.mode;
       const veh = mode === 'veh';
+      const seat = mode === 'seat';
+      // Both tabs show the proving ground; only VEHICLE lets you drive it.
+      const onRange = veh || seat;
       document.getElementById('backMode').style.display = mode === 'back' ? 'block' : 'none';
       document.getElementById('gripMode').style.display = mode === 'grip' ? 'block' : 'none';
       document.getElementById('fpMode').style.display = mode === 'fp' ? 'block' : 'none';
       document.getElementById('adsMode').style.display = mode === 'ads' ? 'block' : 'none';
       document.getElementById('vehMode').style.display = veh ? 'block' : 'none';
+      document.getElementById('seatMode').style.display = seat ? 'block' : 'none';
       // The character line-up and the proving ground are different worlds at
       // the same origin; showing both at once puts a Warthog through six
       // marines. The anim row is theirs too, so it goes with them.
-      for (const c of chars) c.mesh.visible = !veh;
-      ground.visible = !veh;
-      grid.visible = !veh;
-      document.getElementById('animBtns').style.display = veh ? 'none' : 'flex';
-      panel.classList.toggle('wide', veh);
-      if (range) range.setActive(veh);
+      for (const c of chars) c.mesh.visible = !onRange;
+      ground.visible = !onRange;
+      grid.visible = !onRange;
+      document.getElementById('animBtns').style.display = onRange ? 'none' : 'flex';
+      panel.classList.toggle('wide', onRange);
+      if (range) { if (seat) range.setStatic(true); else range.setActive(veh); }
+      if (seatRange) seatRange.setActive(seat);
+      // SEAT orbits with the mouse — it is a fitting bay, and the whole job is
+      // getting your eye into the footwell from whatever angle shows the gap.
+      if (seat && seatRange) {
+        seatRange.buildInputs(document.getElementById('seatInputs'), dumpSeats);
+        seatRange.focus(camera, controls);
+      }
       controls.enabled = !isFpMode(mode) && !veh;
       cross.style.display = isFpMode(mode) ? 'block' : 'none';
       targets.visible = isFpMode(mode);
@@ -747,6 +766,7 @@ function buildPanel(assets) {
         : mode === 'fp' ? 'first-person view · paste fp lines into config.js WEAPONS'
         : mode === 'ads' ? 'aimed · RMB aims when LOCK is off · paste ads lines into config.js WEAPONS'
         : veh ? 'WASD drive · SPACE handbrake · R reset · C camera · paste block into config.js CFG.vehicle'
+        : seat ? 'orbit to look · watch GAP — negative is a boot through the floor · paste block into config.js CFG.vehicle.seats'
         : 'values update live · paste block into soldier.js BACK';
       if (mode === 'grip') { holdEverywhere(gripKey); buildGripInputs(); dumpGrips(); }
       else if (isFpMode(mode)) {
@@ -756,6 +776,7 @@ function buildPanel(assets) {
         if (mode === 'ads') dumpAds(); else dumpFp();
       }
       else if (veh) dumpVehicle();
+      else if (seat) dumpSeats();
       else dumpValues();
     };
   }
@@ -813,6 +834,9 @@ async function boot() {
   range = createVehicleRange(assets);
   scene.add(range.group);
   resizeCams.push(range.camera);
+  // Built after the range because it seats bodies on the range's hog.
+  seatRange = createSeatRange(assets, range);
+  window.__ctSeats = seatRange;
   // Same shape as __ctGet/__ctFrame above: a handle for headless verification,
   // since rAF halts whenever this tab is not composited.
   window.__ctRange = range;
@@ -824,6 +848,7 @@ async function boot() {
 
   range.buildInputs(document.getElementById('vehInputs'), dumpVehicle);
   document.getElementById('vehReset').onclick = () => range.reset();
+  document.getElementById('seatFocus').onclick = () => seatRange.focus(camera, controls);
   document.getElementById('vehCam').onclick = () => {
     // Same cycle the C key drives, so the button is a label as much as a
     // control — the name updates from the range either way (see the frame loop).
@@ -835,6 +860,7 @@ async function boot() {
   window.__ctToken = token;
   const clock = new THREE.Clock();
   const telEl = document.getElementById('vehTel');
+  const seatTelEl = document.getElementById('seatTel');
   const camBtn = document.getElementById('vehCam');
   // Sampled at the TOP of the frame, so renderer.info describes the frame that
   // was actually drawn rather than one that has not happened yet.
@@ -847,6 +873,16 @@ async function boot() {
       camBtn.textContent = `CAM: ${range.camName} (C)`;
       window.__ctDebug = { mode, cam: range.camName };
       renderer.render(scene, range.camera);
+      return;
+    }
+    if (mode === 'seat') {
+      // The hog is parked — `range.update` is deliberately not called, so the
+      // suspension is not settling under the pose you are trying to read.
+      seatRange.update(dt);
+      seatTelEl.textContent = seatRange.report();
+      if (controls.enabled) controls.update();
+      window.__ctDebug = { mode, seat: seatRange.seatId };
+      renderer.render(scene, camera);
       return;
     }
     for (const c of chars) c.mixer.update(dt);

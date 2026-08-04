@@ -1232,6 +1232,29 @@ export class Vehicle {
     return out.fromArray(d.offset).applyQuaternion(this.quat).add(this.group.position);
   }
 
+  // Where a seated body hangs. Every seat mounts on `group` — the chassis
+  // frame, which the sim writes directly (see _syncTransform) and which is
+  // therefore known to be +Z forward, unit scale and free of baked rotation.
+  //
+  // Mounting on the seat EMPTY instead would be the obvious choice and is the
+  // wrong one: the empties in this rig carry baked rotations (the ±90° steer
+  // pair and ref_muzzle_gunner's −90° are both documented in VEHICLE_PLAN.md),
+  // so a body parented to one inherits whatever the exporter left there. One
+  // clean frame for all five seats is worth the extra transform.
+  seatMount() { return this.group; }
+
+  // A seat's position in that frame. The `ref` seats convert their empty's
+  // world position back into it; the derived ones already ARE in it, which is
+  // what `offset` has always meant (see seatWorld).
+  seatLocal(i, out) {
+    const d = this.seats[i].def;
+    if (d.ref && this.refs[d.ref]) {
+      this.refs[d.ref].getWorldPosition(out);
+      return this.group.worldToLocal(out);
+    }
+    return out.fromArray(d.offset);
+  }
+
   // The eye for a seat. Read LIVE off the hierarchy rather than computed,
   // because ref_camera_gunner hangs off the turret body and therefore yaws with
   // the ring — which is the behaviour we want and would have to be re-derived

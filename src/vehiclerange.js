@@ -543,6 +543,16 @@ export function createVehicleRange(assets) {
       for (const k of Object.keys(keys)) keys[k] = false;
       if (on) reset();
     },
+    // Show the ground and the hog without handing it the keys. The SEAT tab
+    // needs the vehicle on screen and standing still — `active` gates both the
+    // input listeners and `update`, so a parked hog is just visible-but-not-
+    // active rather than a second code path.
+    setStatic(on) {
+      active = false;
+      group.visible = on;
+      for (const k of Object.keys(keys)) keys[k] = false;
+      if (on) reset();
+    },
     update,
     telemetry,
     buildInputs,

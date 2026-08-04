@@ -199,6 +199,10 @@ export class Game {
       this.player.reviving = false;
       this.player.giveUpHeld = 0;
       this.player.viewmodel.visible = false;
+      // Same reason as onKill: a casualty is on the ground, not in the seat.
+      // It also has to come out here or `updateDowned` and the seat camera
+      // would both be writing the camera on the same frame.
+      if (this.player.vehicle) this.player.exitVehicle();
       // The key prompts live in the persistent prompt line while downed (see
       // player.updateDowned), so this only has to name the state.
       this.hud.message('DOWNED', 2.5);
@@ -232,6 +236,10 @@ export class Game {
       this.playerDead = true;
       this.playerRespawnTimer = CFG.player.respawnDelay;
       this.player.firing = false;
+      // Dying in a hog has to give the seat back. It was survivable while the
+      // body was hidden in a vehicle; now that a rider is drawn, skipping this
+      // leaves a corpse sitting in the passenger seat holding the slot shut.
+      if (this.player.vehicle) this.player.exitVehicle();
       document.exitPointerLock();
       if (this.deployScreen) this.deployScreen.show('dead', attacker ? attacker.name : null);
     }

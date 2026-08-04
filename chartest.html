@@ -55,7 +55,7 @@
     /* Telemetry is fixed-pitch on purpose: the per-wheel bars only line up as a
        column if the glyphs do, and reading four corners at a glance is the
        whole point of showing them. */
-    #vehTel {
+    #vehTel, #seatTel {
       background: #0c1826; border: 1px solid #24404f; color: #9fd4ff;
       font-family: Consolas, monospace; font-size: 10px; line-height: 1.35;
       padding: 6px; margin-bottom: 10px; white-space: pre; overflow-x: auto;
@@ -74,6 +74,7 @@
       <button data-mode="fp">VIEWMODEL</button>
       <button data-mode="ads">ADS</button>
       <button data-mode="veh">VEHICLE</button>
+      <button data-mode="seat">SEAT</button>
     </div>
     <div class="btns" id="animBtns">
       <button data-anim="idle" class="sel">IDLE</button>
@@ -108,6 +109,13 @@
       </div>
       <pre id="vehTel"></pre>
       <div id="vehInputs"></div>
+    </div>
+    <div id="seatMode" style="display:none">
+      <div class="btns">
+        <button id="seatFocus">FOCUS SEAT</button>
+      </div>
+      <pre id="seatTel"></pre>
+      <div id="seatInputs"></div>
     </div>
     <textarea id="out" readonly></textarea>
     <div class="hint" id="hint">values update live · paste block into soldier.js BACK</div>

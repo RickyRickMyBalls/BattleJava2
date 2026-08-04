@@ -381,10 +381,10 @@ export class Player {
   syncBodyVisibility() {
     const s = this.soldier;
     if (!s || !s.mesh) return;
-    // Hidden while driving even in third person: the body has no seated pose
-    // yet, so it would stand upright through the roll cage. Phase 5 gives it
-    // one and drops the last term.
-    s.mesh.visible = (s.alive || s.downed) && (this.freecam || this.thirdPerson) && !this.vehicle;
+    // The vehicle term is gone: there IS a seated pose now, so a body in a hog
+    // is shown on the same rule as a body anywhere else — whenever a view
+    // exists that could see it.
+    s.mesh.visible = (s.alive || s.downed) && (this.freecam || this.thirdPerson);
   }
 
   _buildViewmodel() {
@@ -1381,6 +1381,7 @@ export class Player {
     if (!v.enterSeat(i, this)) return false;
     this.vehicle = v;
     this.vehicleSeatIdx = i;
+    this.soldier.seatIn(v, i, v.seats[i].def.anim);
     this.yaw = 0;              // looking straight ahead down the chassis
     this.pitch = 0;
     this.vCamYaw = null;       // snap the chase heading, do not sweep in
@@ -1408,6 +1409,9 @@ export class Player {
       v.exitSeat(this);              // zeroes the controls if it was the driver's
       v.enterSeat(i, this);
       this.vehicleSeatIdx = i;
+      // Re-park the body: a new seat is a new mount point and, driver to
+      // passenger, a different pose.
+      this.soldier.seatIn(v, i, v.seats[i].def.anim);
       // A trigger held while switching must not carry over — the ring gun and
       // a carried rifle both read `firing`, and arriving in the turret already
       // shooting is a burst nobody asked for.
@@ -1427,6 +1431,9 @@ export class Player {
     v.exitSeat(this);
     this.vehicle = null;
     this.vehicleSeatIdx = -1;
+    // Back into the scene before `pos` is rewritten below, so the body is not
+    // left parented to a hog that is about to drive away with it.
+    this.soldier.unseat();
     // The relative look becomes an absolute one again, so stepping out leaves
     // you facing where you were looking rather than snapping to a world axis.
     // Built from the EASED chase heading, not the car's, so the hand-off is
@@ -1593,7 +1600,13 @@ export class Player {
       // First person sits at the pivot, so tilt costs nothing in stability and
       // buys the only cue that the hog is leaning. Full chassis coupling is the
       // far end of the same slerp.
-      const eye = v.refWorld('ref_camera_driver', _eye) || seat;
+      //
+      // The eye is THIS SEAT'S, read the same way the turret path reads its own
+      // — `seatEye` resolves the seat def's camera empty and falls back to the
+      // seat itself for the seats the GLB does not author. It was hardcoded to
+      // `ref_camera_driver`, so changing seats moved the body and left the view
+      // behind the wheel: riding shotgun looked out of the driver's window.
+      const eye = v.seatEye(i, _eye);
       this.camera.position.copy(eye);
       _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
       _drive.premultiply(v.quat);
