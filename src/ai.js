@@ -333,13 +333,28 @@ export class TeamBrain {
     );
     if (!squads.length) return;
 
+    // AXIS: objective topology, first half. With no prizes on the map the
+    // scoring below has nothing to score — every sector filters out, the bail
+    // fires, and 64 soldiers stand at their spawns waiting for an order that
+    // cannot come. So a mode without objectives gets the other reason to walk
+    // somewhere: the sectors are still the map's landmarks, and the best one
+    // is wherever the enemy already is. Squads converge, fight, and re-converge
+    // when the crowd moves — which is the whole of a deathmatch's tactics.
+    if (this.game.rules.objectives === 'none') {
+      const jobs = sectors.map((sec) => ({
+        sec, type: 'ENGAGE', weight: 1 + this._enemyPresence(sec), cap: 2,
+      }));
+      this._assign(squads, jobs);
+      return;
+    }
+
     // Score sectors: defend owned-but-threatened, attack nearest not-owned.
     const jobs = [];
     for (const sec of sectors) {
-      // AXIS: objective topology. A sector the rules will not let anyone take
-      // is not a job — under a chain lattice, scoring it anyway masses squads
-      // on a point they can stand in forever without the bar moving. Sectors
-      // we already OWN stay jobs regardless: holding is not capturing.
+      // Second half: a sector the rules will not let anyone take is not a job.
+      // Under a chain lattice, scoring it anyway masses squads on a point they
+      // can stand in forever without the bar moving. Sectors we already OWN
+      // stay jobs regardless: holding is not capturing.
       if (sec.owner !== this.team && !this.game.capturable(sec)) continue;
       if (sec.owner === this.team) {
         const threat = this._enemyPresence(sec);
@@ -350,12 +365,18 @@ export class TeamBrain {
         jobs.push({ sec, type: sec.owner === null ? 'CAPTURE' : 'ATTACK', weight: 2 + (sec.owner !== null ? 0.5 : 1) - defense * 0.15, cap: 3 });
       }
     }
+    this._assign(squads, jobs);
+  }
+
+  // Greedy: each squad to the best remaining job, preferring near squads.
+  // Split out of `replan` when SKIRMISH arrived — how a team WEIGHS the map is
+  // per-mode, how it then hands out the work is not.
+  _assign(squads, jobs) {
     // Only reachable if a rule set locked every sector this team does not
     // already own. Bail rather than fall through to `jobs[0]` at the bottom.
     if (!jobs.length) return;
     jobs.sort((a, b) => b.weight - a.weight);
 
-    // Greedy: each squad to best remaining job, preferring near squads.
     const unassigned = new Set(squads);
     for (const job of jobs) {
       let n = 0;

@@ -25,6 +25,15 @@ import { GAME_TYPES } from './config.js';
 export const DEFAULT_RULES = {
   id: 'conquest',
 
+  // Are sectors PRIZES at all? 'capture' — take and hold them, the whole game
+  // to date. 'none' — they still mark the map and the AI still fights over the
+  // ground, but nobody can take one, so squads go where the enemy is instead.
+  //
+  // Deliberately separate from `lattice` below, and the pair reads as one
+  // question in two parts: `objectives` says whether sectors are prizes,
+  // `lattice` says which ones are live when they are.
+  objectives: 'capture',
+
   // Which sectors may change hands. 'open' is every sector, always — five
   // points all live at once, the fight everywhere. A chain lattice answers
   // this from adjacency instead and is the single biggest lever between the
@@ -41,6 +50,15 @@ export const DEFAULT_RULES = {
   // Tickets charged to the DEAD soldier's team, per death. Frontline sets this
   // to 0: there, dying costs position and materiel, never score.
   deathCost: 1,
+
+  // Starting tickets, or null to take `CFG.tickets`. The one place a mode owns
+  // a NUMBER rather than a rule, and it earns the exception: what a counter
+  // starts at only means anything alongside what drains it, so 400 under a
+  // ticket bleed and 400 under kills-only are not the same match length. Read
+  // once at construction, so it was never live-editable through `FC.cfg`
+  // anyway — which is the property the CFG-versus-rules split exists to
+  // protect. A mode that has nothing to say here says nothing.
+  tickets: null,
 
   // Where a soldier may re-enter the field.
   //   hq      — the home spawn is always available (deploy.js falls back to it)

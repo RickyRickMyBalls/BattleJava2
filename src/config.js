@@ -2526,11 +2526,35 @@ export const GAME_TYPES = {
     id: 'conquest', name: 'SECTOR CONTROL',
     desc: 'Capture and hold sectors to bleed enemy tickets. 32 v 32 combined arms.',
     rules: {
+      objectives: 'capture',
       lattice: 'open',
       economy: 'attrition',
       victory: 'ticketsZero',
       deathCost: 1,
       spawn: { hq: true, sectors: 'held', beacon: true },
+    },
+  },
+
+  // No objectives. Kills only. Worthless as a mode and deliberately shipped
+  // anyway: it is the proof that a game type gates BEHAVIOUR and not merely
+  // constants, and it is the only way to watch 64 soldiers actually fight
+  // without capture traffic deciding where they go. /chartest.html is a range;
+  // this is a battle with the objectives taken out.
+  skirmish: {
+    id: 'skirmish', name: 'SKIRMISH',
+    desc: 'No objectives. Two teams, one valley, kills only — the last side with reinforcements wins.',
+    rules: {
+      objectives: 'none',
+      economy: 'none',
+      // Sectors are never owned here, so 'held' would resolve to nothing on its
+      // own. Stated outright regardless: a map that ships pre-owned sectors
+      // must not quietly hand this mode forward spawns it never asked for.
+      spawn: { hq: true, sectors: 'none', beacon: true },
+      // A first guess, not a tuned number. Under a bleed, 400 is roughly a
+      // 20-minute match because sectors do most of the draining; with kills as
+      // the ONLY drain the same 400 runs well past half an hour. Worth feeling
+      // before trusting.
+      tickets: 150,
     },
   },
 };

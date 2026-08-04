@@ -68,9 +68,12 @@ export class Game {
       this.beams = createBeamPool(this.scene, WEAPONS.repairtool.tool.beam, value);
     });
 
+    // A mode may own its starting count — what a counter starts at only means
+    // something next to what drains it. Silence here means `CFG.tickets`.
+    const startTickets = this.rules.tickets ?? CFG.tickets;
     this.teams = [
-      { id: TEAM.BLUE, soldiers: [], squads: [], tickets: CFG.tickets, brain: null },
-      { id: TEAM.RED, soldiers: [], squads: [], tickets: CFG.tickets, brain: null },
+      { id: TEAM.BLUE, soldiers: [], squads: [], tickets: startTickets, brain: null },
+      { id: TEAM.RED, soldiers: [], squads: [], tickets: startTickets, brain: null },
     ];
     this.allSoldiers = [];
     this.gameOver = false;
@@ -505,6 +508,18 @@ export class Game {
   }
 
   _nearestObjectiveText() {
+    // With nothing to take, every verb below is a lie — and the order line is
+    // the one piece of HUD that tells the player what the mode IS. Point them
+    // at the fight instead, which is the only thing a skirmish asks of them.
+    if (this.rules.objectives === 'none') {
+      let near = null, nearD = Infinity;
+      for (const s of this.world.sectors) {
+        if (!s.contested) continue;
+        const d = Math.hypot(s.x - this.player.pos.x, s.z - this.player.pos.z);
+        if (d < nearD) { nearD = d; near = s; }
+      }
+      return near ? `ENGAGE ${near.id}` : 'ENGAGE';
+    }
     // Suggest the closest non-friendly or contested sector as the player's objective
     let best = null, bestD = Infinity;
     for (const s of this.world.sectors) {
@@ -594,6 +609,7 @@ export class Game {
   // lands HERE and nowhere else. Consulted by `_updateCapture` and by the team
   // brain in ai.js, which must not send squads at a point nobody can take.
   capturable(sec) {
+    if (this.rules.objectives !== 'capture') return false;
     return this.rules.lattice === 'open';
   }
 
