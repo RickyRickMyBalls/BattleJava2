@@ -201,8 +201,12 @@ export function createSeatRange(assets, range) {
       const p = d.pose || CFG.vehicle.seatPose || DEFAULT_POSE;
       const loc = d.ref ? `ref: '${d.ref}'` : `ref: null, offset: [${d.offset.map(f).join(', ')}]`;
       const cam = d.camera ? `camera: '${d.camera}'` : 'camera: null';
+      // Every field the seat def carries has to survive the round trip. A block
+      // that quietly drops one is worse than no block: it pastes cleanly and
+      // takes the tailgate with it.
+      const door = d.door ? `, door: '${d.door}'` : '';
       return `      { id: '${d.id}', label: '${d.label}', role: '${d.role}', anim: '${d.anim}',\n`
-        + `        ${loc}, ${cam},\n`
+        + `        ${loc}, ${cam}${door},\n`
         + `        pose: { pos: [${p.pos.map(f).join(', ')}], rot: [${p.rot.map(f).join(', ')}] } },`;
     });
     return `// SEAT tab -> replace CFG.vehicle.seats in config.js\n    seats: [\n${lines.join('\n')}\n    ],`;
@@ -233,31 +237,49 @@ export function createSeatRange(assets, range) {
     const v = hog();
     if (!v) { container.textContent = 'no warthog loaded'; return; }
 
-    // Turn the ring by hand. The gunner's body is parented to it, so this is
-    // the control that makes "does the body follow the gun" a thing you can
-    // SEE rather than a number in the report — and it is the only seat whose
-    // correctness depends on an angle, so there was nothing to look at before.
+    // Aim the ring by hand. The gunner's body is parented to the yaw node, so
+    // the yaw slider is what makes "does the body follow the gun" a thing you
+    // can SEE rather than a number in a report.
+    //
+    // Pitch is here for the opposite reason — the body deliberately does NOT
+    // pitch (the pitch node is a child of the yaw node, so the barrel elevates
+    // and the man does not), and being able to sweep it is how you check that
+    // stays true and that nothing clips as the breech comes up over him.
+    //
+    // The pitch slider is clamped to the gun's REAL limits rather than a round
+    // number, so the tool cannot ask for elevation the turret does not have —
+    // and dragging it to the stops is the quickest way to see what -17 to +49
+    // degrees actually looks like.
     if (v.turret) {
+      const T = CFG.vehicle.turret;
       const fs = document.createElement('fieldset');
-      fs.innerHTML = '<legend>RING YAW — drag to turn the turret</legend>';
-      const row = document.createElement('div');
-      row.className = 'row';
-      const lab = document.createElement('label');
-      lab.textContent = 'yaw';
-      const slider = document.createElement('input');
-      slider.type = 'range';
-      slider.min = '-3.14'; slider.max = '3.14'; slider.step = '0.01';
-      slider.value = String(v.turretYaw);
-      const read = document.createElement('span');
-      read.style.cssText = 'width:42px;text-align:right;color:#9fd4ff';
-      read.textContent = v.turretYaw.toFixed(2);
-      slider.oninput = () => {
-        v.turretYaw = Number(slider.value) || 0;
-        v.syncVisuals();
-        read.textContent = v.turretYaw.toFixed(2);
+      fs.innerHTML = '<legend>TURRET AIM — drag to sweep the gun</legend>';
+      const addSlider = (label, min, max, get, set) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const lab = document.createElement('label');
+        lab.textContent = label;
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = String(min); slider.max = String(max); slider.step = '0.01';
+        slider.value = String(get());
+        const read = document.createElement('span');
+        read.style.cssText = 'width:52px;text-align:right;color:#9fd4ff';
+        // Degrees, because nobody argues about elevation in radians.
+        const show = () => { read.textContent = `${(get() * 57.3).toFixed(0)}°`; };
+        show();
+        slider.oninput = () => { set(Number(slider.value) || 0); v.syncVisuals(); show(); };
+        row.appendChild(lab); row.appendChild(slider); row.appendChild(read);
+        fs.appendChild(row);
       };
-      row.appendChild(lab); row.appendChild(slider); row.appendChild(read);
-      fs.appendChild(row);
+      addSlider('yaw', -3.14, 3.14, () => v.turretYaw, (n) => { v.turretYaw = n; });
+      addSlider('pitch', T.pitchMin, T.pitchMax, () => v.turretPitch, (n) => { v.turretPitch = n; });
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.style.margin = '4px 0 0';
+      hint.textContent = `pitch limits ${(T.pitchMin * 57.3).toFixed(0)}° to `
+        + `${(T.pitchMax * 57.3).toFixed(0)}° — CFG.vehicle.turret`;
+      fs.appendChild(hint);
       container.appendChild(fs);
     }
 
@@ -331,11 +353,28 @@ export function createSeatRange(assets, range) {
     setActive(on) {
       active = on;
       if (on) build();
-      for (const b of bodies) b.mesh.visible = on;
+      const v = hog();
+      for (const b of bodies) {
+        b.mesh.visible = on;
+        if (!v) continue;
+        // Claim the seat through the REAL entry point rather than just parking
+        // a mesh on it, so anything keyed off occupancy behaves here exactly as
+        // it does in a match — today that is the tailgate opening. Without it
+        // the tab showed two marines sitting on a SHUT tailgate, which is a
+        // configuration the game can never produce, and their offsets would
+        // have been tuned against it.
+        if (on) { if (!v.seats[b.i].occupant) v.enterSeat(b.i, b); }
+        else if (v.seats[b.i].occupant === b) v.exitSeat(b);
+      }
     },
     update(dt) {
       if (!active) return;
       for (const b of bodies) b.mixer.update(dt);
+      // The hog is parked here, so `range.update` is deliberately not running —
+      // but the doors still have to ease, or a seat-driven panel would snap
+      // between states instead of swinging.
+      const v = hog();
+      if (v) v.updateDoors(dt);
     },
     focus,
     report,

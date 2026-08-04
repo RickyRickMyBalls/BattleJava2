@@ -384,6 +384,41 @@ export class Vehicle {
 
   toggleDoor(d) { d.target = d.target > 0.5 ? 0 : 1; return d.target > 0.5; }
 
+  // A door named by a seat def, resolved with the same dot-and-case
+  // normalization the override table uses — Blender's dots are stripped by the
+  // loader, so `ref_door_trunk` and `ref_door.trunk` have to match.
+  doorByName(name) {
+    if (!name || !this.doors) return null;
+    const want = name.replace(/\./g, '').toLowerCase();
+    return this.doors.find(
+      (d) => (d.node.name || '').replace(/\./g, '').toLowerCase() === want,
+    ) || null;
+  }
+
+  // Hold open the door a seat uses while anybody is in it, and close it when
+  // the last of them leaves.
+  //
+  // Driven from `enterSeat`/`exitSeat` rather than polled every frame, and that
+  // is the difference between this and a rule: a player who opens the tailgate
+  // by hand keeps it open, because nothing re-asserts a target until somebody
+  // actually gets on or off. Polling would slam it shut in their face.
+  //
+  // Keyed off `def.door` rather than knowing what a tailgate is, so the cab
+  // doors can join in as soon as the DOOR tuner works out which of the 14
+  // `ref_door*` empties they are.
+  _syncSeatDoors() {
+    if (!this.doors) return;
+    const done = new Set();
+    for (const s of this.seats) {
+      const name = s.def.door;
+      if (!name || done.has(name)) continue;
+      done.add(name);
+      const door = this.doorByName(name);
+      if (!door) continue;
+      door.target = this.seats.some((x) => x.def.door === name && x.occupant) ? 1 : 0;
+    }
+  }
+
   // Show or hide every door's outline, optionally marking one as the target.
   setDoorOutline(on, target) {
     if (!this.doors) return;
@@ -1356,6 +1391,7 @@ export class Vehicle {
   enterSeat(i, who) {
     if (i < 0 || i >= this.seats.length || this.seats[i].occupant) return false;
     this.seats[i].occupant = who;
+    this._syncSeatDoors();
     this.wake();
     return true;
   }
@@ -1364,6 +1400,7 @@ export class Vehicle {
     const i = this.seatOf(who);
     if (i < 0) return;
     this.seats[i].occupant = null;
+    this._syncSeatDoors();
     if (i === 0) {
       this.input.throttle = 0;
       this.input.brake = 0;

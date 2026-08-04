@@ -488,6 +488,10 @@ export function createVehicleRange(assets) {
       steps++;
     }
     hog.syncVisuals();
+    // Real frame time, and outside the substep loop — same rule VehicleManager
+    // follows in the match. A parked hog still has to be able to work a door,
+    // and the SEAT tab can leave the tailgate commanded open on its way out.
+    hog.updateDoors(dt);
 
     // 0 -> 20 m/s, and the distance from full speed to a stop under the brake.
     const s = hog.speed;

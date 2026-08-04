@@ -477,7 +477,7 @@ export const CFG = {
       // tuned numbers carried over untouched.
       { id: 'gunner', label: 'MAN THE TURRET', role: 'turret', anim: 'idle',
         ref: null, offset: [0, 1.25, -1.55], camera: 'ref_camera_gunner',
-        pose: { pos: [0, 1.4, -0.5], rot: [0, 0, 0] } },
+        pose: { pos: [0.5, 1.25, 0], rot: [0, 0, 0] } },
       { id: 'passenger', label: 'RIDE SHOTGUN', role: 'ride', anim: 'sit',
         ref: 'ref_seat_passenger', camera: 'ref_camera_passenger',
         pose: { pos: [0, 0.35, -0.4], rot: [0, 0, 0] } },
@@ -489,11 +489,15 @@ export const CFG = {
       // forward down the chassis, which is what riding the back of a hog looks
       // like, and the mirrored pose X puts each one over their own hip rather
       // than both drifting the same way.
+      // `door` holds that panel open while anyone is in the seat — you cannot
+      // sit on a closed tailgate. Named rather than implied so the cab doors
+      // can do the same once the DOOR tuner works out which `ref_door*` they
+      // are; see Vehicle._syncSeatDoors.
       { id: 'rearLeft', label: 'RIDE THE TAILGATE', role: 'ride', anim: 'sit',
-        ref: null, offset: [0.8, 1.15, -2.15], camera: null,
+        ref: null, offset: [0.8, 1.15, -2.15], camera: null, door: 'ref_door_trunk',
         pose: { pos: [-0.4, 0.35, -0.6], rot: [0, 3, 0] } },
       { id: 'rearRight', label: 'RIDE THE TAILGATE', role: 'ride', anim: 'sit',
-        ref: null, offset: [-0.8, 1.15, -2.15], camera: null,
+        ref: null, offset: [-0.8, 1.15, -2.15], camera: null, door: 'ref_door_trunk',
         pose: { pos: [0.4, 0.35, -0.6], rot: [0, 3, 0] } },
     ],
 
@@ -535,7 +539,7 @@ export const CFG = {
       defaultDegrees: 72,
       overrides: {
         // The tailgate drops rather than swings.
-        ref_door_trunk: { axis: 'x', degrees: -85 },
+        ref_door_trunk: { axis: 'z', degrees: -85 },
       },
     },
 
