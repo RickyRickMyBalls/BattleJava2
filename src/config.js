@@ -2640,6 +2640,17 @@ export const ASSET_PATHS = {
   // clips — code drives all of it. `collision_warthog` is the authored hull.
   vehicles: {
     warthog: { url: '/UNSC/Land Vehicles/warthog-v3.glb', forward: '-x' },
+    // Air. Intake only — see AIR_VEHICLE_PLAN.md phase 0. Measured off the GLB
+    // at 30.45 m long and 24.17 m across the front wings, both within 2% of the
+    // canon D77-TC, so like the Warthog it keeps its authored scale.
+    //
+    // Its three `ref_contact_*` empties sit exactly on y = 0, which makes them
+    // MORE trustworthy than the hog's (those float 5.9 cm above the tyre). But
+    // `prepareVehicle` grounds off meshes matching /^wheel_/ and this rig names
+    // them `LandingGear_back_left_wheel`, so that pass finds nothing, warns, and
+    // falls back to the contact mean — right answer, reached by accident. Do not
+    // remove the warning without fixing one end or the other.
+    pelican: { url: '/UNSC/Air Vehicles/Pelican/Pelican.glb', forward: '-x' },
   },
   animations: {
     // Two rifle idles, assigned per soldier at spawn so a crowd standing around

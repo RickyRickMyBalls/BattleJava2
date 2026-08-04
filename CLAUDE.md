@@ -16,6 +16,11 @@ Design docs — all aspirational; build incrementally, owner approves each step
   bot driving. Built around the Warthog. Its "what is already true" and "rig
   contract" sections are MEASURED (scale, -X forward, the ±90° steer trap) —
   read them before touching `vehicle.js` or a vehicle GLB.
+- `docs/AIR_VEHICLE_PLAN.md` — what an AIRCRAFT is: the Pelican. Reads as a companion
+  to VEHICLE_PLAN.md, not a replacement — the rigid body, seat table and substep are
+  inherited. Its "what is already true" section is MEASURED (30.45 m at canon scale,
+  gear contacts on y=0, the local-Z nacelle hinge); its "what the current code cannot
+  do" table lists the per-vehicle-config refactor that blocks a second vehicle SHAPE.
 - `docs/GLOSSARY.md` — what the words mean. Not a design doc; nothing is decided
   there. Its "pairs that get confused" table is the part worth reading whole
   (combatant seat vs vehicle seat, ticket vs materiel, `rules` vs `CFG`).
