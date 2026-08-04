@@ -13,6 +13,10 @@ import * as THREE from 'three';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _euler = new THREE.Euler();
+const _qWant = new THREE.Quaternion();
+const _qPose = new THREE.Quaternion();
+const _qMount = new THREE.Quaternion();
 
 export const DEFAULT_POSE = { pos: [0, 0, 0], rot: [0, 0, 0] };
 
@@ -124,14 +128,34 @@ export function forcePose(actions, key) {
 export function seatMeshOn(vehicle, seatIdx, mesh, rise, pose) {
   if (!vehicle || !mesh) return;
   const p = pose || DEFAULT_POSE;
-  vehicle.seatMount().add(mesh);
+  // The mount is per-seat: riders hang off the chassis, the gunner off the ring
+  // so their body turns with the gun. `seatMountLocal` is the seat position in
+  // whichever of those frames applies — NOT `seatLocal`, which is always the
+  // chassis frame and is what the SEAT tab reports against.
+  vehicle.seatMount(seatIdx).add(mesh);
   // Read the scratch vector out into locals BEFORE anything else can touch it.
   // Leaving `.z` to be read after another call would be the module-scratch
   // aliasing bug combat.js carries a standing warning about.
-  vehicle.seatLocal(seatIdx, _v);
+  vehicle.seatMountLocal(seatIdx, _v);
   const sx = _v.x, sy = _v.y, sz = _v.z;
   mesh.position.set(sx + p.pos[0], sy + p.pos[1] - rise, sz + p.pos[2]);
-  mesh.rotation.set(p.rot[0], p.rot[1], p.rot[2]);
+
+  // Orientation is DERIVED from the world frame the seat wants, not written
+  // straight into `mesh.rotation`. The mount node is not chassis-aligned:
+  // everything below the loader's -X to +Z correction lives in the RAW MODEL
+  // frame, so `ref_turret_base_rotate_yaw`'s own +Z is 90 degrees off the
+  // chassis's, and writing the tuned Euler into it stood the gunner square
+  // across his own gun. `yawBase` being identity does not save you — identity
+  // means "matches my parent", and the parent is the rotated one.
+  //
+  // For a chassis-mounted seat the mount's world quaternion IS the chassis's,
+  // so this reduces exactly to the old behaviour and the tuned pose numbers
+  // keep meaning what they meant.
+  const mount = vehicle.seatMount(seatIdx);
+  _euler.set(p.rot[0], p.rot[1], p.rot[2]);
+  vehicle.seatWorldQuat(seatIdx, _qWant).multiply(_qPose.setFromEuler(_euler));
+  mount.getWorldQuaternion(_qMount);
+  mesh.quaternion.copy(_qMount).invert().multiply(_qWant);
 }
 
 // The pose block a seat actually uses: its own override if it has one, the

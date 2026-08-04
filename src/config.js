@@ -468,9 +468,13 @@ export const CFG = {
       //
       // `idle` is the standing rifle idle, the closest the set has to hands on
       // a mounted gun, and the 1.4 in the pose is the cost of anchoring a
-      // STANDING body by the hips onto a marker that was placed for an eye. The
-      // body also rides the chassis rather than the ring, so it does not turn
-      // with the barrel. Both want a purpose-authored gunner clip.
+      // STANDING body by the hips onto a marker that was placed for an eye.
+      // A purpose-authored gunner clip replaces both.
+      //
+      // The body itself now rides the RING (see Vehicle.seatMount) and turns
+      // with the barrel, so `pose.rot` here is measured against the gun's
+      // forward rather than the chassis's — identical at rest, which is why the
+      // tuned numbers carried over untouched.
       { id: 'gunner', label: 'MAN THE TURRET', role: 'turret', anim: 'idle',
         ref: null, offset: [0, 1.25, -1.55], camera: 'ref_camera_gunner',
         pose: { pos: [0, 1.4, -0.5], rot: [0, 0, 0] } },

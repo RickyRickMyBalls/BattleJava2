@@ -1241,7 +1241,75 @@ export class Vehicle {
   // pair and ref_muzzle_gunner's −90° are both documented in VEHICLE_PLAN.md),
   // so a body parented to one inherits whatever the exporter left there. One
   // clean frame for all five seats is worth the extra transform.
-  seatMount() { return this.group; }
+  seatMount(i) {
+    // The gunner hangs off the RING, not the chassis, so their body turns with
+    // the gun they are holding — the difference between a manned turret and a
+    // gun bolted to a car, which is the same argument `ref_camera_gunner`
+    // already makes for the eye.
+    //
+    // Safe to parent to directly, and that was worth checking rather than
+    // assuming: `yawBase` is identity and `yawAxis` is a clean +Y, so unlike
+    // the muzzle and the steer corners this node carries no baked rotation to
+    // cancel. The pitch node is its CHILD, so this inherits yaw only — the
+    // barrel elevates and the gunner does not, which is what a person does.
+    const d = this.seats[i] && this.seats[i].def;
+    if (d && d.role === 'turret' && this.turret) return this.turret.yawRef;
+    return this.group;
+  }
+
+  // The world orientation a seated body should HOLD, before its own tuned pose
+  // is applied on top. The chassis for most seats; the chassis yawed by the
+  // ring for the gunner, so they face the gun rather than the windscreen.
+  //
+  // This exists because the MOUNT's frame cannot be used directly. Everything
+  // below the loader's -X to +Z correction sits in the raw model frame, so
+  // `ref_turret_base_rotate_yaw`'s own +Z is 90 degrees off the chassis's —
+  // `yawBase` being identity says only that it matches its PARENT, which is
+  // itself rotated. Handing out the desired world orientation and letting the
+  // caller invert the mount out of it means no one has to know that.
+  seatWorldQuat(i, out) {
+    const d = this.seats[i] && this.seats[i].def;
+    if (d && d.role === 'turret' && this.turret) {
+      // chassis * yaw(ring). Built in `out` and premultiplied so no module
+      // scratch is involved and a caller cannot alias it.
+      return out.setFromAxisAngle(_Y, this.turretYaw).premultiply(this.quat);
+    }
+    return out.copy(this.quat);
+  }
+
+  // Where a seat sits in the frame of the node its body mounts on.
+  //
+  // Separate from `seatLocal` rather than replacing it: `seatLocal` means
+  // CHASSIS frame, and the SEAT tab's marker column and its camera framing both
+  // read it that way. Only the mesh parenting wants the mount's frame.
+  seatMountLocal(i, out) {
+    const mount = this.seatMount(i);
+    this.seatWorld(i, out);
+    // worldToLocal reads matrixWorld without refreshing it, and the ring has
+    // usually just been re-posed this frame.
+    mount.updateWorldMatrix(true, false);
+    const d = this.seats[i] && this.seats[i].def;
+    if (!d || d.role !== 'turret' || !this.turret) return mount.worldToLocal(out);
+
+    // The gunner's standing position is resolved AS IF THE RING WERE CENTRED,
+    // then carried round by the parent. `offset` is authored in the chassis
+    // frame, and the plain conversion bakes in whatever angle the gun happened
+    // to be at when he climbed on — so a gunner boarding a hog whose turret was
+    // left pointing sideways ends up standing beside it forever. It also makes
+    // the SEAT tab lie, since dragging the ring slider and then editing the
+    // anchor would resolve against a different frame each time.
+    //
+    // Undoing the ring is exact, not approximate. `syncVisuals` builds the
+    // node as `R(yawAxis, angle) * yawBase`, so with `yawBase` identity the
+    // ring is the last factor of the mount's WORLD rotation and cancels by
+    // right-multiplying its inverse. The axis is the rig's own `yawAxis` — it
+    // happens to be a clean +Y on the Warthog, but reading it costs nothing and
+    // assuming it is how the muzzle axis caught this project out twice.
+    mount.getWorldPosition(_v1);
+    mount.getWorldQuaternion(_q1);
+    _q1.multiply(_q2.setFromAxisAngle(this.turret.yawAxis, -this.turretYaw)).invert();
+    return out.sub(_v1).applyQuaternion(_q1);
+  }
 
   // A seat's position in that frame. The `ref` seats convert their empty's
   // world position back into it; the derived ones already ARE in it, which is

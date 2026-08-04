@@ -489,6 +489,10 @@ export class Soldier {
 
   unseat() {
     if (!this.vehicle) return;
+    // Coming off the ring, `activeWeapon` is the M41 — a gun this soldier does
+    // not carry, so the re-equip in `_updateAnim` would match nothing and leave
+    // them walking away empty-handed until their next burst chose a real one.
+    if (this.activeWeapon === WEAPONS.hogturret) this.activeWeapon = this.primary;
     // Let go of the controls on the way out, or a hog whose driver was shot
     // keeps whatever throttle and lock they died holding.
     if (this.driver) { this.driver.release(); this.driver = null; }
@@ -1636,6 +1640,12 @@ export class Soldier {
     // comes back the instant the plate is full, and reads as the reason the bot
     // is standing still: hands full, not idling.
     else if (this.repairing) this._setHeldWeapon('repairtool');
+    // Manning the ring is the same shape of committed action: both hands are on
+    // the M41, so the carried weapon goes on the back. Without this the gunner
+    // stands at the gun visibly aiming a battle rifle he is not firing, while
+    // the rounds come out of the turret — the most obvious remaining lie now
+    // that the body turns to face what it is shooting at.
+    else if (this.seatRole === 'turret') this._setHeldWeapon(null);
     else if (this.activeWeapon && this.heldKey !== this.activeWeapon.key) {
       this._setHeldWeapon(this.activeWeapon.key);
     }

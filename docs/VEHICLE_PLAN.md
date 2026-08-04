@@ -443,7 +443,7 @@ Two traps, both found by measuring rather than looking:
 | --- | --- | --- |
 | driver, passenger | correct | the two seats the rig actually authors empties for |
 | tailgate ×2 | sunk into the rear bodywork | derived offsets — open question 3 |
-| gunner | stands, but shins in the deck, holds their own rifle, does not turn with the ring | no gunner pose exists, and the body mounts on the chassis rather than `ref_turret_base_rotate_yaw` |
+| gunner | stands, holds their own rifle | no gunner pose exists (the body now turns with the ring — see below) |
 
 The driver's foot also hangs 0.18 m below the footwell — measured, pan at
 y = 0.65 against a toe at 0.471. That is a Mixamo leg drop longer than this cab
@@ -606,6 +606,33 @@ Firing waits for `hogturret.aimTolerance` (0.09 rad). Without it a gunner
 acquiring a target behind them hoses a burst across everything on the way round.
 The check sits *above* the burst logic so an interrupted burst resumes rather
 than being thrown away and re-rolled.
+
+#### 7a.3 — The gunner's body rides the ring ✅ DONE
+
+`Vehicle.seatMount(i)` returns `turret.yawRef` for the turret seat and the
+chassis for every other. The gunner's body therefore turns with the gun they
+are holding, which is the same argument `ref_camera_gunner` already makes for
+the eye — a man holding a weapon that swings without him is the single most
+obviously wrong thing about a crewed hog.
+
+**Measured before committing to the approach, because the rig has form here:**
+`yawBase` is identity and `yawAxis` is a clean `+Y`, so unlike the muzzle and
+the steer corners this node carries no baked rotation to cancel; scale is unit;
+and the pitch node is its CHILD, so the body inherits yaw only — the barrel
+elevates and the gunner does not. The gunner also sits **0.351 m** off the yaw
+axis, which is a natural shuffle around the mount rather than a swing.
+
+`seatLocal` deliberately still means CHASSIS frame — the SEAT tab's marker
+column and its camera framing both read it that way — so the mount frame got
+its own accessor, `seatMountLocal`, used only by the mesh parenting.
+
+Verified: in-game the ring slewed 1.531 rad onto a target and the body turned
+1.544 rad with it, the 0.013 discrepancy being the chassis settling on its
+springs mid-run. Every other seat is unmoved, pixel-identical across ring
+angles, and 45 s of 8× battle found zero bodies on the wrong parent.
+
+Pitch is still not represented for any body, seated or on foot, which is the
+consistent answer rather than an omission.
 
 **Measured:** aim error converges to 0.000–0.002 rad and holds; a full-health,
 full-plate enemy at 70 m goes down in 4.77 s; with no target the ring returns to

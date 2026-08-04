@@ -233,6 +233,34 @@ export function createSeatRange(assets, range) {
     const v = hog();
     if (!v) { container.textContent = 'no warthog loaded'; return; }
 
+    // Turn the ring by hand. The gunner's body is parented to it, so this is
+    // the control that makes "does the body follow the gun" a thing you can
+    // SEE rather than a number in the report — and it is the only seat whose
+    // correctness depends on an angle, so there was nothing to look at before.
+    if (v.turret) {
+      const fs = document.createElement('fieldset');
+      fs.innerHTML = '<legend>RING YAW — drag to turn the turret</legend>';
+      const row = document.createElement('div');
+      row.className = 'row';
+      const lab = document.createElement('label');
+      lab.textContent = 'yaw';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '-3.14'; slider.max = '3.14'; slider.step = '0.01';
+      slider.value = String(v.turretYaw);
+      const read = document.createElement('span');
+      read.style.cssText = 'width:42px;text-align:right;color:#9fd4ff';
+      read.textContent = v.turretYaw.toFixed(2);
+      slider.oninput = () => {
+        v.turretYaw = Number(slider.value) || 0;
+        v.syncVisuals();
+        read.textContent = v.turretYaw.toFixed(2);
+      };
+      row.appendChild(lab); row.appendChild(slider); row.appendChild(read);
+      fs.appendChild(row);
+      container.appendChild(fs);
+    }
+
     const btns = document.createElement('div');
     btns.className = 'btns';
     seats.forEach((d, i) => {
