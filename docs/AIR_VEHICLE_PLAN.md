@@ -585,13 +585,112 @@ is true by identity for the hog, so the SEAT tab's paste target never moved.
 nothing on the ground, which is the correct behaviour for an aircraft that does
 not taxi.
 
-### Phase 2 — Flight, mode 1
+### Phase 2 — Flight, mode 1 ✅ DONE
 
-The controller above. Pilot seat, first and third person. The Pelican needs its
-own boom — roughly 35 m, not the Warthog's 11 — which is the first thing the
-per-vehicle config refactor pays for.
+`Vehicle._flight` plus a flight branch in `Player._updateDriving`. Runs INSIDE
+`step()`, after the suspension pass and before gravity, so an aircraft on its
+gear is held up by its struts and one in the air is not. **There is no takeoff
+state and no mode flag** — the ground/air transition is simply whether a strut
+found ground this substep.
 
-**This is the phase that matters.** Everything after it is addition.
+**The invariant, and the only thing worth defending:** nothing writes velocity
+from the look direction. The look builds a desired ORIENTATION, a rate-limited
+controller turns the HULL toward it, and thrust is applied along the HULL'S
+forward. Where you end up is the integral of all three.
+
+**Measured**, flying it through the real player path (deployed, seated, keys
+held) rather than by driving the vehicle object directly:
+
+| Check | Result |
+| --- | --- |
+| Engines on, no input, 4 s | stays parked — 3 struts down, zero rotation |
+| Liftoff | 27 m in 2.5 s on collective alone |
+| Hands off | holds, bleeding the climb through vertical drag |
+| Cruise | **58.6 m/s**, dead level, heading held |
+| 90° turn | arrives at −51.0° against −51.2° commanded, in ~3 s |
+| Cost of the turn | 58.6 → 47.1 m/s, recovering to 57.3 |
+| Dive at −25° look | hull tracks to −17.7°, recovers to −0.1° |
+| Ceiling | clamps at **412.8 m** against 420, never exceeded |
+| 30 s at full throttle | every quantity finite — no NaN |
+| Warthog | unaffected: 0-20 m/s in 1.48 s, steers, 18.2° cornering lean |
+
+**The drift is real and measurable**, which is the whole point of the model. On
+a hard 90° demand at cruise:
+
+| | peak |
+| --- | --- |
+| Velocity lagging the nose | **37.1°** |
+| Sideways speed in the hull frame | **21.4 m/s** |
+| Bank, auto-rolled into the turn | 43°, recovering to 1.1° |
+
+**Four bugs, all found by measuring — and the last one only because the owner
+said third person "works pretty good", which is a sentence with a shape.**
+
+1. **The attitude controller fought the landing gear.** It torqued a PARKED
+   aircraft, which rolled it off its own struts; going airborne then engaged the
+   hover, and the Pelican took off purely by rotating — 4.4 m up, 26° nose-up,
+   21° of bank, with nobody touching the collective. Fixed by making
+   `hoverBlend` double as CONTROL AUTHORITY, which is the same physical fact
+   twice: these are thrusters, so an airframe with its weight on its gear has
+   neither lift nor control. It also makes the hand-off smooth in both
+   directions rather than a hard `if (airborne)`.
+
+2. **It could not take off.** `collective` is authority ABOUT the hover point,
+   not total thrust, so gating the hover baseline on already being airborne was
+   circular: the pilot was asking for 13 m/s² against a gravity of 18 and the
+   struts held it down. Measured, full collective for 3 s moved it 0.2 m.
+   Commanding lift now spools the engines to at least hover — which is what a
+   VTOL does — while neutral on the ground still commands nothing at all.
+
+3. **Auto-bank was coupling into pitch.** At `bankPerYaw` 1.1 a routine 90°
+   turn commanded 48° of bank, and chasing a banked target from a level hull
+   puts a genuine pitch component in the body-frame error: 19° of nose-up nobody
+   asked for, plus a roll oscillation, because the bank command is itself a
+   function of the yaw rate it helps produce. 0.8 keeps the lean without closing
+   that loop as hard.
+
+4. **First person was pointing the wrong way entirely**, and third person was
+   fine — which is why it survived every measurement above. The ground-vehicle
+   first-person frame is `v.quat * R_y(PI + yaw)`, correct while `yaw` is an
+   offset from the chassis heading and a **double-count of the hull** once it is
+   absolute. Measured in level cruise: the cockpit sat a constant **51 degrees
+   off the nose and 141 degrees off where the pilot was looking**. Third person
+   never showed it because `tiltTP` is 0 and that path uses the level frame.
+
+   The fix is not to bolt the view to the hull. **What a cockpit should inherit
+   is ROLL and nothing else** — roll is the one part of the hull's attitude that
+   does not change where you are looking, so taking it costs no aim and buys the
+   entire cue. Pitch and yaw are already the pilot's by construction, because
+   the hull is chasing them. Verified: camera roll now tracks hull bank exactly
+   (−14.2/−14.2, −25.4/−25.4) while the view stays **0.00 degrees** off the aim
+   at every point in a turn. The 7-9 degrees between the camera's up and the
+   hull's up mid-turn is the honest residual — the nose is lagging your look, so
+   the two cannot coincide while the forwards differ.
+
+   *The sign was wrong first time*, and it read as 33.7 degrees of head tilt on
+   a 14.2 degree bank: the camera rolls about its own view axis, which points
+   the opposite way to the hull's forward.
+
+**Two integration notes worth keeping:**
+
+**In an aircraft the pilot's `yaw` is ABSOLUTE**, where in a ground vehicle it
+is an offset from the chassis heading. A look measured against a hull that is
+chasing that same look is a feedback loop. Pinning `vCamYaw` to 0 rather than
+easing it makes the existing camera expression `R_y(PI + vCamYaw + yaw)`
+collapse to a plain world heading — which is why the boom, the first-person eye
+and `exitVehicle`'s hand-back to the on-foot convention all kept working
+untouched.
+
+**An aircraft's drag is anisotropic and lives in the flight pass**, so the
+chassis's isotropic `airDrag` is skipped for one. Applying both would quietly
+halve the wing: the whole point is that sideways costs far more than forwards,
+and a term that does not care which way you are moving averages exactly that
+distinction away.
+
+**Deliberately not done:** the gear does not retract, the wings do not rotate,
+the plumes do not light and the engines make no sound — phases 4 and 5. `E` at
+altitude is refused rather than dropping the pilot out, because `exitPoint` puts
+you on the ground beside the hull and from 300 m that is a teleport.
 
 ### Phase 3 — The AIR tab in `/chartest.html`
 

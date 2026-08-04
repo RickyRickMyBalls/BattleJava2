@@ -27,6 +27,10 @@ const _level = new THREE.Quaternion();   // horizon-locked view frame
 const _lookPitch = new THREE.Quaternion();
 const _YAXIS = new THREE.Vector3(0, 1, 0);
 const _XAXIS = new THREE.Vector3(1, 0, 0);
+// The camera's own view axis. Rolling about it is the one attitude term a
+// cockpit can inherit without moving the aim — see the aircraft first-person
+// branch in updateVehicleCamera.
+const _ZAXIS = new THREE.Vector3(0, 0, 1);
 const _snapPos = new THREE.Vector3();    // viewmodel pose saved across a snap measure
 const _snapRot = new THREE.Euler();
 const _glass = new THREE.Vector3();
@@ -1436,9 +1440,18 @@ export class Player {
     this.vehicle = v;
     this.vehicleSeatIdx = i;
     this.soldier.seatIn(v, i, v.seats[i].def.anim);
-    this.yaw = 0;              // looking straight ahead down the chassis
+    // In a ground vehicle `yaw` is an OFFSET from the chassis heading, so zero
+    // means looking down the bonnet and the chase camera supplies the heading.
+    //
+    // In an aircraft it is ABSOLUTE, because the look IS the flight command and
+    // a look measured against a hull that is chasing that same look is a
+    // feedback loop. Pinning `vCamYaw` to 0 rather than easing it makes the
+    // existing camera expression `R_y(PI + vCamYaw + yaw)` collapse to a plain
+    // world heading — which is why the boom, the FP eye and `exitVehicle`'s
+    // hand-back all keep working untouched.
+    this.yaw = v.isAircraft ? v.yaw : 0;
     this.pitch = 0;
-    this.vCamYaw = null;       // snap the chase heading, do not sweep in
+    this.vCamYaw = v.isAircraft ? 0 : null;   // null = snap the chase heading in
     this.firing = false;
     this.ads = false;
     this.exitCooldown = 0.4;
@@ -1478,9 +1491,28 @@ export class Player {
     return false;
   }
 
+  // Height above the ground the aircraft is actually over, not above its own
+  // spawn or above sea level — the same two-tier query the vehicle flies by.
+  _aircraftTooHigh(v) {
+    // On the gear is the real test, and it is exact: cutting the engines drops
+    // the aircraft, so anything but "already landed" means the pilot steps out
+    // and the Pelican falls the rest of the way onto its stops. The height
+    // fallback only covers the case where no strut resolved at all.
+    if (v.wheels.some((w) => w.grounded)) return false;
+    const p = v.group.position;
+    return p.y - v.groundAt(p.x, p.z) > v.rig.flight.exitMaxHeight;
+  }
+
   exitVehicle() {
     const v = this.vehicle;
     if (!v) return;
+    // The last pilot out shuts the engines down, which also re-arms sleep.
+    if (v.isAircraft && this.vehicleRole === 'drive') {
+      v.enginesOn = false;
+      v.flightCmd.throttle = 0;
+      v.flightCmd.collective = 0;
+      v.flightCmd.roll = 0;
+    }
     v.exitPoint(_exit, this.vehicleSeatIdx);
     v.exitSeat(this);
     this.vehicle = null;
@@ -1516,7 +1548,26 @@ export class Player {
 
     // Only the driver's seat touches the controls. Everyone else's WASD does
     // nothing, which is the point of there being seats at all.
-    if (role === 'drive') {
+    if (role === 'drive' && v.isAircraft) {
+      // Mode 1. The look direction is the COMMAND, not the velocity — see
+      // `Vehicle._flight`. Built analytically from yaw/pitch rather than read
+      // off the camera because this runs BEFORE the sim step and the camera is
+      // not placed until after it; reading the camera here would command last
+      // frame's look.
+      //
+      // It is the same vector the camera will be built from:
+      // `R_y(PI + yaw) * R_x(pitch)` applied to the camera's own -Z.
+      const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+      v.flightCmd.dir.set(cp * Math.sin(this.yaw), sp, cp * Math.cos(this.yaw));
+      v.flightCmd.throttle = live ? (this.keys['KeyW'] ? 1 : 0) - (this.keys['KeyS'] ? 1 : 0) : 0;
+      // Space climbs, Ctrl descends. Neutral HOLDS, because `hover` cancels
+      // gravity once airborne — a pilot who lets go should not sink.
+      v.flightCmd.collective = live
+        ? (this.keys['Space'] ? 1 : 0) - (this.keys['ControlLeft'] ? 1 : 0) : 0;
+      v.flightCmd.roll = live ? (this.keys['KeyA'] ? 1 : 0) - (this.keys['KeyD'] ? 1 : 0) : 0;
+      v.enginesOn = true;
+      v.wake();
+    } else if (role === 'drive') {
       const fwd = live && !!this.keys['KeyW'];
       const back = live && !!this.keys['KeyS'];
       let steer = 0;
@@ -1544,8 +1595,16 @@ export class Player {
     }
 
     if (live && this.keys['KeyE'] && this.exitCooldown <= 0) {
-      this.exitVehicle();
-      return;
+      // Stepping out at altitude is not a dismount. `exitPoint` puts you on the
+      // ground beside the hull, which from 300 m is a teleport — and refusing is
+      // both the honest answer and the one that stops a pilot losing an aircraft
+      // by reflex. Phase 5 can make this a jump.
+      if (v.isAircraft && this._aircraftTooHigh(v)) {
+        this.game.hud.message('TOO HIGH — LAND FIRST', 1.2);
+      } else {
+        this.exitVehicle();
+        return;
+      }
     }
 
     // The body rides in the seat. It stays in `allSoldiers` and stays
@@ -1635,11 +1694,19 @@ export class Player {
     //
     // The heading is eased rather than tracked exactly, so a handbrake spin
     // sweeps the camera round instead of snapping it.
-    _fwd.set(0, 0, 1).applyQuaternion(v.quat);
-    const heading = Math.atan2(_fwd.x, _fwd.z);
-    if (this.vCamYaw === null) this.vCamYaw = heading;
-    else this.vCamYaw += wrapAngle(heading - this.vCamYaw)
-      * Math.min(1, dt * v.rig.camera.followRate);
+    // An aircraft's heading is the PILOT'S, not the hull's — pinned to 0 so the
+    // expression below is a plain world yaw. Easing it toward the hull would
+    // close a loop: the hull chases the look, the look would chase the hull,
+    // and the pair would wander off together with nobody flying.
+    if (v.isAircraft) {
+      this.vCamYaw = 0;
+    } else {
+      _fwd.set(0, 0, 1).applyQuaternion(v.quat);
+      const heading = Math.atan2(_fwd.x, _fwd.z);
+      if (this.vCamYaw === null) this.vCamYaw = heading;
+      else this.vCamYaw += wrapAngle(heading - this.vCamYaw)
+        * Math.min(1, dt * v.rig.camera.followRate);
+    }
 
     // The PI is not a fudge. A three.js camera looks down its local -Z, and the
     // chassis frame is +Z forward, so a view built to face the car's forward
@@ -1662,9 +1729,31 @@ export class Player {
       // behind the wheel: riding shotgun looked out of the driver's window.
       const eye = v.seatEye(i, _eye);
       this.camera.position.copy(eye);
-      _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
-      _drive.premultiply(v.quat);
-      _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+      if (v.isAircraft) {
+        // An aircraft's `yaw` is ABSOLUTE, so the ground-vehicle expression
+        // below double-counts the hull: measured, the cockpit view sat a
+        // constant 51 degrees off the nose and 141 degrees off where the pilot
+        // was looking, in level cruise. Third person never showed it because
+        // `tiltTP` is 0 and that path uses the level frame.
+        //
+        // What the cockpit should inherit is ROLL and nothing else. Roll is the
+        // one part of the hull's attitude that does not change where you are
+        // looking, so taking it costs no aim and buys the entire cue — your
+        // head banks because your head is in the cockpit. Pitch and yaw are
+        // already the pilot's, by construction: the hull is chasing them.
+        _fwd.set(1, 0, 0).applyQuaternion(v.quat);          // hull left
+        _dir.set(0, 1, 0).applyQuaternion(v.quat);          // hull up
+        // Negated: the camera rolls about its own view axis, which points the
+        // opposite way to the hull's forward. Measured with the sign the other
+        // way, the cockpit rolled AGAINST the bank and doubled the error —
+        // 33.7 degrees of head tilt on a 14.2 degree bank.
+        const roll = -Math.atan2(_fwd.y, _dir.y);
+        _drive.copy(_level).multiply(_lookPitch.setFromAxisAngle(_ZAXIS, roll));
+      } else {
+        _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
+        _drive.premultiply(v.quat);
+        _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
+      }
       this.camera.quaternion.copy(_level).slerp(_drive, v.rig.camera.tiltFP);
     }
     if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {

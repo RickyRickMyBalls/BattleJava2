@@ -54,6 +54,15 @@ const DEG = Math.PI / 180;   // the linkage table is authored in degrees
 const _X = new THREE.Vector3(1, 0, 0);
 const _tmpBox = new THREE.Box3();
 const _mat = new THREE.Matrix4();
+// Flight scratch. Deliberately NOT shared with the chassis scratch above: the
+// flight pass runs inside step(), between passes that own _v1/_up/_fwd, and the
+// historic all-bullets-miss bug in combat.js is exactly this mistake.
+const _fA = new THREE.Vector3();
+const _fB = new THREE.Vector3();
+const _fC = new THREE.Vector3();
+const _fq = new THREE.Quaternion();
+const _fq2 = new THREE.Quaternion();
+const _fq3 = new THREE.Quaternion();
 
 // Door outlines. Shared materials — visibility is per LineSegments, so nothing
 // per-instance lives on the material and every hog can point at the same two.
@@ -121,6 +130,8 @@ function rigFor(key) {
     thirdPerson: pick('thirdPerson'),
     camera: pick('camera'),
     seatPose: pick('seatPose'),
+    // Present only on aircraft. Its existence IS the branch — see `isAircraft`.
+    flight: pick('flight'),
   };
 }
 
@@ -223,6 +234,20 @@ export class Vehicle {
     this.seats = this.rig.seats.map((def) => ({ def, occupant: null }));
     this.turretYaw = 0;                  // radians, relative to the chassis
     this.turretPitch = 0;
+
+    // --- Flight (AIR_VEHICLE_PLAN.md phase 2) ---------------------------
+    // Having a flight block is what makes something an aircraft; there is no
+    // second class and no mode flag to keep in sync with reality.
+    this.isAircraft = !!this.rig.flight;
+    // What the PILOT is asking for, written by the controller and read by
+    // `_flight`. `dir` is where they are LOOKING — a direction, never a
+    // velocity. Nothing in this file may write velocity from it.
+    this.flightCmd = {
+      dir: new THREE.Vector3(0, 0, 1), throttle: 0, collective: 0, roll: 0,
+    };
+    this.enginesOn = false;
+    this.airborne = false;
+    this.hoverBlend = 0;                 // 0 on the gear, 1 in the air, eased
 
     this.wheels = [];
     this.hullPoints = [];                // chassis-frame hull sample points
@@ -847,10 +872,20 @@ export class Vehicle {
       if (w.grounded) this._applyForce(w.force, w.contact, h);
     }
 
+    // Flight goes here — AFTER the struts, so an aircraft on its gear is held
+    // up by its springs and one in the air is not, and BEFORE gravity, so lift
+    // and weight are summed in the same substep rather than a frame apart.
+    // There is no takeoff state: the transition IS whether a strut found ground.
+    if (this.isAircraft && this.enginesOn) this._flight(h);
+
     // Gravity and drag act at the centre of mass, so they are velocity changes
     // rather than torques.
     this.vel.y -= CFG.gravity * h;
-    const sp = this.vel.length();
+    // An aircraft's drag is ANISOTROPIC and lives in the flight pass. Applying
+    // this isotropic term as well would quietly halve the wing: the whole point
+    // is that sideways costs far more than forwards, and a term that does not
+    // care which way you are moving averages exactly that distinction away.
+    const sp = this.isAircraft ? 0 : this.vel.length();
     if (sp > 0.01) {
       const drag = (T.airDrag * sp * sp) / this.mass;
       this.vel.addScaledVector(this.vel, -Math.min(1, (drag * h) / sp));
@@ -877,8 +912,169 @@ export class Vehicle {
     if (this.pos.y < floor - 2) { this.pos.y = floor + 0.5; this.vel.y = Math.max(0, this.vel.y); }
     this.world.clampToMap(this.pos);
 
-    this._flipCheck(h, upright);
+    // An aircraft is never "flipped". Inverted is a thing you can fly out of,
+    // and prompting someone to walk over and right a Pelican by hand is not a
+    // recovery, it is a soft-lock with a progress bar.
+    if (!this.isAircraft) this._flipCheck(h, upright);
     this._sleepCheck(h);
+  }
+
+  // ------------------------------------------------------------- flight --
+
+  // Mode 1: point the camera, the ship goes there, with weight.
+  //
+  // THE INVARIANT, and the only thing in here worth defending: this function
+  // never writes velocity from the look direction. The look builds a desired
+  // ORIENTATION, a rate-limited controller turns the HULL toward it, and thrust
+  // is applied along the HULL'S OWN forward. Where you end up is the integral of
+  // all three. Momentum is not a damping constant that was tuned to feel heavy —
+  // it is what you get by refusing to take the shortcut.
+  //
+  // The shortcut version (velocity = look * speed) looks identical in a
+  // screenshot and is a camera with a mesh attached: it has no state, it stops
+  // the instant you stop asking, and it can never overshoot.
+  //
+  // Runs INSIDE step(), after the suspension pass and before gravity, so an
+  // aircraft on its gear is held up by its struts and one in the air is not.
+  // That is the whole of the ground/air transition — there is no takeoff state.
+  _flight(h) {
+    const F = this.rig.flight;
+    const c = this.flightCmd;
+
+    // Airborne is OBSERVED, not latched: it is simply whether any strut found
+    // ground this substep. No state to get stuck in, and a wheels-down landing
+    // hands control back to the spring solver the moment the gear touches.
+    this.airborne = !this.wheels.some((w) => w.grounded);
+    this.hoverBlend += ((this.airborne ? 1 : 0) - this.hoverBlend)
+      * Math.min(1, h * F.hoverBlend);
+
+    // `hoverBlend` doubles as CONTROL AUTHORITY, and that is not a shortcut —
+    // it is the same physical fact twice. These are thrusters: they hold the
+    // aircraft up and they turn it, so an airframe with its weight on its gear
+    // has neither.
+    //
+    // Without this the attitude controller torques a PARKED aircraft, which
+    // rolls it off its own struts; going airborne then engages the hover, and
+    // the Pelican takes off purely by rotating. Measured: engines on with no
+    // collective at all lifted it 4.4 m and put it at 26 degrees nose-up and
+    // 21 degrees of bank, because the stale command happened to sit 141 degrees
+    // off its parked heading.
+    //
+    // Using the eased blend rather than a hard `if (airborne)` also makes the
+    // hand-off smooth in both directions: lifting off ramps control in over the
+    // same fraction of a second the lift ramps in, and touching down hands the
+    // airframe back to the spring solver instead of fighting it on the ground.
+    const authority = this.hoverBlend;
+
+    // ---- Attitude: chase the commanded direction ------------------------
+    _fA.copy(c.dir);
+    if (_fA.lengthSq() < 1e-8) _fA.set(0, 0, 1);
+    _fA.normalize();                                   // desired forward
+
+    // Bank into the turn, off the yaw rate the body actually has rather than
+    // the one commanded — so the lean follows the turn instead of leading it.
+    const bank = Math.max(-F.bankMax, Math.min(F.bankMax, -this.angVel.y * F.bankPerYaw))
+      + c.roll * F.bankManual;
+
+    // Basis. `left = up x forward`, matching the chassis convention (+X left)
+    // that settleAt and every seat offset already use. The degenerate case is
+    // real and reachable: look straight up and world-up is parallel to forward,
+    // so the cross product vanishes and the aircraft would tumble.
+    _fB.set(0, 1, 0);
+    if (Math.abs(_fA.y) > 0.999) _fB.set(0, 0, _fA.y > 0 ? -1 : 1);
+    _fC.copy(_fB).cross(_fA).normalize();              // left
+    _fB.copy(_fA).cross(_fC).normalize();              // up
+    _fq.setFromAxisAngle(_fA, bank);
+    _fC.applyQuaternion(_fq);
+    _fB.applyQuaternion(_fq);
+    _mat.makeBasis(_fC, _fB, _fA);
+    _fq2.setFromRotationMatrix(_mat);                  // desired orientation
+
+    // Error as a world-frame rotation vector: qDesired * qCurrent^-1, taken the
+    // short way round. Without the sign flip an error just past 180 degrees
+    // sends the airframe the long way, which at these rates is several seconds
+    // of the nose going somewhere nobody asked for.
+    _fq3.copy(this.quat).invert().premultiply(_fq2);
+    if (_fq3.w < 0) { _fq3.x = -_fq3.x; _fq3.y = -_fq3.y; _fq3.z = -_fq3.z; _fq3.w = -_fq3.w; }
+    const sin = Math.hypot(_fq3.x, _fq3.y, _fq3.z);
+    const angle = 2 * Math.atan2(sin, _fq3.w);
+    if (sin > 1e-7) _fA.set(_fq3.x, _fq3.y, _fq3.z).multiplyScalar(angle / sin);
+    else _fA.set(0, 0, 0);
+
+    // Into the BODY frame, so the per-axis limits mean pitch, yaw and roll
+    // rather than three arbitrary world directions. Body x is left (pitch),
+    // y is up (yaw), z is forward (roll).
+    _fq.copy(this.quat).invert();
+    _fA.applyQuaternion(_fq);                          // error
+    _fB.copy(this.angVel).applyQuaternion(_fq);        // current rate
+    const e = [_fA.x, _fA.y, _fA.z];
+    const r = [_fB.x, _fB.y, _fB.z];
+    for (let i = 0; i < 3; i++) {
+      // Rate-limited PD. The proportional term commands a RATE which is then
+      // clamped, rather than commanding a torque directly, and that is what
+      // makes `turnRate` mean what it says: no amount of error can ever produce
+      // a faster rotation than the airframe is allowed. `turnAccel` then caps
+      // how quickly that rate is reached, which is the difference between an
+      // airframe that leans into a turn and one that snaps.
+      const want = Math.max(-F.turnRate[i], Math.min(F.turnRate[i], F.kP * e[i]));
+      const a = (want - r[i]) * F.kD;
+      e[i] = Math.max(-F.turnAccel[i], Math.min(F.turnAccel[i], a));
+    }
+    _fB.set(e[0], e[1], e[2]).applyQuaternion(this.quat);
+    this.angVel.addScaledVector(_fB, h * authority);
+
+    // ---- Lift ------------------------------------------------------------
+    // Along WORLD up, not the hull's. A hull-up hover would drop the aircraft
+    // every time the pilot looked down, which fights the one thing mode 1 is
+    // for. The hull's contribution to where you go comes from THRUST.
+    // Commanding lift SPOOLS THE ENGINES to at least the hover point, and that
+    // is what makes taking off possible at all. Gating the hover baseline on
+    // being airborne is circular — `collective` is authority ABOUT the hover
+    // point, not total thrust, so on the ground the pilot was asking for
+    // 13 m/s^2 against a gravity of 18 and the struts simply held it down.
+    // Measured: full collective for 3 s moved it 0.2 m.
+    //
+    // Physically this is just an engine that is already at hover thrust when you
+    // ask it to climb, which is what a VTOL does. Neutral in the air still holds
+    // altitude, and neutral on the ground still commands nothing at all — so a
+    // parked aircraft with its engines running stays parked.
+    const spool = Math.max(this.hoverBlend, c.collective > 0 ? 1 : 0);
+    this.vel.y += (spool * F.hover * CFG.gravity + c.collective * F.collective) * h;
+
+    // ---- Thrust ----------------------------------------------------------
+    // Along the HULL'S forward, which is the whole ball game: while the nose is
+    // still swinging toward where you looked, the push is still going where the
+    // nose currently points. That gap is the drift.
+    _fA.set(0, 0, 1).applyQuaternion(this.quat);
+    const along = this.vel.dot(_fA);
+    let t = 0;
+    if (c.throttle > 0) {
+      t = F.thrust * c.throttle * Math.max(0, 1 - Math.max(0, along) / F.topSpeed);
+    } else if (c.throttle < 0) {
+      const back = F.topSpeed * F.reverse;
+      t = F.thrust * F.reverse * c.throttle * Math.max(0, 1 - Math.max(0, -along) / back);
+    }
+    if (t !== 0) this.vel.addScaledVector(_fA, t * h * authority);
+
+    // ---- Drag, anisotropic in the hull frame -----------------------------
+    // The second most important thing here after the rate limit. Lateral and
+    // vertical drag run an order of magnitude above longitudinal, which is the
+    // cheapest honest wing: the airframe slides when it is thrown sideways, and
+    // then the slide bleeds off and it carves.
+    _fq.copy(this.quat).invert();
+    _fB.copy(this.vel).applyQuaternion(_fq);
+    _fC.set(
+      -F.dragLat * _fB.x * Math.abs(_fB.x),
+      -F.dragVert * _fB.y * Math.abs(_fB.y),
+      -F.dragLong * _fB.z * Math.abs(_fB.z),
+    ).applyQuaternion(this.quat);
+    this.vel.addScaledVector(_fC, h * authority);
+
+    // ---- Ceiling ---------------------------------------------------------
+    if (this.pos.y > F.ceiling) {
+      this.pos.y = F.ceiling;
+      if (this.vel.y > 0) this.vel.y = 0;
+    }
   }
 
   // Cast for ground and resolve the spring. The ray runs along the STRUT
@@ -1264,6 +1460,10 @@ export class Vehicle {
   // allowed to fall asleep.
   _sleepCheck(h) {
     const T = this.tune;
+    // Engines running is "somebody is asking it to move", the same rule the
+    // hill hold uses. A hovering aircraft holding perfectly still would
+    // otherwise fall asleep and freeze in mid-air with the pilot aboard.
+    if (this.enginesOn) { this.stillTimer = 0; return; }
     const still = this.vel.lengthSq() < T.sleepSpeed * T.sleepSpeed
       && this.angVel.lengthSq() < T.sleepSpin * T.sleepSpin
       && this.input.throttle === 0 && this.input.brake === 0

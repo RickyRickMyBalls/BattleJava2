@@ -1027,6 +1027,92 @@ export const CFG = {
       ],
       // A 33 m aircraft framed by an 11 m boom is a close-up of a wing.
       thirdPerson: { dist: 38, lift: 9, minDist: 8, skin: 1.0, lerp: 4 },
+
+      // ---------------------------------------------------------------
+      // FLIGHT — mode 1. Point the camera, the ship goes there, with weight.
+      //
+      // The rule this whole block serves: attitude and velocity are SEPARATE
+      // state, and the only thing that changes velocity is thrust along the
+      // hull's own axes. Nothing here writes velocity from the look direction.
+      // The look commands a TORQUE, the torque turns the HULL, and the hull's
+      // engines push along the HULL — momentum is what falls out of refusing to
+      // shortcut that, not a damping constant anyone tuned.
+      //
+      // Every number here is a starting value to be found in the AIR tab
+      // (phase 3), not reasoned about. What is NOT arbitrary is the shape: the
+      // rate limit is the heft, and the drag anisotropy is the wing.
+      // ---------------------------------------------------------------
+      flight: {
+        // --- Attitude -------------------------------------------------
+        // Per BODY axis, [pitch, yaw, roll] — which is [x=left, y=up, z=fwd],
+        // because a rotation about the hull's left axis IS pitch.
+        //
+        // `turnRate` IS THE WEIGHT. It is the first number to turn and the last
+        // to be satisfied with: a twenty-tonne airframe cannot snap through 90
+        // degrees, and the lag between where you are looking and where the nose
+        // has got to is the entire feel. Roll is quickest because rolling is
+        // what an aircraft does most willingly; yaw is slowest because yawing a
+        // 30 m hull broadside is what it does least willingly.
+        turnRate: [0.85, 0.7, 1.5],    // rad/s, hard cap
+        turnAccel: [2.2, 1.3, 3.0],    // rad/s^2, how fast it reaches that rate
+        kP: 3.2,                       // commanded rate per radian of error
+        kD: 4.0,                       // accel per rad/s of rate error
+        // Bank into the turn. Not cosmetic — it is most of what stops the
+        // aircraft reading as a floating brick, and it costs six lines.
+        // Measured: at 1.1 a routine 90-degree turn commanded 48 degrees of
+        // bank, and chasing a target that banked from a level hull puts a real
+        // PITCH component in the body-frame error — 19 degrees of nose-up that
+        // nobody asked for, plus a roll oscillation, because the bank command is
+        // itself a function of the yaw rate it helps produce. 0.8 keeps the lean
+        // without closing that loop as hard.
+        bankPerYaw: 0.8,               // rad of bank per rad/s of yaw rate
+        bankMax: 0.7,
+        bankManual: 0.7,               // rad added by A/D
+
+        // --- Thrust ---------------------------------------------------
+        // Accelerations, in m/s^2, against a `CFG.gravity` of 18. Do not reach
+        // for real aircraft numbers: 22 here is 1.2 g of push, which is what
+        // makes it feel like it is hauling itself along rather than gliding.
+        //
+        // Top speed EMERGES — thrust falls off toward `topSpeed` and drag does
+        // the rest, so the real figure is lower than this and there is no speed
+        // clamp anywhere.
+        thrust: 22,
+        reverse: 0.3,
+        topSpeed: 70,
+
+        // --- Lift -----------------------------------------------------
+        // `hover` is the fraction of gravity cancelled ONCE AIRBORNE, so a
+        // pilot who lets go holds altitude. It is blended in rather than
+        // switched, or leaving the ground would be a jolt.
+        //
+        // On the ground `hover` is zero, which is why a parked Pelican with the
+        // engines running stays parked: taking off is an explicit input, not
+        // something that happens because you sat down.
+        hover: 1.0,
+        collective: 13,                // m/s^2 of climb/descent authority
+        hoverBlend: 2.5,               // 1/s
+
+        // --- Drag -----------------------------------------------------
+        // In the HULL frame, as acceleration per (m/s)^2. The ANISOTROPY is the
+        // point and it is the cheapest honest model of a wing: sideways and
+        // vertical motion are expensive, forward motion is cheap. Whip the nose
+        // round and the airframe slides, then the slide bleeds off and it
+        // carves. Skidding stays possible and costs you speed, which is the
+        // trade that makes flying it a skill rather than a steering wheel.
+        dragLong: 0.0009,
+        dragLat: 0.055,
+        dragVert: 0.055,
+
+        // --- Limits ---------------------------------------------------
+        // `clampToMap` is XZ-only, so the ceiling is the one bound air needs
+        // that ground vehicles never did.
+        ceiling: 420,
+        // Refuse to step out at altitude. `exitPoint` puts you on the ground
+        // beside the hull, which from 300 m is a teleport rather than a
+        // dismount. Phase 5 can make this a jump.
+        exitMaxHeight: 2,
+      },
     },
   },
 
