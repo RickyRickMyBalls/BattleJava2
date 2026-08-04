@@ -25,3 +25,22 @@ global gadgets
  - 
 global perk
  [ ] every soilder gets a BioFoam - equivilenet to bandainds
+
+
+ Game modes
+
+ sandbox (open battlefiled)
+ closed battlefield clsses
+ squad based - 
+ halo wars based
+
+
+ resources
+ HQ will spawn resources on a timer. 
+ then the reosurces will need to be brought up the frontline
+ using warthog or pelican, u can load resources onto the vehicles & drive them to the sectors. 
+
+ the sectors will then be able to store resources
+
+ when a player/ai spawn on the sector it costs resources, mayb based on class / weapon. 
+ spartans should be more expensive 

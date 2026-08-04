@@ -381,6 +381,62 @@ export const CFG = {
 
     enterRange: 4.0,     // metres from the driver's door to prompt
 
+    // What bots are allowed to do with a vehicle. Only boarding so far — a bot
+    // cannot drive yet (VEHICLE_PLAN.md phase 7b), which is also why the seat
+    // picker refuses the driver's seat for them.
+    ai: {
+      boardRange: 6.0,   // how close a squadmate must be to climb aboard
+      boardSpeed: 2.0,   // m/s above which the vehicle is moving too fast to board
+      // A squad taking a vehicle of its own (Squad.updateVehicleUse).
+      seekRange: 90,     // m from the leader to look for an uncrewed vehicle
+      driveMinDist: 150, // m to the objective below which walking is fine
+      dismountRange: 30, // m from the objective where the crew gets out and walks
+      boardTimeout: 30,  // s to reach a claimed but empty vehicle before giving up
+    },
+
+    // The bot driver (src/vehicledriver.js). Tuned with the AUTOPILOT toggle on
+    // /chartest.html's VEHICLE tab, where the ground is analytic and the run is
+    // repeatable — the same rule the chassis itself was tuned under.
+    driver: {
+      arriveRadius: 6,     // m. A hog is 6.26 m long; closer than this IS there
+      // Steering. Full lock at `steerScale` radians of bearing error, so this
+      // is "how far off before it is turning as hard as it can".
+      steerScale: 0.5,
+      // Speed governor. Corner slowing and arrival slowing are SEPARATE terms
+      // on purpose — multiplying one combined factor made it crawl the last
+      // 30 m of every straight approach.
+      cruiseSpeed: 18,     // m/s it aims for on a clear run (topSpeed is 35)
+      slowAngle: 0.9,      // rad of bearing error for the full corner slowdown
+      turnSlow: 0.7,       // fraction of cruise given up in the sharpest corner
+      slowRadius: 25,      // m out from the target where it starts easing off
+      minApproach: 0.25,   // never creep slower than this fraction of cruise
+      speedBand: 1.0,      // m/s deadband, so it is not sawing throttle/brake
+      brakeBand: 6,        // m/s of overspeed that equals full brake
+      // Unstick. A nose against a rock produces the same bearing error forever,
+      // which is the one failure steering cannot solve.
+      stuckSpeed: 0.8,     // m/s below which "asking for throttle" counts as stuck
+      stuckTime: 1.2,      // s of that before backing up
+      reverseTime: 1.0,    // s spent reversing, with opposite lock
+      // Ground-gradient avoidance. Probes ride on `vehicle.groundAt`, never
+      // `world.heightAt` — see the note at the top of vehicledriver.js.
+      lookMin: 6,          // m minimum probe distance
+      lookTime: 0.9,       // s of travel ahead to probe at speed
+      probeWidth: 3.0,     // m to either side of centre
+      climbRise: 1.2,      // m of rise over the probe that counts as a wall
+      dropFall: 2.0,       // m of FALL that counts as a ledge. Only rises were
+                           // checked at first — that is the half which merely
+                           // strands you. A hog leaving a ledge at 18 m/s lands
+                           // on its roof, and two of four ended an eight-minute
+                           // battle upside down before this existed.
+      avoidStrength: 0.8,  // steer added away from the bad side
+      // Speed against ground. Broken ground ahead and a chassis already leaning
+      // are the two things that turn a quick corner into a rollover.
+      roughIgnore: 0.35,   // m of height change ahead that is just terrain
+      roughSlow: 0.35,     // fraction of cruise given up per metre beyond that
+      roughMin: 0.3,       // never governs below this fraction of cruise
+      leanSlow: 1.6,       // fraction given up per unit of (1 - chassis up.y)
+    },
+
     // Seats, addressed by the rig's own empties rather than by a class
     // hierarchy — adding a seat to a vehicle is an entry in this list and
     // nothing else. Order matters only for tie-breaks; which seat you get is
@@ -1694,6 +1750,17 @@ export const WEAPONS = {
     falloff: [90, 320, 0.62], range: 520,
     tracer: { style: 'bolt', color: [1, 0.78, 0.42], len: 7, speed: 560, every: 1, opacity: 0.6 },
     snd: { key: 'shot', rate: 0.72, vol: 0.8 },
+    // A bot gunner reads this the way every other bot reads its weapon's `ai`.
+    // Longer bursts and a shorter pause than a rifle because that is what a
+    // belt-fed gun on a mount IS — the thing it does that a marine cannot is
+    // keep firing. `range` is deliberately well short of the weapon's own 520:
+    // a hog that opens up at maximum ballistic range is a hog that reveals
+    // itself to the whole map for hits it will not land.
+    ai: { aiMin: 0, range: 220, burst: [8, 16], interval: 0.125, pause: [0.5, 1.2], spread: 0.014 },
+    // How near the barrel has to be to the target before it opens up, radians.
+    // The ring SLEWS (turret.yawRate), so without this a gunner acquiring a
+    // target behind them fires a burst across the whole sweep on the way round.
+    aimTolerance: 0.09,
   },
 
   // --- Tools ---------------------------------------------------------------
@@ -1972,7 +2039,7 @@ export const PERKS = {
     // brushes the utility-not-lethality rule, and it is why the Spartan pays
     // for it everywhere else on the sheet rather than getting a gadget too.
     freeSecondary: true,
-    stats: { shield: 70, jumpHeight: 3, staminaMax: Infinity },
+    stats: { shield: 200, jumpHeight: 3, staminaMax: Infinity },
   },
   // Recon has no perk yet — the one open cell in the roster. Candidates: enemies
   // it fires on stay marked far longer (hud.js `spottedShooters` already tracks

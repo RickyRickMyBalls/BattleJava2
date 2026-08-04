@@ -6,13 +6,13 @@ deploy-map hub.
 Design docs — all aspirational; build incrementally, owner approves each step
 (propose first when asked "give suggestion / read only"):
 
-- `GAME_DESIGN_PLAN.md` — the whole game. Parent doc.
-- `CLASS_AND_GADGET_PLAN.md` — what a soldier is and carries: classes, perks,
+- `docs/GAME_DESIGN_PLAN.md` — the whole game. Parent doc.
+- `docs/CLASS_AND_GADGET_PLAN.md` — what a soldier is and carries: classes, perks,
   loadout slots, gadgets, construction, downed state.
-- `GAME_TYPE_PLAN.md` — what the match is: objectives, spawning, economy, victory.
+- `docs/GAME_TYPE_PLAN.md` — what the match is: objectives, spawning, economy, victory.
   Locks the Battlefield-chassis / Squad-structure call, and splits the modes into
   two economies (Sector Control spends lives, Frontline accrues territory).
-- `VEHICLE_PLAN.md` — what a vehicle is: raycast-suspension physics, seats, crew,
+- `docs/VEHICLE_PLAN.md` — what a vehicle is: raycast-suspension physics, seats, crew,
   bot driving. Built around the Warthog. Its "what is already true" and "rig
   contract" sections are MEASURED (scale, -X forward, the ±90° steer trap) —
   read them before touching `vehicle.js` or a vehicle GLB.

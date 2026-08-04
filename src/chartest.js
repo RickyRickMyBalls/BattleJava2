@@ -849,6 +849,11 @@ async function boot() {
   range.buildInputs(document.getElementById('vehInputs'), dumpVehicle);
   document.getElementById('vehReset').onclick = () => range.reset();
   document.getElementById('seatFocus').onclick = () => seatRange.focus(camera, controls);
+  const autoBtn = document.getElementById('vehAuto');
+  autoBtn.onclick = () => {
+    range.setAutopilot(!range.autopilot);
+    autoBtn.classList.toggle('sel', range.autopilot);
+  };
   document.getElementById('vehCam').onclick = () => {
     // Same cycle the C key drives, so the button is a label as much as a
     // control — the name updates from the range either way (see the frame loop).

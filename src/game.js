@@ -435,6 +435,8 @@ export class Game {
         sq.refreshLeader();
         sq.updateBeacon(dt, this);
         sq.updateFollow(followPos);
+        sq.updateVehicleFollow(this);
+        sq.updateVehicleUse(this, dt);
       }
     }
     // Told once, on the edge. The player inherits the job silently otherwise —

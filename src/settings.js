@@ -30,7 +30,7 @@ export const SETTING_DEFS = {
   // not wired yet, so today 1 and 4 behave identically — the tier is here so the
   // pool has a number to read when they land.
   beamLights: {
-    tab: 'video', label: 'REPAIR BEAM LIGHTS', kind: 'choice', def: 1,
+    tab: 'video', label: 'REPAIR BEAM LIGHTS', kind: 'choice', def: 4,
     hint: 'How many repair beams cast light. Beams still draw either way — this is the light budget.',
     options: [
       { v: 0, label: 'OFF', note: 'No beam casts light. Cheapest.' },

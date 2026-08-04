@@ -530,6 +530,162 @@ art, not numbers.
 
 ### Phase 7 — Bots drive
 
+Split into three, because each is worth looking at before the next exists and
+because 7a is the one that de-risks the other two: it puts four AI bodies in
+the seats without a line of driving AI, which is where the seating work either
+holds up or does not.
+
+#### 7a — Bots can ride ✅ DONE
+
+`Soldier.mount(vehicle, seat)` / `dismount()`. A rider is a soldier who is not
+walking, **not** a soldier who is switched off: they still take targets, and the
+ones with a free hand still shoot their own weapon through the normal path.
+`_move` is the only thing that must not run — the seat owns the body, and
+letting the mover write `pos` drags a rider out of the vehicle a metre at a
+time. Target acquisition was split out of `_think` into `_updateTarget` so a
+rider gets targeting without the errands under it, which all resolve to
+somewhere to *walk*.
+
+**`pos` is dragged along by the vehicle, not by the soldier.** The mesh does not
+need it (parented, rides for free), but `pos` is what the rest of the sim reads —
+who is near an objective, who a squad forms on, and where a bullet has to land.
+`Vehicle.syncOccupants` runs after the physics step because the soldier pass
+runs *before* vehicles, and reading the seat from there is a frame stale: 40 cm
+at 25 m/s. The player is skipped, since their controller already owns `pos`, and
+they are identified by `seatIdx` — testing `isPlayer` does **not** work, because
+the occupant for the player is the *controller*, which carries no such flag, and
+the yaw write would have stamped out their look direction.
+
+Dying, being downed and respawning all dismount. Same bug as the player's, and
+the same reason it would have gone unnoticed: a seat held by a body nobody can
+revive out of it never reopens.
+
+**Measured:** five bots crewed a hog, it drove 90.9 m, and every one of them
+finished **0.000 m** off their seat. 15 s of 8× battle with a crew aboard: all
+five still seated, 0.000 m worst error, zero dead-or-downed soldiers holding a
+seat. Roles gate firing correctly — a tailgate rider burned 60 rounds to 8 while
+the driver and the gunner fired nothing.
+
+*Noticed in passing, pre-existing:* a bot whose active weapon is the `magnum`
+does not fire even with a target in range — it behaves the same on foot, so it
+is not the mounted path.
+
+#### 7a.2 — The bot gunner mans the ring ✅ DONE
+
+The gunner was the one seat that still fired nothing, which is most of a
+Warthog's threat. It reuses `_fire` wholesale rather than growing a parallel
+turret path: `_chooseWeapon` returns `WEAPONS.hogturret` for that seat, so burst
+cadence, the pause between bursts, target validation and the line-of-sight check
+all come for free, and `hogturret.ai` is an ordinary weapon `ai` block anyone can
+tune. `muzzlePos` returns the M41's barrel while manning it — that one override
+is the whole of "the gunner shoots the vehicle's gun", and kills still attribute
+to the gunner because the shooter handed to `combat.fireShot` is unchanged.
+Frags and rockets are gated off: both would have been fired *from the turret
+muzzle*, because that is what `muzzlePos` now returns.
+
+Range is derived, not stashed: `aiEngageRange` / `aiMaxRange` consult the seat.
+A marine holding a magnum still engages at the M41's reach while in the ring,
+and there is no saved value anyone has to remember to restore.
+
+**Aim is a CLOSED LOOP on the barrel's measured direction, and that is the whole
+lesson here.** Commanding `turretYaw`/`turretPitch` from the bearing to the
+target is the obvious implementation and it is wrong — measured, the ring
+converged on exactly the commanded 1.486 / 0.779 and the barrel came out at 83°
+of elevation. Three independent reasons stack, any one of them fatal:
+`ref_muzzle_gunner` carries a baked rotation (already documented in phase 5 for
+putting rounds out of the side of the gun), the pitch node's axis is not the
+clean elevation axis, and the yaw axis is the CHASSIS vertical — so on a slope,
+yawing alone sweeps the barrel through half a radian of world pitch. Feeding
+back the observed error needs to know none of it, and costs nothing extra
+because `_turretOnTarget` has to read the true barrel direction anyway to decide
+whether to fire at all. There is no windup: the barrel is driven straight off
+`turretYaw` in the same frame, so the error being corrected is the rig's
+distortion, not slew lag.
+
+Firing waits for `hogturret.aimTolerance` (0.09 rad). Without it a gunner
+acquiring a target behind them hoses a burst across everything on the way round.
+The check sits *above* the burst logic so an interrupted burst resumes rather
+than being thrown away and re-rolled.
+
+**Measured:** aim error converges to 0.000–0.002 rad and holds; a full-health,
+full-plate enemy at 70 m goes down in 4.77 s; with no target the ring returns to
+exactly 0/0 rather than freezing where the last casualty was. Driving with a
+squadmate on the gun against six enemies at 80 m: 598/600 frames with a target,
+506/600 on target, one enemy down. 15 s of 8× battle after: 0.000 m worst
+off-seat, no seats held by casualties, no errors.
+
+#### 7b — Bots drive ✅ DONE
+
+`src/vehicledriver.js`. The whole module writes `vehicle.input` and reads
+`pos/quat/speed`, and nothing else — that narrowness is what makes it testable,
+because the **AUTOPILOT** toggle on the VEHICLE tab drives the range hog through
+this exact code with no Game, no squad and no soldier in sight. "Does the
+controller work" and "does the AI decide to drive" stay separate questions with
+separate answers.
+
+Pure pursuit, not a path follower: it is handed a point and closes on it.
+Anything smarter belongs above it, in whatever chooses the point.
+
+**Ground is sampled through `vehicle.groundAt`, never `world.heightAt`** — see
+the known problem below. Probes against the bake would steer around terrain that
+is not there, in exactly the regions where it reads a flat 0, and it would be
+diagnosed as an AI bug long before anyone suspected the heightfield.
+
+Proved on the range first: a four-corner circuit whose legs sit at x = +20 and
+x = −5 specifically to MISS the jump (x −31..−13) and the camber dome, because a
+lap that launches off the jump measures the suspension rather than the driver.
+**90 s: two-plus laps, zero unstick events, never flipped, never left the
+corridor.**
+
+**Only rises were treated as obstacles at first, and that is the half that does
+not hurt.** A wall strands you; a ledge rolls you. Two of four hogs ended an
+eight-minute battle upside down before `dropFall` existed. The probe now costs
+one pass and returns both a steering bias and a speed factor, and speed also
+backs off for a chassis that is already leaning — the one measure that accounts
+for what the suspension is doing, and the state a hog is in just before it goes
+over.
+
+#### 7c — The squad decides ✅ DONE
+
+`Squad.updateVehicleUse`. A squad whose objective is more than `driveMinDist`
+away claims the nearest **uncrewed** vehicle within `seekRange`, walks to it,
+drives, and dismounts within `dismountRange` of the objective — open question 6
+answered: capture on foot, because a hog spinning circles on a control point is
+far less readable than marines getting out.
+
+Three bugs, all of the same family — a state machine that could not tell two
+similar situations apart:
+
+1. **A claimed vehicle is not a crewed one.** Releasing on `!crewed` meant
+   claim, see it empty, release, re-claim next frame, forever, and the squad
+   was never given the seconds it needed to walk over. The empty case gets a
+   grace period now, and `boardTimeout` covers a hog nobody can reach.
+2. **The formation offset was applied to a vehicle destination.** `_move` walks
+   to `waypoint + formationOffset`, so aiming at the hog parked the squad in
+   formation AROUND it — the outermost slot stops 2.5 m short of 6.7 m out,
+   never reaches `boardRange`, and the squad stands there admiring the vehicle.
+   The offset is now cancelled for the approach.
+3. **Nearest-seat left the wheel empty.** Right for the player's squad piling
+   into a hog the player is already driving; here it produced three marines in
+   the back of a stationary Warthog, because they walked up from behind and the
+   tailgate was nearest. A squad that took a vehicle in order to drive fills the
+   one seat that makes that possible first.
+
+**Measured**, eight minutes of 8× battle: hogs covering 6.4 km, up to 22.6 m/s,
+97 frames of crew-without-driver against a constant state before the fix.
+
+**Claims bind bots only.** The player can still take a claimed hog, which is
+deliberate — a reservation the player cannot override is a reservation that
+reads as a bug.
+
+**Still open, and both are Phase 6's:** nothing rights or respawns a flipped
+vehicle, so any flip is permanent and the flip *rate* cannot honestly be
+characterised until recovery exists. And with four hogs against sixteen squads
+the AI claims the entire motor pool within a few minutes; nothing reserves
+anything for the player, and nothing stops a squad taking a vehicle out of the
+other team's pool if it is within `seekRange` — which may well be correct, since
+stealing vehicles is the genre, but it is a decision nobody has made yet.
+
 **Working:** vehicle use is a **squad-level** decision, not an individual one.
 `TeamBrain.replan` (`ai.js:168`) assigns a squad to a vehicle when its objective
 is far enough that driving beats walking; the squad's members fill seats by role

@@ -1270,10 +1270,15 @@ export class Vehicle {
   // Which seat a soldier standing here would take: the nearest FREE one. No
   // menu, no cycle key — walk round to the back of the hog and press E and you
   // are on the tailgate, stand at the door and you are driving.
-  nearestFreeSeat(pos) {
+  // `skipRoles` lets a caller refuse seats it cannot actually crew. Bots use it
+  // to leave the driver's seat alone: nothing drives for them yet (phase 7b),
+  // so a bot taking the wheel does not produce a moving Warthog, it produces a
+  // parked one with the wheel occupied.
+  nearestFreeSeat(pos, skipRoles = null) {
     let best = -1, bestD = Infinity;
     for (let i = 0; i < this.seats.length; i++) {
       if (this.seats[i].occupant) continue;
+      if (skipRoles && skipRoles.includes(this.seats[i].def.role)) continue;
       const d = pos.distanceToSquared(this.seatWorld(i, _v3));
       if (d < bestD) { bestD = d; best = i; }
     }
@@ -1296,6 +1301,34 @@ export class Vehicle {
       this.input.brake = 0;
       this.input.steer = 0;
       this.input.handbrake = false;
+    }
+  }
+
+  // Drag every seated bot's `pos` along with the seat.
+  //
+  // The MESH does not need this — it is parented, so it rides for free — but
+  // `pos` is what the rest of the sim reads: who is near an objective, who a
+  // squad forms up on, and where a bullet has to land to hit them. A rider
+  // whose `pos` stayed at the kerb would be shot at an empty patch of road.
+  //
+  // Called after the physics step rather than from the soldier's own update,
+  // because the soldier pass runs BEFORE vehicles (game.js) — reading the seat
+  // from there is a frame stale, which is 40 cm at 25 m/s. Same ordering
+  // argument as `player.updateVehicleCamera`.
+  //
+  // The player is skipped: their controller owns `pos` and writes it from the
+  // seat itself, and two writers would race. It is identified by `seatIdx` —
+  // the field a mounted Soldier carries and the Player controller does not (it
+  // keeps its own `vehicleSeatIdx`). Testing `isPlayer` would NOT work: the
+  // occupant for the player is the controller, which has no such flag, so the
+  // yaw write below would land on it and stamp out their look direction.
+  syncOccupants() {
+    for (let i = 0; i < this.seats.length; i++) {
+      const who = this.seats[i].occupant;
+      if (!who || who.seatIdx !== i || !who.pos) continue;
+      this.seatWorld(i, _v1);
+      who.pos.copy(_v1);
+      who.yaw = this.yaw;
     }
   }
 
@@ -1424,7 +1457,7 @@ export class VehicleManager {
     }
     // Doors run on real frame time, not the physics accumulator, and outside
     // the sleep check — a parked hog still has to be able to open a door.
-    for (const v of this.vehicles) { v.updateDoors(dt); v.syncVisuals(); }
+    for (const v of this.vehicles) { v.updateDoors(dt); v.syncVisuals(); v.syncOccupants(); }
   }
 
   // Every vehicle within `range` of a point. The ALT outline needs the set, not

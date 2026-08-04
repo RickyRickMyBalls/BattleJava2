@@ -27,6 +27,7 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
 import { Vehicle } from './vehicle.js';
+import { VehicleDriver } from './vehicledriver.js';
 
 const R = 220;              // half-extent of the proving ground, metres
 const MESH_STEP = 1.25;     // ground tessellation
@@ -325,12 +326,41 @@ export function createVehicleRange(assets) {
     },
   };
 
+  // AUTOPILOT. A closed circuit rather than a straight line, because the only
+  // interesting questions about a driver are the corners: does the governor
+  // slow for them, does it overshoot the apex, does it recover.
+  //
+  // Every leg is placed to MISS the range's features. The jump occupies
+  // x -31..-13 and the camber dome reaches x = 30 at z = 75, so the two long
+  // legs run at x = +20 and x = -5 — the driver is being measured here, and a
+  // lap that launches off the jump measures the suspension instead.
+  //
+  // Declared ABOVE the hog, because the hog's constructor block builds the
+  // driver and `let` in the dead zone is not a hoisted `var`.
+  const COURSE = [
+    new THREE.Vector3(20, 0, -140),
+    new THREE.Vector3(20, 0, 140),
+    new THREE.Vector3(-5, 0, 140),
+    new THREE.Vector3(-5, 0, -140),
+  ];
+  let autopilot = false;
+  let driver = null;
+  let wpIdx = 0;
+  let laps = 0;
+  const waypoint = COURSE[0].clone();
+  function nextWaypoint() {
+    wpIdx = (wpIdx + 1) % COURSE.length;
+    if (wpIdx === 0) laps++;
+    waypoint.copy(COURSE[wpIdx]);
+  }
+
   const template = assets.vehicles && assets.vehicles.warthog;
   let hog = null;
   if (template) {
     hog = new Vehicle('warthog', template.clone(true), null, world);
     group.add(hog.group);
     hog.settleAt(0, 0, 0);
+    driver = new VehicleDriver(hog);
   }
 
   const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 2000);
@@ -420,13 +450,24 @@ export function createVehicleRange(assets) {
 
   function update(dt) {
     if (!hog) return;
-    const fwd = !!keys['KeyW'], back = !!keys['KeyS'];
-    const rolling = hog.speed > 0.6;
-    hog.input.throttle = fwd ? 1 : (back && !rolling ? -1 : 0);
-    hog.input.brake = back && rolling ? 1 : 0;
-    hog.input.handbrake = !!keys['Space'];
-    hog.input.steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
-    if (fwd || back || hog.input.steer || hog.input.handbrake) hog.wake();
+    let fwd = false;                // read by the 0-20 stopwatch further down
+    if (autopilot) {
+      fwd = hog.input.throttle > 0;
+      // The bot driver, driving the range hog through exactly the code a
+      // squad's driver uses. Nothing else in here changes: it writes the same
+      // four inputs the keys below write, which is the point of keeping
+      // `VehicleDriver`'s whole surface down to `vehicle.input`.
+      if (driver.drive(dt, waypoint.x, waypoint.z)) nextWaypoint();
+    } else {
+      fwd = !!keys['KeyW'];
+      const back = !!keys['KeyS'];
+      const rolling = hog.speed > 0.6;
+      hog.input.throttle = fwd ? 1 : (back && !rolling ? -1 : 0);
+      hog.input.brake = back && rolling ? 1 : 0;
+      hog.input.handbrake = !!keys['Space'];
+      hog.input.steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
+      if (fwd || back || hog.input.steer || hog.input.handbrake) hog.wake();
+    }
 
     // The leftover is CARRIED between frames. It used to be a local, so every
     // frame threw away whatever did not divide evenly into a substep, and the
@@ -491,6 +532,13 @@ export function createVehicleRange(assets) {
       `lat     ${latG.toFixed(2)} g      yaw ${hog.angVel.y.toFixed(2)} rad/s   slip ${beta === null ? '--' : `${beta.toFixed(0)}deg`}`,
       `attitude lean ${lean.toFixed(1)}deg  pitch ${pitch.toFixed(1)}deg  ${air ? `${air} WHEEL${air > 1 ? 'S' : ''} AIRBORNE` : 'planted'}`,
       `steer   ${(hog.steerAngle * 57.3).toFixed(1)}deg${hog.asleep ? '   [asleep]' : ''}`,
+      ...(autopilot ? [
+        `AUTO    wp ${wpIdx} @ ${waypoint.x.toFixed(0)},${waypoint.z.toFixed(0)}`
+          + `  ${hog.pos.distanceTo(waypoint).toFixed(0)}m   laps ${laps}`,
+        `        thr ${hog.input.throttle.toFixed(1)}  brk ${hog.input.brake.toFixed(1)}`
+          + `  str ${hog.input.steer.toFixed(2)}`
+          + `${driver && driver.reverseTimer > 0 ? '   UNSTICK' : ''}`,
+      ] : []),
       '',
       ...rows,
       '',
@@ -537,6 +585,23 @@ export function createVehicleRange(assets) {
     camera,
     get vehicle() { return hog; },
     get camName() { return CAMS[camMode]; },
+    get autopilot() { return autopilot; },
+    setAutopilot(on) {
+      autopilot = !!on;
+      if (driver) driver.release();      // hand the controls back cleanly
+      if (autopilot) {
+        // Start on the leg the hog is nearest to being able to drive, so
+        // switching it on mid-range does not begin with a U-turn.
+        let best = 0, bestD = Infinity;
+        for (let i = 0; i < COURSE.length; i++) {
+          const d = hog.pos.distanceToSquared(COURSE[i]);
+          if (d < bestD) { bestD = d; best = i; }
+        }
+        wpIdx = best;
+        waypoint.copy(COURSE[best]);
+        laps = 0;
+      }
+    },
     setActive(on) {
       active = on;
       group.visible = on;

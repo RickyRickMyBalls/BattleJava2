@@ -7,6 +7,7 @@ import { CFG, TEAM, WEAPONS, GRENADES, GADGETS, BIOFOAM } from './config.js';
 import { classPerk } from './loadout.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
 import { measureHipsRise, seatMeshOn, forcePose, poseFor } from './seating.js';
+import { VehicleDriver } from './vehicledriver.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;
@@ -181,6 +182,16 @@ export class Soldier {
     this.vehicle = null;
     this.seatIdx = -1;
     this.seatAnim = null;
+    this.seatRole = null;       // 'drive' | 'turret' | 'ride' while mounted
+    // WHO put them here. Whatever decided a bot should board is the only thing
+    // entitled to decide it should get off again — see Squad.updateVehicleFollow,
+    // which uses it to avoid dismounting riders it did not seat.
+    this.seatReason = null;
+    // Only ever set on a soldier actually in a driving seat. The controller
+    // carries per-vehicle state (a stuck timer, a reverse phase), so it belongs
+    // to whoever is holding the wheel and goes away with them.
+    this.driver = null;
+    this.driveTarget = null;    // world point whoever is giving orders wants it at
 
     this.target = null;         // enemy Soldier
     this.thinkTimer = Math.random() * AI.thinkInterval;
@@ -429,11 +440,64 @@ export class Soldier {
     return true;
   }
 
+  // Take a seat on a vehicle, claiming it. `seatIn` below is the presentation
+  // half (pose + parenting) and is what the PLAYER uses, because the player's
+  // seat bookkeeping lives on the controller; this is the whole transaction for
+  // a bot, which has no controller to hold it.
+  mount(vehicle, seatIdx) {
+    if (!vehicle || this.vehicle || !this.alive || this.downed) return false;
+    const i = seatIdx >= 0 ? seatIdx : vehicle.nearestFreeSeat(this.pos);
+    if (i < 0 || !vehicle.enterSeat(i, this)) return false;
+    this.seatRole = vehicle.seats[i].def.role;
+    if (!this.seatIn(vehicle, i, vehicle.seats[i].def.anim)) {
+      vehicle.exitSeat(this);
+      this.seatRole = null;
+      return false;
+    }
+    if (this.seatRole === 'drive') this.driver = new VehicleDriver(vehicle);
+    // Stop dead rather than coasting: `_move` will not run again to bleed these
+    // off, and a rider still carrying speed reads as walking in mid-air the
+    // moment they step out.
+    this.speed2D = 0;
+    this.setMoveDir(0, 0, 0);
+    this.sprinting = false;
+    this.crouching = false;
+    this.airborne = false;
+    this.hasWaypoint = false;
+    return true;
+  }
+
+  // Step off. Safe to call on a soldier who is not in anything, because the
+  // paths that must not miss it — dying, being downed, respawning — cannot
+  // afford to check first.
+  dismount() {
+    const v = this.vehicle;
+    if (!v) return;
+    // Fall back to the seat this soldier THINKS it is in if the vehicle has
+    // already let go of it (a dismount racing a respawn). `exitPoint` indexes
+    // the seat array, and -1 would throw on the way out of a death.
+    const i = v.seatOf(this) >= 0 ? v.seatOf(this) : Math.max(0, this.seatIdx);
+    v.exitPoint(_v, i);
+    v.exitSeat(this);
+    // `pos` before `unseat`, because unseat re-parents the mesh and puts it
+    // back at `pos` — doing it the other way round drops the body at the seat
+    // it just left for a frame, on a vehicle that may be moving.
+    this.pos.copy(_v);
+    this.unseat();
+    this.seatRole = null;
+  }
+
   unseat() {
     if (!this.vehicle) return;
+    // Let go of the controls on the way out, or a hog whose driver was shot
+    // keeps whatever throttle and lock they died holding.
+    if (this.driver) { this.driver.release(); this.driver = null; }
+    this.driveTarget = null;
     this.vehicle = null;
     this.seatIdx = -1;
     this.seatAnim = null;
+    this.seatRole = null;
+    this.seatReason = null;
     if (this.mesh) {
       this.game.scene.add(this.mesh);   // re-parents; add() removes from the old one
       this.mesh.position.copy(this.pos);
@@ -568,6 +632,10 @@ export class Soldier {
   }
 
   spawnAt(x, z) {
+    // A respawning bot is a recycled object, so anything it was holding when it
+    // died is still held. Nothing should be, but the seat is the one that would
+    // be silently permanent.
+    this.dismount();
     this.pos.set(x, this.game.world.heightAt(x, z), z);
     this.vel.set(0, 0, 0);
     this.alive = true;
@@ -641,6 +709,14 @@ export class Soldier {
   // throttled — invisible on a tracer origin, but do not build anything
   // precision-critical on it.
   muzzlePos(out) {
+    // Manning the ring, the rounds leave the M41's barrel, not the rifle in
+    // this soldier's hands. `combat.fireShot` builds both the origin and the
+    // direction from here, so overriding it is the whole of "the gunner shoots
+    // the vehicle's gun" — and kills still attribute to the gunner, because the
+    // shooter passed to combat is unchanged.
+    if (this.seatRole === 'turret' && this.vehicle && this.vehicle.turret) {
+      return this.vehicle.turret.muzzle.getWorldPosition(out);
+    }
     const gun = this.guns && this.guns[this.heldKey];
     const m = gun && gun.userData.muzzle;
     if (m) return m.getWorldPosition(out);
@@ -686,6 +762,10 @@ export class Soldier {
   // Out of the fight, not gone. Costs no ticket and no death — both are paid
   // in `die` if the bleedout runs out, which is why `downedBy` is kept.
   goDown(attacker) {
+    // Off the vehicle first, and before `alive` flips — a casualty is on the
+    // ground, and a seat left claimed by a body nobody can revive out of it is
+    // a seat that never reopens. Same reason `game.onDown` dismounts the player.
+    this.dismount();
     this.alive = false;
     this.downed = true;
     this.downTimer = D.bleedout;
@@ -711,6 +791,7 @@ export class Soldier {
   }
 
   die(attacker) {
+    this.dismount();
     // Already lying down: re-triggering the death clip would snap the body back
     // to its first frame, which reads as the corpse flinching.
     const wasDowned = this.downed;
@@ -815,12 +896,40 @@ export class Soldier {
 
     if (!this.isPlayer) {
       this._updateBiofoam(dt);
-      this._think(dt);
-      this._updateRevive(dt);
-      this._updateRepair(dt);
-      this._updateSupply(dt);
-      this._move(dt);
-      this._fire(dt);
+      // A rider is a soldier who is not walking, not a soldier who is switched
+      // off: they still pick targets and the ones with a free hand still shoot.
+      // `_move` is the only thing that MUST not run — the seat owns the body,
+      // and letting the mover write `pos` would drag them out of the vehicle a
+      // metre at a time.
+      if (this.vehicle) {
+        this._thinkMounted(dt);
+        // The driver has both hands on the wheel and fires nothing. Riders fire
+        // their own carried weapon; the gunner slews the ring and fires that.
+        // Aiming runs every frame, NOT on the think tick — the mount turns at a
+        // fixed rate and a barrel that only updated four times a second would
+        // step round in visible jerks and never settle on a moving target.
+        if (this.seatRole === 'drive') {
+          // Steering is the driver's whole job — they fire nothing. With no
+          // order they let go rather than holding the last one, so a squad that
+          // loses its objective coasts to a stop instead of driving on forever.
+          if (this.driver) {
+            if (this.driveTarget) this.driver.drive(dt, this.driveTarget.x, this.driveTarget.z);
+            else this.driver.release();
+          }
+        } else if (this.seatRole === 'turret') {
+          this._aimTurret(dt);
+          this._fire(dt);
+        } else if (this.seatRole === 'ride') {
+          this._fire(dt);
+        }
+      } else {
+        this._think(dt);
+        this._updateRevive(dt);
+        this._updateRepair(dt);
+        this._updateSupply(dt);
+        this._move(dt);
+        this._fire(dt);
+      }
     }
     this._updateAnim(dt);
   }
@@ -963,14 +1072,25 @@ export class Soldier {
     this.burstLeft = 0;
   }
 
-  _think(dt) {
-    this.thinkTimer -= dt;
-    if (this.thinkTimer > 0) return;
-    this.thinkTimer = AI.thinkInterval * (0.8 + Math.random() * 0.4);
+  // While manning a ring gun a soldier's reach is the GUN's, not the rifle they
+  // happen to be carrying — a marine with a magnum in the turret still engages
+  // at the M41's range. Derived on read rather than written on mount and put
+  // back on dismount: a saved value that has to be restored is a value that
+  // eventually is not, which is the trap `forcePose` in seating.js documents.
+  get aiEngageRange() {
+    if (this.seatRole !== 'turret') return this.engageRange;
+    return Math.min(320, WEAPONS.hogturret.ai.range);   // same clamp as the loadout
+  }
+  get aiMaxRange() {
+    return this.seatRole === 'turret' ? WEAPONS.hogturret.ai.range : this.maxRange;
+  }
 
-    // Validate current target
+  // Keep, drop or find a target. Split out of `_think` because a soldier riding
+  // a vehicle needs exactly this and none of the errands below it — the errands
+  // all resolve to somewhere to WALK, and a passenger's legs are not available.
+  _updateTarget() {
     if (this.target && this.target.isPlayer && this.game.spectating) this.target = null;
-    if (this.target && (!this.target.alive || this.pos.distanceTo(this.target.pos) > this.engageRange * 1.25)) {
+    if (this.target && (!this.target.alive || this.pos.distanceTo(this.target.pos) > this.aiEngageRange * 1.25)) {
       this.target = null;
     }
     if (this.target && !this._canSee(this.target)) {
@@ -980,6 +1100,82 @@ export class Soldier {
     if (!this.target) {
       this.target = this._acquireTarget();
     }
+  }
+
+  // Slew the ring onto the target.
+  //
+  // CLOSED LOOP on where the barrel actually points, not open loop on where the
+  // geometry says it should. Commanding `turretYaw`/`turretPitch` from the
+  // bearing to the target looks obviously right and is wrong: the ring converged
+  // on exactly the commanded 1.486 / 0.779 and the barrel came out at 83° of
+  // elevation. Three separate reasons stack up, and each on its own is enough —
+  // `ref_muzzle_gunner` carries a baked rotation (VEHICLE_PLAN.md already
+  // documents rounds leaving the side of the gun at 90° for this reason), the
+  // pitch node's axis is not the clean elevation axis, and the yaw axis is the
+  // CHASSIS vertical, so on a slope yawing sweeps the barrel through half a
+  // radian of world pitch on its own.
+  //
+  // Measuring the error and feeding it back needs to know none of that. It also
+  // costs nothing extra: `_turretOnTarget` has to read the true barrel direction
+  // anyway to decide whether to fire.
+  //
+  // No windup, because the barrel is driven straight off `turretYaw` in the same
+  // frame — the error being corrected is the rig's distortion, not slew lag, and
+  // `aimTurret` still rate-limits how fast any of it is taken up.
+  //
+  // With no target the gun returns to forward rather than freezing wherever the
+  // last dead enemy was: a hog driving about with its gun locked over one
+  // shoulder reads as broken.
+  _aimTurret(dt) {
+    const v = this.vehicle;
+    if (!v || !v.turret) return;
+    if (!this.target || !this.target.alive) { v.aimTurret(0, 0, dt); return; }
+    if (!v.muzzle(_v, _v2)) return;           // _v = muzzle point, _v2 = true dir
+    const dx = this.target.pos.x - _v.x;
+    const dy = (this.target.pos.y + 1.25) - _v.y;
+    const dz = this.target.pos.z - _v.z;
+    const len = Math.hypot(dx, dy, dz) || 1e-3;
+    // World-space error between the barrel and the line to the target. Working
+    // in world space rather than the chassis frame is what keeps this free of
+    // every convention above.
+    const yawErr = wrapPi(Math.atan2(dx, dz) - Math.atan2(_v2.x, _v2.z));
+    const pitchErr = Math.asin(Math.max(-1, Math.min(1, dy / len)))
+      - Math.asin(Math.max(-1, Math.min(1, _v2.y)));
+    v.aimTurret(v.turretYaw + yawErr, v.turretPitch + pitchErr, dt);
+  }
+
+  // Is the barrel actually pointing at the target yet? Asked because the mount
+  // SLEWS: a gunner picking up a target behind them would otherwise hose a
+  // burst across everything between here and there on the way round.
+  _turretOnTarget() {
+    const v = this.vehicle;
+    if (!v || !this.target) return false;
+    if (!v.muzzle(_v, _v2)) return false;          // _v = muzzle, _v2 = barrel dir
+    const tx = this.target.pos.x - _v.x;
+    const ty = (this.target.pos.y + 1.25) - _v.y;
+    const tz = this.target.pos.z - _v.z;
+    const len = Math.hypot(tx, ty, tz) || 1e-3;
+    const dot = (_v2.x * tx + _v2.y * ty + _v2.z * tz) / len;
+    return dot >= Math.cos(WEAPONS.hogturret.aimTolerance);
+  }
+
+  // Riding. Targeting on the same clock as everyone else, and nothing that
+  // would send the body somewhere.
+  _thinkMounted(dt) {
+    this.thinkTimer -= dt;
+    if (this.thinkTimer > 0) return;
+    this.thinkTimer = AI.thinkInterval * (0.8 + Math.random() * 0.4);
+    this.reviveTarget = null;
+    this.repairTarget = null;
+    this._updateTarget();
+  }
+
+  _think(dt) {
+    this.thinkTimer -= dt;
+    if (this.thinkTimer > 0) return;
+    this.thinkTimer = AI.thinkInterval * (0.8 + Math.random() * 0.4);
+
+    this._updateTarget();
 
     // Errands, decided on the same tick as targeting because they are the same
     // decision: fight, or go do something useful. Priority is fight > pick
@@ -1153,7 +1349,7 @@ export class Soldier {
 
   _acquireTarget() {
     const enemies = this.game.teams[this.team === TEAM.BLUE ? TEAM.RED : TEAM.BLUE].soldiers;
-    let best = null, bestD = this.engageRange;
+    let best = null, bestD = this.aiEngageRange;
     for (const e of enemies) {
       if (!e.alive || (e.isPlayer && this.game.spectating)) continue;
       const d = this.pos.distanceTo(e.pos);
@@ -1165,7 +1361,7 @@ export class Soldier {
     for (const e of enemies) {
       if (!e.alive || e === best || (e.isPlayer && this.game.spectating)) continue;
       const d = this.pos.distanceTo(e.pos);
-      if (d < this.engageRange && this._canSee(e)) return e;
+      if (d < this.aiEngageRange && this._canSee(e)) return e;
       if (++tries >= 3) break;
     }
     return null;
@@ -1310,8 +1506,12 @@ export class Soldier {
     if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
     if (!this.target || !this.target.alive) return;
     const dist = this.pos.distanceTo(this.target.pos);
-    if (dist > this.maxRange) return;
+    if (dist > this.aiMaxRange) return;
     if (this.fireTimer > 0) return;
+    // The ring is still swinging round. Hold — this sits ABOVE the burst logic
+    // so an interrupted burst resumes when the barrel catches up rather than
+    // being thrown away and re-rolled.
+    if (this.seatRole === 'turret' && !this._turretOnTarget()) return;
 
     if (this.burstLeft <= 0) {
       // start a new burst only with LOS
@@ -1319,11 +1519,16 @@ export class Soldier {
         this.fireTimer = 0.4;
         return;
       }
+      // Both hands are on the M41. A gunner throwing a frag or shouldering a
+      // rocket would be firing a weapon that is stowed on their back and, worse,
+      // firing it from `muzzlePos` — which for this seat is the ring gun's
+      // barrel, so the round would leave the turret.
+      const ringOnly = this.seatRole === 'turret';
       // Frag a clustered group. Sits ahead of the rocket check because it is
       // the shorter-ranged answer to the same situation, and `_explode` only
       // damages the thrower's enemies, so there is no friendly-fire risk to
       // weigh — the AI never has to decide whether a throw is safe.
-      if (this.grenade && this.grenade.def.ai && this.grenade.count > 0 && this.grenadeCooldown <= 0
+      if (!ringOnly && this.grenade && this.grenade.def.ai && this.grenade.count > 0 && this.grenadeCooldown <= 0
           && dist >= this.grenade.def.ai.minRange && dist <= this.grenade.def.ai.maxRange
           && this._clusterSize(this.target) >= this.grenade.def.ai.cluster) {
         const def = this.grenade.def;
@@ -1341,7 +1546,7 @@ export class Soldier {
       }
 
       // Engineer: rocket a clustered group on cooldown
-      if (this.secondary.mode === 'projectile' && this.rocketCooldown <= 0
+      if (!ringOnly && this.secondary.mode === 'projectile' && this.rocketCooldown <= 0
           && dist >= this.secondary.ai.aiMin && dist <= this.secondary.ai.range
           && this._clusterSize(this.target) >= 2) {
         const def = this.secondary;
@@ -1375,6 +1580,11 @@ export class Soldier {
 
   // Prefer the class secondary when the target sits in its band, else primary.
   _chooseWeapon(d) {
+    // In the ring, the ring gun is the weapon — the rifle on your back is not a
+    // candidate. Returning it here rather than growing a parallel `_fireTurret`
+    // is what lets a bot gunner inherit burst cadence, the pause between
+    // bursts, target validation and the line-of-sight check unchanged.
+    if (this.seatRole === 'turret') return WEAPONS.hogturret;
     const p = this.primary, s = this.secondary;
     const secOk = s.mode !== 'projectile' && d >= s.ai.aiMin && d <= s.ai.range;
     const priOk = d >= p.ai.aiMin && d <= p.ai.range;
@@ -1446,4 +1656,11 @@ function lerpAngle(a, b, t) {
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
   return a + d * t;
+}
+
+// Shortest signed representation of an angle. `atan2` rather than a while-loop
+// because the turret error it wraps can arrive arbitrarily large when a gunner
+// picks up a target behind them.
+function wrapPi(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
 }

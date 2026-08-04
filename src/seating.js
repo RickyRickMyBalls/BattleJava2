@@ -71,10 +71,38 @@ export function measureHipsRise(mesh, mixer, act, samples = 5) {
 // immediately after `fadeIn(0)` therefore reads the OUTGOING pose. That cost 18
 // cm of error (a standing marine's hips instead of a seated one's) and made it
 // intermittent, because what it measured depended on what had been playing.
-// Forcing the weights makes the pose true right now.
+// Forcing the pose makes it true right now.
+//
+// The suppression is `enabled`, NOT `setEffectiveWeight(0)`, and the difference
+// is the whole comment. `setEffectiveWeight` writes the action's BASE weight,
+// `_updateWeight` computes `weight = this.weight` and then MULTIPLIES by the
+// fade interpolant, and `reset()` — which `playAnim` calls on every transition
+// — clears fading but never restores `weight`. So a base of 0 is permanent:
+// every later crossfade multiplies by zero, the mixer contributes nothing, and
+// the body freezes in the driving pose the moment it leaves the seat while
+// `currentAnim` cheerfully reports `idle`. It survived respawn too, because
+// `setCharacter` early-returns when the character has not changed, so the
+// actions were never rebuilt — one ride broke that soldier for the rest of the
+// match, bots included.
+//
+// `enabled` has none of that: `_updateWeight` returns 0 for a disabled action,
+// the base weight stays 1 so future fades have something to scale, and
+// `playAnim`'s `next.reset()` sets `enabled = true` — so a clip revives the
+// instant it is next selected, with no restore step anyone can forget. (The
+// zero-then-restore pairing lobby.js:439/449 uses is the other correct answer;
+// it is wrong HERE because it would leave the outgoing clip and the seat clip
+// both at weight 1 with their fades stopped, blending two poses 50/50.)
+//
+// The seat clip still needs `setEffectiveWeight(1)` specifically: it calls
+// `stopFading()` internally, which discards the zero-length `fadeIn`
+// interpolant that evaluates to 0 at t = now. Killing that interpolant is the
+// original reason this function exists.
 export function forcePose(actions, key) {
   for (const k of Object.keys(actions)) {
-    if (actions[k]) actions[k].setEffectiveWeight(k === key ? 1 : 0);
+    const a = actions[k];
+    if (!a) continue;
+    if (k === key) a.setEffectiveWeight(1);
+    else a.enabled = false;
   }
 }
 

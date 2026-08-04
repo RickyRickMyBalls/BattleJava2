@@ -23,6 +23,8 @@ export class Squad {
     this.followPlayer = false;
     this.leader = null;      // see refreshLeader — a position, never a class
     this.beacon = null;      // live rally beacon, or null. structures.js owns it
+    this.vehicle = null;     // the hog this squad has claimed, if any
+    this.boardTimer = 0;     // seconds spent walking to a claimed, empty vehicle
     // Both on the SQUAD rather than on the leader: leadership moves when a
     // leader goes down, and a cooldown carried on the man would reset with him
     // — a squad could re-plant every time it lost someone.
@@ -145,9 +147,162 @@ export class Squad {
     if (!this.followPlayer || !playerPos) return;
     for (const m of this.members) {
       if (m.isPlayer) continue;
+      if (m.vehicle) continue;      // riding: the seat owns them, not the waypoint
       m.waypoint.copy(playerPos);
       m.hasWaypoint = true;
     }
+  }
+
+  // Mount up with the player.
+  //
+  // This is the first thing that ever CALLS `Soldier.mount` — 7a built the
+  // capability and nothing decided to use it, so squadmates walked to the hog
+  // you were sitting in and then stood next to it. `updateFollow` above already
+  // brings them, because a seated player's `pos` IS the seat; all that was
+  // missing was the last two metres.
+  //
+  // Deliberately narrow: it boards the squad onto the vehicle THE PLAYER IS IN
+  // and nothing else. A bot deciding on its own that a hog across the map is
+  // worth walking to is the squad-level call in 7c, and it needs a driver AI to
+  // be worth anything.
+  updateVehicleFollow(game) {
+    if (!this.followPlayer) return;
+    const V = CFG.vehicle;
+    const veh = game.playerActive() ? game.player.vehicle : null;
+    for (const m of this.members) {
+      if (m.isPlayer || !m.alive || m.downed) continue;
+      // Only ever undo what this method did, which is what `seatReason` marks.
+      // Getting this wrong the obvious way — testing "is the member in a
+      // vehicle other than the player's" first — silently swallows the case
+      // that matters: with the player on foot the player's vehicle is null, so
+      // EVERY seated member matched "somewhere else" and the dismount below was
+      // unreachable. The squad stayed in the hog after the player walked off.
+      if (m.vehicle && m.vehicle !== veh) {
+        if (m.seatReason === 'follow') m.dismount();
+        continue;
+      }
+      if (!veh) continue;
+      if (m.vehicle === veh) continue;                       // already aboard
+      // You cannot jump onto a moving Warthog, and letting a bot do it means
+      // squadmates teleporting into a hog doing 20 m/s past them.
+      if (veh.speed > V.ai.boardSpeed) continue;
+      if (m.pos.distanceTo(veh.pos) > V.ai.boardRange) continue;
+      const i = veh.nearestFreeSeat(m.pos, ['drive']);
+      if (i >= 0 && m.mount(veh, i)) m.seatReason = 'follow';
+    }
+  }
+
+  // A squad using a vehicle on its own. This is the squad-level call the plan
+  // asks for: whether to DRIVE to the objective rather than walk, decided once
+  // for the squad rather than per soldier, because a Warthog with one marine in
+  // it and three jogging behind is worse than either.
+  //
+  // Split from `updateVehicleFollow` on purpose. That one exists to keep a
+  // squad with its player, and the player is driving; this one has no player in
+  // it and therefore needs a driver, a destination and a reason to get out
+  // again. Sharing a method would mean every branch asking which case it was in.
+  updateVehicleUse(game, dt) {
+    // The player's squad, while the player is on the field, is theirs to lead.
+    if (this.followPlayer && game.playerActive()) { this._releaseVehicle(); return; }
+    const V = CFG.vehicle;
+    const A = V.ai;
+    const lead = this.leader;
+    if (!lead || !this.objective) { this._releaseVehicle(); return; }
+
+    const objX = this.objective.x, objZ = this.objective.z;
+
+    if (this.vehicle) {
+      const v = this.vehicle;
+      if (v.flipped) { this._releaseVehicle(); return; }
+      // A CLAIMED vehicle is not yet a CREWED one, and conflating the two was
+      // a loop: claim it, see no crew, release it, re-claim it next frame,
+      // forever, with the squad never given the seconds it needs to walk over.
+      // So the empty case gets a grace period instead of an immediate release,
+      // and the timeout is what covers a hog nobody can actually reach.
+      const aboard = this.members.some((m) => m.vehicle === v);
+      if (aboard) this.boardTimer = 0;
+      else {
+        this.boardTimer += dt || 0;
+        if (this.boardTimer > A.boardTimeout) { this._releaseVehicle(); return; }
+      }
+      const dist = Math.hypot(v.pos.x - objX, v.pos.z - objZ);
+      // Arrived. Everyone out — VEHICLE_PLAN.md open question 6 answers this:
+      // capturing is done on foot, because dismounting is far more readable
+      // than a hog spinning circles on a control point.
+      if (dist <= A.dismountRange) { this._releaseVehicle(); return; }
+      const driver = v.seats[0].occupant;
+      if (driver && driver.driver) {
+        if (!driver.driveTarget) driver.driveTarget = new THREE.Vector3();
+        driver.driveTarget.set(objX, 0, objZ);
+      }
+      // Anyone still on foot walks to the vehicle rather than to the objective,
+      // and boards when they reach it.
+      for (const m of this.members) {
+        if (m.isPlayer || !m.alive || m.downed || m.vehicle) continue;
+        // The formation offset is CANCELLED here, not merely ignored. `_move`
+        // walks to `waypoint + formationOffset`, so aiming the raw vehicle
+        // position parks the squad in formation AROUND the hog — the outermost
+        // slot is 6.7 m out and stops 2.5 m short of that, so it never comes
+        // inside `boardRange` and the squad stands there admiring the vehicle
+        // forever. Subtracting the offset puts each marine's own destination on
+        // the door instead.
+        m.waypoint.set(v.pos.x - m.formationOffset.x, v.pos.y, v.pos.z - m.formationOffset.z);
+        m.hasWaypoint = true;
+        if (v.speed <= A.boardSpeed && m.pos.distanceTo(v.pos) <= A.boardRange) {
+          // THE WHEEL FIRST, always. Nearest-seat is right for the player's
+          // squad piling into a hog the player is already driving; here it
+          // produced three marines in the back of a stationary Warthog, because
+          // they walked up from behind and the tailgate was nearest. A squad
+          // that took a vehicle in order to drive somewhere has to fill the one
+          // seat that makes that possible before it fills any other.
+          const i = v.seats[0].occupant ? v.nearestFreeSeat(m.pos) : 0;
+          if (i >= 0 && m.mount(v, i)) m.seatReason = 'squad';
+        }
+      }
+      return;
+    }
+
+    // No vehicle yet. Only worth one if the walk is long enough that driving
+    // wins even after the detour to reach it.
+    const toObj = Math.hypot(lead.pos.x - objX, lead.pos.z - objZ);
+    if (toObj < A.driveMinDist) return;
+    const v = this._findVehicle(game, lead);
+    if (!v) return;
+    // Claim it, so two squads converging on the same hog do not each walk their
+    // whole strength to it and split across two half-crews.
+    this.vehicle = v;
+    v.claimedBy = this;
+    // Nobody is assigned to the wheel here. The boarding loop above takes the
+    // NEAREST free seat, so whoever arrives first drives — which is what you
+    // want, because naming a driver in advance strands the squad whenever that
+    // one marine is the furthest away or dies on the walk over.
+  }
+
+  // The nearest vehicle with nobody in it, within reach and not already spoken
+  // for by another squad. Uncrewed rather than "has a free seat": a squad that
+  // piles into somebody else's half-full hog leaves both squads split.
+  _findVehicle(game, lead) {
+    const A = CFG.vehicle.ai;
+    const list = game.vehicles ? game.vehicles.vehicles : null;
+    if (!list) return null;
+    let best = null, bestD = A.seekRange;
+    for (const v of list) {
+      if (v.crewed || v.flipped) continue;
+      if (v.claimedBy && v.claimedBy !== this) continue;
+      const d = lead.pos.distanceTo(v.pos);
+      if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
+  }
+
+  _releaseVehicle() {
+    if (!this.vehicle) return;
+    for (const m of this.members) {
+      if (!m.isPlayer && m.vehicle === this.vehicle && m.seatReason === 'squad') m.dismount();
+    }
+    if (this.vehicle.claimedBy === this) this.vehicle.claimedBy = null;
+    this.vehicle = null;
+    this.boardTimer = 0;
   }
 }
 
