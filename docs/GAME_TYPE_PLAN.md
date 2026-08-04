@@ -302,11 +302,36 @@ eighty seconds' drive away — which deletes the single decision the economy
 exists to create. The counter you spend at the front has to be the one somebody
 drove there.
 
-**Which way materiel flows is decided by where you are standing**, not by a key
-or a menu: at your HQ you LOAD, at your sector you UNLOAD. That is the whole
-interface. It needs no UI, reads identically for a player and a bot, and has no
-state to get stuck in — which matters when 63 of the 64 soldiers on the field
-will never be told what a load button is.
+**For a bot, which way materiel flows is decided by where it is standing** — at
+its HQ it LOADS, at its sector it UNLOADS. No UI, no state to get stuck in,
+which matters when 63 of the 64 soldiers on the field will never be told what a
+load button is.
+
+**The player uses the supply wheel instead** (`src/supplywheel.js`, hold Z), and
+is deliberately excluded from the automatic path in BOTH directions. The reason
+the wheel had to exist: position can only imply direction while each place has
+one legal action, and that rule made a sector depot a one-way sink. There was no
+way to take materiel *out* of a sector — no lateral redistribution, and a
+captured enemy stockpile could be spent where it stood but never moved. The
+wheel replaces inference with intent, and TAKE falls out of it for free.
+
+It is the only radial in the game and should stay that way. Everywhere else, one
+contextual key with a priority chain (`player._updateInteract`) is better,
+because everywhere else there IS a single sensible action — a bleeding squadmate
+wants reviving, and making you spin a wheel for that would be strictly worse.
+A depot is the one place where take, drop and neither are all legal at once.
+
+Three properties worth not breaking:
+
+- **It never releases pointer lock.** You open it in the field with people
+  shooting at you. It reads raw `movementX/Y` and the camera is suppressed while
+  it is up, or choosing a wedge would spin you on the spot.
+- **The gesture is one key.** Hold Z, push toward a wedge, materiel flows for as
+  long as you hold. The dead zone in the centre IS the "do nothing" option and
+  how long you hold is the amount — so there is no confirm press and no quantity
+  to pick.
+- **Spent wedges grey out, they do not disappear.** A wheel that changes shape
+  under your hand mid-gesture is a wheel you cannot aim.
 
 **Two rules that had to be discovered by measurement, not reasoning:**
 

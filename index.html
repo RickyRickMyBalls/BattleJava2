@@ -123,6 +123,48 @@
     }
     #startBtn:hover { background: rgba(127,212,255,0.3); }
 
+    /* ---- Supply wheel (hold Z) ----
+       Never takes pointer events: the cursor is locked while this is up and the
+       whole thing is driven by raw mouse deltas, so anything clickable here
+       would be a lie. */
+    #supplyWheel {
+      position: absolute; left: 50%; top: 50%; width: 340px; height: 340px;
+      transform: translate(-50%, -50%); pointer-events: none; z-index: 40;
+    }
+    #supplyWheel .sw-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 1px solid rgba(127,212,255,0.35);
+      background: radial-gradient(circle at center, rgba(4,10,18,0.86) 38%, rgba(4,10,18,0.45) 62%, transparent 72%);
+    }
+    .sw-hub {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      width: 150px; text-align: center;
+    }
+    .sw-hub-label { font-size: 9px; letter-spacing: 2px; color: #6e93a8; }
+    .sw-hub-val { font-size: 26px; font-weight: 600; color: #ffd66e; line-height: 1; }
+    .sw-hub-cargo { font-size: 9px; letter-spacing: 1px; color: #6e93a8; margin-top: 2px; }
+    .sw-hub-cargo b { color: var(--hud-cyan); font-weight: 600; }
+    .sw-opt {
+      position: absolute; transform: translate(-50%, -50%);
+      padding: 7px 14px; white-space: nowrap;
+      font-size: 11px; letter-spacing: 2px; font-weight: 600;
+      color: var(--hud-cyan); border: 1px solid rgba(127,212,255,0.4);
+      background: rgba(8,20,32,0.85);
+    }
+    .sw-opt.active {
+      color: #041018; background: var(--hud-cyan); border-color: var(--hud-cyan);
+      box-shadow: 0 0 18px rgba(127,212,255,0.55);
+    }
+    /* Spent, not hidden: a wedge that vanishes when the depot empties makes the
+       wheel change shape under your hand mid-gesture. */
+    .sw-opt.dead { color: #46606f; border-color: rgba(70,96,111,0.4); background: rgba(8,20,32,0.6); }
+    .sw-opt.dead.active { color: #7d5a52; border-color: rgba(255,90,77,0.5); background: rgba(8,20,32,0.85); box-shadow: none; }
+    .sw-dot {
+      position: absolute; left: 50%; top: 50%; width: 7px; height: 7px;
+      border-radius: 50%; background: #eaf6ff; box-shadow: 0 0 8px rgba(234,246,255,0.8);
+    }
+
     /* ---- Top: tickets + sectors ---- */
     #topbar {
       position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
@@ -1318,6 +1360,19 @@
   <div id="app"></div>
 
   <div id="damageVignette"></div>
+  <!-- Supply wheel. Outside #hud because it is not chrome: it is a thing you
+       open, and it must survive the HUD being hidden in map mode. -->
+  <div id="supplyWheel" style="display:none">
+    <div class="sw-ring"></div>
+    <div class="sw-hub" id="swHub">
+      <span class="sw-hub-label" id="swHubLabel">NO DEPOT IN RANGE</span>
+      <span class="sw-hub-val" id="swHubVal">—</span>
+      <span class="sw-hub-cargo">CARRYING <b id="swCargo">0 / 0</b></span>
+    </div>
+    <div id="swOpts"></div>
+    <div class="sw-dot" id="swDot"></div>
+  </div>
+
   <div id="downVignette"></div>
   <div id="prompt"><span id="promptText"></span><i id="promptBar"></i></div>
 

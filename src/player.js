@@ -8,6 +8,7 @@ import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { findMuzzle } from './soldier.js';
 import { carryScale } from './logistics.js';
+import { SupplyWheel } from './supplywheel.js';
 
 const P = CFG.player;
 const D = CFG.downed;
@@ -168,6 +169,10 @@ export class Player {
     this.prevFiring = false;
     this.heat = 0;
 
+    // Hold-Z supply wheel. Owns the mouse while it is up — see the mousemove
+    // handler, which routes deltas to it instead of to the camera.
+    this.wheel = new SupplyWheel(this.game);
+
     this.keys = {};
     this.locked = false;
 
@@ -234,6 +239,7 @@ export class Player {
       this.firing = false;
       this.ads = false;
       this.locked = false;
+      this.wheel.setOpen(false);
     }
   }
 
@@ -311,9 +317,17 @@ export class Player {
         if (e.code === 'KeyB') this.placeBeacon();  // leader's, not a slot
         if (e.code === 'Digit6') this.drawTool();   // carried kit, not a slot
         if (e.code === 'KeyQ') this.switchWeapon(this._cycleTarget());
+        // Z, because every key a hand can reach from WASD is spoken for: Q is
+        // weapon cycle, E interact, R reload, C crouch, V melee, X biofoam,
+        // B beacon, G grenade, F and T debug. Held, never toggled — see the
+        // wheel's header for why the gesture is one key.
+        if (e.code === 'KeyZ' && !repeat) this.wheel.setOpen(true);
       }
     });
-    this._on(document, 'keyup', (e) => { this.keys[e.code] = false; });
+    this._on(document, 'keyup', (e) => {
+      this.keys[e.code] = false;
+      if (e.code === 'KeyZ') this.wheel.setOpen(false);
+    });
     this._on(document, 'wheel', (e) => {
       if (this.game.menuOpen) return;
       if (this.freecam) {
@@ -327,6 +341,9 @@ export class Player {
       if (this.game.menuOpen) return;
       if (!this.locked) { this.requestLock(); return; }
       if (this.freecam) return;
+      // The wheel is up and the mouse belongs to it. Shooting while choosing a
+      // wedge would fire wherever you were pointing before you opened it.
+      if (this.wheel.open) return;
       if (e.button === 0) this.firing = true;
       if (e.button === 2) this.ads = true;
     });
@@ -338,10 +355,16 @@ export class Player {
 
     this._on(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.dom;
-      if (!this.locked) this.firing = false;
+      // Losing the mouse closes it. Dying calls exitPointerLock, so this is
+      // also what stops a wheel surviving into the deploy screen behind it.
+      if (!this.locked) { this.firing = false; this.wheel.setOpen(false); }
     });
     this._on(document, 'mousemove', (e) => {
       if (!this.locked) return;
+      // The wheel takes the mouse whole while it is open. Letting the camera
+      // also read these deltas would spin you on the spot every time you chose
+      // a wedge — you would finish the transfer facing a different direction.
+      if (this.wheel.open) { this.wheel.onMouse(e.movementX, e.movementY); return; }
       if (this.freecam) {
         this.fcYaw -= e.movementX * 0.0021;
         this.fcPitch -= e.movementY * 0.0021;
@@ -1837,6 +1860,10 @@ export class Player {
       }
     }
     this.syncBodyVisibility();
+    // Before the interact chain, and it does not suppress it: E and the wheel
+    // answer different questions, and a casualty at your feet must still be
+    // revivable while you are looking at a depot.
+    this.wheel.update(dt);
     this._updateInteract(dt);
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon

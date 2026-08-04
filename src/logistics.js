@@ -97,19 +97,24 @@ export class Logistics {
     // of a hog must not be filling their own backpack out of the same depot the
     // hog is drinking from, or a full crew multiplies a run by five.
     const vlist = this.game.vehicles ? this.game.vehicles.vehicles : null;
-    if (vlist) for (const v of vlist) this._serve(v, v.team, R.vehicleCargo, amt, true);
+    // A hog the PLAYER is driving is theirs to load, by hand, off the wheel —
+    // otherwise parking at HQ would silently fill it and driving through a
+    // friendly sector would silently empty it again, which is the whole reason
+    // the wheel exists.
+    const pv = this.game.player ? this.game.player.vehicle : null;
+    if (vlist) for (const v of vlist) {
+      if (v !== pv) this._serve(v, v.team, R.vehicleCargo, amt, true);
+    }
     for (const s of this.game.allSoldiers) {
       if (!s.alive || s.vehicle) continue;
-      // WHO MAY LOAD is not the same question as who may unload. Letting every
-      // bot top up a backpack just by respawning at HQ drained 1500 out of a
-      // home stockpile in two minutes on reinforcement traffic alone, and none
-      // of it was a decision anybody made. So: a bot loads only while its squad
-      // is actually on a run. The player always may — standing at your own HQ
-      // is a choice, and it is the one piece of this the player performs by
-      // hand. Unloading stays open to everyone, always, so materiel that ended
-      // up on the wrong person still reaches a depot when they walk past one.
-      const mayLoad = s.isPlayer || !!(s.squad && s.squad.supplyRun);
-      this._serve(s, s.team, R.backpack, amt, mayLoad);
+      // THE PLAYER IS NOT SERVED AUTOMATICALLY, IN EITHER DIRECTION. Every
+      // transfer they make is one they asked for on the wheel. A bot has no
+      // wheel, so it keeps the automatic rule — and loads only while its squad
+      // is on a run, because letting every marine top up just by respawning at
+      // HQ drained 1500 out of a home stockpile in two minutes on
+      // reinforcement traffic alone, none of it a decision anybody made.
+      if (s.isPlayer) continue;
+      this._serve(s, s.team, R.backpack, amt, !!(s.squad && s.squad.supplyRun));
     }
   }
 
@@ -119,14 +124,28 @@ export class Logistics {
     if (team === null || team === undefined) return;
     const d = this.nearest(team, carrier.pos.x, carrier.pos.z, this.cfg.transferRadius);
     if (!d) return;
-    if (d.kind === 'hq') {
-      if (!mayLoad) return;
-      const take = Math.min(amt, cap - carrier.cargo, d.stock);
-      if (take > 0) { d.stock -= take; carrier.cargo += take; }
-    } else {
-      const give = Math.min(amt, carrier.cargo, d.cap - d.stock);
-      if (give > 0) { carrier.cargo -= give; d.stock += give; }
+    if (d.kind === 'hq' && !mayLoad) return;
+    this.transfer(carrier, cap, d, d.kind === 'hq' ? amt : -amt);
+  }
+
+  // THE ONE PLACE MATERIEL MOVES. Positive `amt` fills the carrier out of the
+  // depot, negative empties it into the depot; the return is what actually
+  // moved, signed the same way. Both the automatic bot path above and the
+  // player's supply wheel come through here, so a rule about capacity or
+  // conservation only has to be right once.
+  transfer(carrier, cap, depot, amt) {
+    if (amt > 0) {
+      const take = Math.min(amt, cap - carrier.cargo, depot.stock);
+      if (take <= 0) return 0;
+      depot.stock -= take;
+      carrier.cargo += take;
+      return take;
     }
+    const give = Math.min(-amt, carrier.cargo, depot.cap - depot.stock);
+    if (give <= 0) return 0;
+    carrier.cargo -= give;
+    depot.stock += give;
+    return -give;
   }
 
   // --------------------------------------------------------------- queries --
