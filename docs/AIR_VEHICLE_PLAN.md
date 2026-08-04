@@ -291,16 +291,20 @@ Ordered by how much each one blocks.
 
 ## What the current code cannot do
 
-**Locked.** Three of these are real refactors, not adaptations, and they are
-listed before the design so the cost is visible before anything is committed to.
+**Locked.** The first three were real refactors rather than adaptations, and are
+done — kept here because the *reasons* outlast the fix and the next vehicle will
+meet the same seams.
 
-| Blocker | Where | Fix |
+| Blocker | Where | Status |
 | --- | --- | --- |
-| **Seats are global, not per-vehicle.** `this.seats = V.seats.map(...)` reads `CFG.vehicle.seats` — the Warthog's five. A Pelican spawns with a jeep's seat list. | `vehicle.js:165` | Move `seats`, `doors`, `turret`, `linkage`, `flip`, `thirdPerson`, `camera` into `V[key]`, falling back to the current globals. Mechanical, and it unblocks every future vehicle. |
-| **Suspension corners are hardcoded to four**, named `front_left/front_right/rear_left/rear_right`, and warn per corner if absent. The Pelican is a tricycle: `back_left/back_right/front_middle`. | `vehicle.js:186` | Corner table into config. `Wheel` itself needs no change — see below. |
-| **`VehicleManager._spawnAll` hardcodes `'warthog'`.** | `vehicle.js:1505` | Marker-prefix → key table. |
-| **No Y clamp on the world.** `clampToMap` is XZ-only. | `world.js:364` | An air vehicle needs a ceiling; the heightfield bake's `maxY` is the natural one. |
-| **`audio.js` has no looping source.** `_play` is one-shot. | `audio.js:64` | Small addition, needed for the engine/hover crossfade. |
+| **Seats were global, not per-vehicle.** `this.seats = V.seats.map(...)` read `CFG.vehicle.seats` — the Warthog's five — so a Pelican spawned with a jeep's seat list. | `vehicle.js` | ✅ `Vehicle.rig`, an overlay. Globals stay as the fallback. |
+| **Suspension corners were hardcoded to four**, named `front_left/…/rear_right`, warning per corner if absent. A tricycle was not a different vehicle, it was four warnings and no suspension. | `vehicle.js` | ✅ `rig.corners`. `Wheel` itself needed no change — a gear strut IS a spring corner with steering and spin switched off. |
+| **The spring divisor was a hardcoded 4** — a 33% error on any vehicle that is not a car. | `vehicle.js` | ✅ derived from `wheels.length`. |
+| **`settleAt` bailed below four contacts**, putting a three-point vehicle down LEVEL on sloped ground. | `vehicle.js` | ✅ three points define a plane exactly; that is now the exact case, not the degraded one. |
+| **`VehicleManager._spawnAll` hardcoded `'warthog'`**, and `maps.js` dropped every non-`FC_VEHICLE_` marker along with the Y on the ones it kept. | `vehicle.js`, `maps.js` | ✅ `CFG.vehicle.markers` prefix table; `maps.js` no longer knows what a vehicle is. |
+| **Bots claim anything uncrewed**, including an aircraft they cannot fly. | `ai.js` | ✅ `rig.aiCanUse`, default true so a ground vehicle opts in for free. |
+| **No Y clamp on the world.** `clampToMap` is XZ-only. | `world.js:364` | Open — phase 2 needs a ceiling; the bake's `maxY` is the natural one. |
+| **`audio.js` has no looping source.** `_play` is one-shot. | `audio.js:64` | Open — phase 4 needs it for the engine/hover crossfade. |
 
 **A gear strut is a spring corner with steering and spin switched off**, and
 that is why the corner-count refactor is a table change rather than a new class.
@@ -517,10 +521,69 @@ known going in.
 holding it up, and gravity would sink it 1.5 m to its AABB hull before
 `_collideGround` caught it. That is Phase 1's job, not a bug.
 
-### Phase 1 — Per-vehicle config, and it sits on its gear
+### Phase 1 — Per-vehicle config, and it sits on its gear ✅ DONE
 
-The refactor above. Ends with a Pelican settled on three struts using the spring
-solver that already shipped.
+**Built:** `Vehicle.rig` (the overlay), a config-driven corner table, marker-key
+lookup, spawn drop, `CFG.vehicle.pelican`, and the `aiCanUse` gate.
+
+**Measured** at both HQ markers, after 60 s of live 8x battle:
+
+| Check | Result |
+| --- | --- |
+| Struts resolved | 3 — `front_middle`, `back_left`, `back_right` |
+| Spring rate | 528,000 N/m = `mass*g / (3 * sag)` — the strut COUNT is honoured |
+| Contacts at rest | **0.0000 m** above the ground, all three |
+| Total load | −0.388% against `mass * gravity` |
+| Nose share | **10.4%** — the load split `com.z = -3.6` was placed for |
+| Mean compression | 0.2494 against a predicted sag of 0.2500 |
+| Peak compression | 0.392 of 0.5 travel — **never bottomed** |
+| Drop | 0.499 m, arriving at 2.4 m/s |
+| Drift from spawn | **0.4994 m**, i.e. the drop and nothing else |
+| Attitude | 0.93-0.98 degrees nose-up, and correct — that IS a tricycle sitting on 10/90 |
+| Sleeps | yes |
+
+**The Warthog is unregressed**, and that was the point of overlaying rather than
+moving: 5 seats, 4 corners, 17 doors, turret measured, 16 arms, 4 springs,
+steering wheel, `springK` 54,000 unchanged. `v.rig.seats === CFG.vehicle.seats`
+is true by identity for the hog, so the SEAT tab's paste target never moved.
+
+**Three bugs, all found by measuring rather than by looking:**
+
+1. **The spring divisor was a hardcoded 4.** Invisible while every vehicle is a
+   car; a 33% error the first time one is not. A three-strut aircraft would have
+   been given springs sized for four corners and sagged past its ride height —
+   and it would have read as "the Pelican tuning is wrong" rather than as a bug.
+
+2. **Honouring the marker height literally turned every spawn into a crash.**
+   The markers stand 3-7 m above the floor and `CFG.gravity` is 18, so that is an
+   arrival at 11-15 m/s: measured on a Warthog, **12.8x more energy than its four
+   springs can store over their entire travel**. Every vehicle on the map bottomed
+   its stops and skated. The fall is now capped at what the gear can actually
+   absorb, `travel * (1 - sag) / sag`, derived rather than picked — see the
+   `dropMin` note in config. `settleAt` runs FIRST to fix the attitude to the
+   ground it is going to land on, and the lift happens along world Y afterwards,
+   so the aircraft falls parallel to the slope and lands on all three struts at
+   once instead of on one corner.
+
+3. **A bot squad claimed the Pelican and tried to fly it by driving.** Two bots
+   in the cockpit holding `throttle -1 / steer -1` into an airframe with no wheel
+   drive. It went nowhere — but "somebody is asking it to move" is exactly the
+   condition that releases the park brake, and with the brake off a second effect
+   took over: the suspension pushes along the CHASSIS up-axis, and a 0.97 degree
+   static nose-up attitude tips 395,944 N of strut load into a **6,698 N**
+   horizontal component, balanced almost exactly by **6,626 N** of rolling
+   resistance at 0.3 m/s. The result was a perfectly constant 0.3 m/s creep that
+   never triggered the sleep threshold and walked the aircraft off its pad
+   forever. `aiCanUse: false` fixes the cause; phase 8 flips it.
+
+   **The strut-axis term is still there and phase 2 should know it.** It is held
+   only by the park brake. Any vehicle with a static pitch has it, the Warthog
+   included — the hog's is invisible because its load split is even, so its
+   attitude is flat.
+
+**Deliberately not done:** anything that flies. `driveForce` is 0, so W does
+nothing on the ground, which is the correct behaviour for an aircraft that does
+not taxi.
 
 ### Phase 2 — Flight, mode 1
 

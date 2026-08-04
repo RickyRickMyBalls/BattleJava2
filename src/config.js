@@ -383,6 +383,36 @@ export const CFG = {
     // the owner decides where it is parked.
     reserveMarker: /_RESERVE/i,
 
+    // Which marker spawns which vehicle. Longest prefix wins, so a future
+    // `FC_VEHICLE_PELICAN` would beat `FC_VEHICLE_` without reordering this.
+    // `maps.js` no longer knows what a vehicle key is — it hands over every
+    // FC_ marker that is not an HQ or a sector and this table decides. Adding
+    // an air vehicle is an entry here plus an ASSET_PATHS entry.
+    markers: [
+      { prefix: 'FC_VEHICLE_', key: 'warthog' },
+      { prefix: 'FC_PELICAN', key: 'pelican' },
+    ],
+
+    // The suspension corners, per vehicle, because a tricycle is not a car with
+    // one wheel missing. `id` derives the rig node names the Warthog convention
+    // uses (`ref_contact_<id>` / `ref_steer_<id>` / `wheel_<id>`); any of the
+    // three may be overridden by name or set to null where the rig has no such
+    // node. Null is not a degraded corner — an aircraft's gear genuinely does
+    // not steer, and the nose leg genuinely has no travel node to animate.
+    //
+    //   front  — steered, and paired with the other `front` for the anti-roll bar
+    //   left   — which side, for that pairing
+    //   travel — the node MOVED in Y to show compression. On the Warthog the
+    //            contact ref is the parent of the whole corner so moving it
+    //            moves the wheel; on a rig where the contact is a leaf there is
+    //            nothing to move and this is null.
+    corners: [
+      { id: 'front_left', front: true, left: true },
+      { id: 'front_right', front: true, left: false },
+      { id: 'rear_left', front: false, left: true },
+      { id: 'rear_right', front: false, left: false },
+    ],
+
     // Physics runs on a FIXED substep, not the frame's dt. A 0.05 s frame
     // (game.js clamps there) through a spring stiff enough to hold three tonnes
     // is unconditionally unstable — the hog launches. The accumulator is
@@ -393,6 +423,35 @@ export const CFG = {
     maxSubsteps: 8,      // bail out rather than spiral if a frame is very long
 
     enterRange: 4.0,     // metres from the driver's door to prompt
+
+    // Spawn drop. Markers are authored slightly ABOVE the floor on purpose, so
+    // a vehicle drops the last little way onto its own suspension instead of
+    // being teleported into a resting pose — which is what makes a motor pool
+    // look like it was parked rather than placed.
+    //
+    // THE MARKER SAYS WHERE, NOT HOW FAR IT FALLS, and the difference is easy
+    // to miss because "3 m above the floor" sounds small. `CFG.gravity` is 18,
+    // nearly double real gravity, so 3 m is an arrival at 11 m/s and map-3's
+    // hog markers sit 6.4 m up, which is 15.2 m/s. Measured on a Warthog, that
+    // fall carries 12.8x more energy than its four springs can store over their
+    // whole travel: it bottoms the stops, slams onto the hull and skates.
+    //
+    // So the fall is capped at what the gear can actually swallow, and that
+    // number is DERIVED rather than picked. At full travel the springs hold
+    // `n*k*travel`, and since `k = mass*g / (n*sag*travel)` that is `mg/sag` —
+    // so the net decelerating force is `mg(1-sag)/sag`, and arresting a fall
+    // within `travel` gives
+    //
+    //     dropAbsorb = travel * (1 - sag) / sag
+    //
+    // which is 0.5 m at the 0.5/0.5 both vehicles run. It costs nothing to be
+    // right for any future suspension, and it means raising a marker in Blender
+    // can never turn a spawn into a crash. A vehicle may override it with
+    // `dropAbsorb` in its own block if it wants a longer fall.
+    dropMin: 0.05,
+    // Hard sanity ceiling, independent of the above: a marker accidentally left
+    // at sky height should warn, not drop a hog from orbit.
+    dropMax: 30,
 
     // What bots are allowed to do with a vehicle. Only boarding so far — a bot
     // cannot drive yet (VEHICLE_PLAN.md phase 7b), which is also why the seat
@@ -672,7 +731,14 @@ export const CFG = {
     // these are the starting values, chosen to be roughly right rather than
     // right. What is NOT arbitrary is the parameterization — see `sag`.
     // ---------------------------------------------------------------------
+    // Per-vehicle blocks OVERLAY the shared defaults above. Anything a vehicle
+    // does not say for itself — `seats`, `doors`, `turret`, `linkage`, `flip`,
+    // `corners`, `thirdPerson`, `camera` — falls back to the shared value, so
+    // the Warthog's tuned blocks stay exactly where the SEAT and VEHICLE tabs
+    // already paste them and nothing existing had to move to add a second
+    // vehicle SHAPE. See `Vehicle.rig`.
     warthog: {
+      label: 'WARTHOG',
       mass: 3000,                  // kg
       // Centre of mass in the chassis frame (origin = ground, centre of the
       // wheelbase; +Z forward, +X left, +Y up).
@@ -809,6 +875,158 @@ export const CFG = {
       sleepSpeed: 0.25,            // m/s below which it may fall asleep
       sleepSpin: 0.25,             // rad/s, same
       sleepDelay: 0.7,             // seconds of stillness before it does
+    },
+
+    // -------------------------------------------------------------------
+    // The Pelican — AIR_VEHICLE_PLAN.md phase 1: it sits on its gear.
+    //
+    // Nothing here flies. This block exists so a 30 m aircraft can stand on
+    // three landing-gear struts using the spring solver that already shipped,
+    // which is the cheapest possible proof that the chassis code is not
+    // secretly a car. The flight model is phase 2 and the numbers for it are
+    // to be found in the AIR tab, not reasoned about here.
+    // -------------------------------------------------------------------
+    pelican: {
+      label: 'PELICAN',
+      // Bots cannot fly, so they must not claim one. Phase 8 flips this.
+      // Without it a squad crews the cockpit and holds the controls down, which
+      // is what releases the park brake — see the note in Squad._findVehicle.
+      aiCanUse: false,
+      mass: 22000,                 // kg. A D77 is quoted around 25 t empty.
+
+      // Chassis frame: origin on the GEAR PLANE at the centre of the contact
+      // triangle, +Z forward (nose), +X left, +Y up.
+      //
+      // Z is the load-split knob and it is not free. The gear base runs from
+      // the nose leg at z = +10.49 to the mains at z = -5.25, i.e. 15.74 m, and
+      // a nose-gear aircraft carries roughly 10% of its weight on the nose. At
+      // z = -3.6 the nose takes 11% and the mains 89%, which is what puts the
+      // static compressions where a real oleo sits. Move it forward and the
+      // aircraft noses over; move it back and it sits on its tail.
+      com: [0, 3.2, -3.6],
+      // [width, height, length] — the real wingspan, height and hull.
+      inertiaBox: [24.2, 12.1, 30.5],
+      inertiaScale: [1.0, 1.0, 1.0],
+
+      // Bookkeeping only, and worth saying because it looks like it matters.
+      // The contact refs on this rig sit exactly ON the ground, so the strut
+      // geometry `radius + travel*(1-sag)` cancels against the ray length and
+      // the contact lands at local y = 0 for ANY radius. It would matter if the
+      // gear wheels were being spun or moved; they are not until phase 5.
+      wheelRadius: 0.53,           // measured off the main gear tyre
+
+      // --- Gear -----------------------------------------------------------
+      // Same derivation as the Warthog: k = mass*g / (n * travel * sag), where
+      // n is now the number of struts rather than a hardcoded 4. Ride frequency
+      // is sqrt(gravity / (travel*sag)) / 2pi and mass cancels out of it, so
+      // 0.5/0.5 puts this at the same 1.35 Hz the hog settled on.
+      //
+      // Damping runs HIGHER than the Warthog's on both strokes. A car's damper
+      // is a compromise with ride comfort; an oleo strut exists to swallow a
+      // landing and not give it back, and an under-damped 22-tonne aircraft
+      // pogos on its gear for a long time.
+      travel: 0.5,
+      sag: 0.5,
+      damping: 0.75,
+      dampingRebound: 0.95,
+      antiRoll: 0.30,              // acts on the main pair only — the nose is single
+      bumpStop: 12,
+
+      // --- Drive ----------------------------------------------------------
+      // It has no wheel drive, and that is a statement rather than an omission:
+      // a Pelican does not taxi. `driveForce` at 0 means W does nothing on the
+      // ground, which is the correct behaviour until phase 2 gives it engines.
+      // `topSpeed` is non-zero only because the steering ease reads it.
+      driveForce: 0,
+      topSpeed: 100,
+      lowGear: 1,
+      lowGearSpeed: 1,
+      reverseMult: 0,
+      brakeForce: 200000,
+      handbrakeForce: 0,
+      rollResist: 0.02,
+      airDrag: 40,                 // placeholder — phase 2 replaces this with
+                                   // an anisotropic model, see the plan
+      parkBrake: 0.9,
+      parkBrakeSpeed: 2.5,
+
+      // --- Steering -------------------------------------------------------
+      // The gear does not steer. These are read by the steering ease before it
+      // ever reaches a wheel, so they have to be finite, not absent.
+      steerMax: 0,
+      steerMaxFast: 0,
+      steerRate: 1,
+      steerReturn: 1,
+
+      // --- Tyres ----------------------------------------------------------
+      grip: 0.8,
+      gripRear: 0.8,
+      cornerStiffness: 8.0,
+      handbrakeGrip: 1,
+
+      // --- Hull -----------------------------------------------------------
+      // STOPGAP, and deliberately labelled as one. `collision_pelican` is a
+      // single shell whose bounds are 30.63 x 10.91 x 24.28 m — the whole
+      // aircraft — so the eight-AABB-corner derivation that serves the Warthog
+      // would wrap this in a box the size of a building. These twelve points
+      // are hand-placed on the real airframe in the chassis frame and are NOT
+      // inset by `hullSkin` the way the derived corners are, because they are
+      // already where they are wanted rather than on a bounding box.
+      //
+      // The real answer is `collision_wall_pelican` authored in Blender, which
+      // phase 7 needs anyway for the walkable deck. See AIR_VEHICLE_PLAN.md.
+      hullPoints: [
+        [0, 3.0, 14.8],            // nose
+        [0, 6.0, 12.0],            // cockpit roof
+        [0, 1.3, 6.0],             // belly, forward
+        [0, 1.3, -3.0],            // belly, aft
+        [5.5, 3.2, 5.5],           // engine nacelle, left
+        [-5.5, 3.2, 5.5],          // engine nacelle, right
+        [11.8, 5.2, 5.0],          // front wing tip, left
+        [-11.8, 5.2, 5.0],         // front wing tip, right
+        [0, 5.5, -15.0],           // tail, at the ramp
+        [3.5, 9.0, -11.5],         // tail engine, left
+        [-3.5, 9.0, -11.5],        // tail engine, right
+        [0, 11.8, -12.0],          // fin
+      ],
+      hullSkin: 0.5,
+      restitution: 0.10,
+      angularDamping: 0.8,
+
+      // --- Sleep ----------------------------------------------------------
+      sleepSpeed: 0.25,
+      sleepSpin: 0.20,
+      sleepDelay: 0.9,
+
+      // --- Rig overlay ----------------------------------------------------
+      // Three struts, no steering, no spin, no travel node. The contact refs on
+      // this rig are LEAVES under the gear legs rather than the parent of the
+      // whole corner, so there is nothing whose Y can be moved to show
+      // compression — the legs get animated in phase 5, off the same
+      // `compression` the physics is already computing.
+      corners: [
+        { id: 'front_middle', front: true, left: true, steer: null, spin: null, travel: null },
+        { id: 'back_left', front: false, left: true, steer: null, spin: null, travel: null },
+        { id: 'back_right', front: false, left: false, steer: null, spin: null, travel: null },
+      ],
+      // No linkage, no turret and no doors YET — the rig's hatch nodes are not
+      // named `ref_door*` so they are not discovered, and that is phase 5's
+      // problem. An empty list here says "asked and answered" rather than
+      // letting the Warthog's twenty-entry hardware table warn twenty times.
+      linkage: { hardware: [], armAngles: {}, springAngles: [0, 0, 0], springScaleY: [1, 1, 1], steerWheelTurns: 1, brakeGlow: 0 },
+      // Phase 6 authors the real seats. Two placeholders on the authored
+      // cockpit cameras so the aircraft is enterable and the camera path can be
+      // exercised; the bay seats need `ref_seat_*` empties that do not exist.
+      seats: [
+        { id: 'pilot', label: 'FLY', role: 'drive', anim: 'drive',
+          ref: null, offset: [0, 2.4, 11.9], camera: 'ref_camera_pilot',
+          pose: { pos: [0, 0, 0], rot: [0, 0, 0] } },
+        { id: 'copilot', label: 'RIDE COPILOT', role: 'ride', anim: 'sit',
+          ref: null, offset: [0.6, 2.4, 10.5], camera: 'ref_camera_copilot',
+          pose: { pos: [0, 0, 0], rot: [0, 0, 0] } },
+      ],
+      // A 33 m aircraft framed by an 11 m boom is a close-up of a wing.
+      thirdPerson: { dist: 38, lift: 9, minDist: 8, skin: 1.0, lerp: 4 },
     },
   },
 

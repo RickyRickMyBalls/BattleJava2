@@ -362,6 +362,17 @@ export class Squad {
       // sometimes there is worse than one that never is, because you plan
       // around the one you can rely on.
       if (v.reserved) continue;
+      // A vehicle bots cannot actually operate. Same rule, and the same reason,
+      // as the seat picker refusing them the driver's seat before `vehicledriver`
+      // existed: claiming something you cannot drive does not produce transport,
+      // it produces a vehicle nobody can use with the controls held down.
+      //
+      // Measured on the Pelican, which is what put this here: a squad claimed
+      // one, sat two bots in the cockpit and held throttle -1 / steer -1 into an
+      // airframe with no wheel drive. It went nowhere, but "somebody is asking
+      // it to move" is exactly the condition that releases the park brake, and
+      // the aircraft then crept off its pad at a constant 0.3 m/s forever.
+      if (v.rig.aiCanUse === false) continue;
       if (v.claimedBy && v.claimedBy !== this) continue;
       const d = lead.pos.distanceTo(v.pos);
       if (d < bestD) { bestD = d; best = v; }

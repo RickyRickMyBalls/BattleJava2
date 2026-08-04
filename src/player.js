@@ -1167,8 +1167,13 @@ export class Player {
     const held = !!(this.keys['AltLeft'] || this.keys['AltRight']);
     if (!held) { this._clearDoorFocus(); return false; }
 
-    const D = CFG.vehicle.doors;
-    const near = fleet.within(this.pos, D.outlineRange);
+    // `outlineRange` stays GLOBAL and the reticle terms do not, and the split is
+    // not arbitrary: this is one query over a fleet of mixed vehicles, so "how
+    // far away do I start outlining" has to have a single answer before any
+    // vehicle is in hand. Which door the crosshair is on is then asked of each
+    // vehicle in its own terms — a Pelican's tail ramp is not reachable at a
+    // Warthog's 5 m.
+    const near = fleet.within(this.pos, CFG.vehicle.doors.outlineRange);
     if (!near.length) { this._clearDoorFocus(); return false; }
 
     this.camera.getWorldDirection(_dir);
@@ -1176,7 +1181,7 @@ export class Player {
     let target = null, targetVeh = null;
     for (const v of near) {
       v.group.updateMatrixWorld(true);
-      const d = v.doorAtReticle(_from, _dir, D.reticleRange, D.reticleCone);
+      const d = v.doorAtReticle(_from, _dir, v.rig.doors.reticleRange, v.rig.doors.reticleCone);
       if (d) { target = d; targetVeh = v; }
     }
     for (const v of near) v.setDoorOutline(true, v === targetVeh ? target : null);
@@ -1220,16 +1225,16 @@ export class Player {
     if (v.flipped) {
       const holding = !!this.keys['KeyE'] && this.locked && !this.actionBusy();
       this.rightTimer = holding ? this.rightTimer + dt : 0;
-      const t = CFG.vehicle.flip.rightTime;
+      const t = v.rig.flip.rightTime;
       if (this.rightTimer >= t) {
         v.rightUp();
         this.rightTimer = 0;
         this.game.hud.setPrompt(null);
-        this.game.hud.message('WARTHOG BACK ON ITS WHEELS', 2);
+        this.game.hud.message(`${v.rig.label} BACK ON ITS WHEELS`, 2);
         return true;
       }
       this.game.hud.setPrompt(
-        holding ? 'RIGHTING WARTHOG' : 'HOLD E — RIGHT WARTHOG',
+        holding ? `RIGHTING ${v.rig.label}` : `HOLD E — RIGHT ${v.rig.label}`,
         holding ? this.rightTimer / t : 0,
       );
       return true;
@@ -1241,7 +1246,7 @@ export class Player {
     // menu, no cycle key — the position of your feet is the input.
     const i = v.nearestFreeSeat(this.pos);
     if (i < 0) {
-      this.game.hud.setPrompt('WARTHOG — FULL', 0);
+      this.game.hud.setPrompt(`${v.rig.label} — FULL`, 0);
       return true;
     }
     this.game.hud.setPrompt(`E — ${v.seats[i].def.label}`, 0);
@@ -1634,7 +1639,7 @@ export class Player {
     const heading = Math.atan2(_fwd.x, _fwd.z);
     if (this.vCamYaw === null) this.vCamYaw = heading;
     else this.vCamYaw += wrapAngle(heading - this.vCamYaw)
-      * Math.min(1, dt * CFG.vehicle.camera.followRate);
+      * Math.min(1, dt * v.rig.camera.followRate);
 
     // The PI is not a fudge. A three.js camera looks down its local -Z, and the
     // chassis frame is +Z forward, so a view built to face the car's forward
@@ -1644,7 +1649,7 @@ export class Player {
     _level.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
 
     if (this.thirdPerson) {
-      this._applyVehicleBoom(v, _level, dt, CFG.vehicle.camera.tiltTP);
+      this._applyVehicleBoom(v, _level, dt, v.rig.camera.tiltTP);
     } else {
       // First person sits at the pivot, so tilt costs nothing in stability and
       // buys the only cue that the hog is leaning. Full chassis coupling is the
@@ -1660,7 +1665,7 @@ export class Player {
       _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
       _drive.premultiply(v.quat);
       _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
-      this.camera.quaternion.copy(_level).slerp(_drive, CFG.vehicle.camera.tiltFP);
+      this.camera.quaternion.copy(_level).slerp(_drive, v.rig.camera.tiltFP);
     }
     if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
       this.camera.fov = HIP_FOV;
@@ -1688,7 +1693,7 @@ export class Player {
     _drive.setFromAxisAngle(_YAXIS, Math.PI + this.yaw);
     _drive.premultiply(v.quat);
     _drive.multiply(_lookPitch.setFromAxisAngle(_XAXIS, this.pitch));
-    this.camera.quaternion.copy(_level).slerp(_drive, CFG.vehicle.camera.tiltFP);
+    this.camera.quaternion.copy(_level).slerp(_drive, v.rig.camera.tiltFP);
     if (Math.abs(this.camera.fov - HIP_FOV) > 0.1) {
       this.camera.fov = HIP_FOV;
       this.camera.updateProjectionMatrix();
@@ -1701,7 +1706,7 @@ export class Player {
   // because the thing being framed is 6 m long and what you need to see is the
   // ground it is about to hit.
   _applyVehicleBoom(v, lookQuat, dt, tilt) {
-    const TP = CFG.vehicle.thirdPerson;
+    const TP = v.rig.thirdPerson;
     // The boom direction comes off the LEVEL frame, always — this is the arc
     // that amplified chassis pitch into metres of camera travel. Any attitude
     // the view is meant to inherit is applied to the camera's ORIENTATION at

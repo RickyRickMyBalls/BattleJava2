@@ -804,7 +804,45 @@ merge *inside* `i_mesh_parts` only (every `ref_*` and wheel node must survive),
 resize textures, Draco or meshopt. `Scorpion-runtime.glb` at 5.9 MB is the
 precedent and shows the problem has already been solved once.
 
-### The baked heightfield disagrees with the authored floor, map-wide
+### Spawn markers sit on slopes the hogs cannot hold
+
+**Found during the Pelican's phase 1, and it is a Warthog problem.** Measured
+across map-3's ten spawn markers, behaviour tracks the ground slope over the
+footprint almost perfectly:
+
+| Marker | Slope | Behaviour |
+| --- | --- | --- |
+| `RESERVE004`, `RED001`, `RESERVE003`, `RED002`, `RESERVE002` | 0.0-4.4° | settles, sleeps, stays put |
+| `BLUE002`, `RESERVE001`, `BLUE001` | 10.9-13.7° | **spawns airborne, creeps, slowly rolls** |
+
+On the steep pads the vehicle is ungrounded on all four wheels at spawn — the
+plane `settleAt` fits over rough ground sits above the real contact points — and
+once down it creeps and its tilt climbs steadily (measured 18.8° → 25.5° in
+0.6 s, and hundreds of metres over 24 s of sim). Nothing rights it, so any of
+these eventually reads as a flipped hog nobody parked there.
+
+**This is not caused by the spawn drop** — measured identical with the drop
+disabled (6/10 bad tilt either way, worst tilt 37.1° vs 37.0°).
+
+The cheap fix is flatter ground under those three markers in Blender, which is
+what was done for the two `FC_PELICAN` pads (17.0° → 0.1°, and the aircraft went
+from sliding away to 0.000 m of drift). The code fix — a hill hold that engages
+on a slope a park brake should hold — is real work and nobody has asked for it.
+
+### The baked heightfield disagreed with the authored floor, map-wide — FIXED
+
+**Superseded by a map re-export.** Re-measured across all ten spawn markers: the
+heightfield and the authored floor now agree within **0.3 m** everywhere, with
+no holes (0 of 25 probe samples missing a floor at every marker). The table
+below is kept for the diagnosis, not as a live defect.
+
+The one consequence worth keeping in mind is that `world.raycastTerrain` and
+`world.hasLOS` still march against `heightAt` alone — that was only ever a
+problem *because* the two disagreed, so it is no longer producing wrong answers,
+but it is still the reason they are the wrong thing to march against.
+
+<details>
+<summary>Original measurements</summary>
 
 Phase 1 found this at the blue HQ. Phase 2 found it is not local.
 
@@ -839,6 +877,31 @@ The real fix is Blender-side: `Collision_floor_parent` and the bake need to agre
 Phase 1 removed the procedural HQ pad on GLB maps (`world.js:171`), which fixes
 how the HQ *looks* — the disc was drawn at heightfield height and so hovered
 above the real surface — but not the underlying disagreement.
+
+</details>
+
+---
+
+## Vehicles now drop onto their springs
+
+**Locked, and it changes how every vehicle spawns.** `FC_*` markers are authored
+slightly ABOVE the floor deliberately, so a vehicle drops the last little way
+onto its own suspension rather than being teleported into a resting pose.
+`maps.js` used to discard the marker's Y, so that authored intent had never
+reached the spawner.
+
+**The marker says where, not how far it falls.** Honouring the height literally
+turns every spawn into a crash: map-3's hog markers stand 3-7 m up and
+`CFG.gravity` is 18, which is an arrival at 11-15 m/s carrying **12.8x more
+energy than a Warthog's four springs can store over their whole travel**.
+
+The fall is therefore capped at what the gear can absorb, derived rather than
+picked — `travel * (1 - sag) / sag`, which is 0.5 m at the 0.5/0.5 both vehicles
+run. `settleAt` still runs first to fix the ATTITUDE to the ground being landed
+on, and the lift is applied along world Y afterwards, so the vehicle falls
+parallel to the slope and lands on every corner at once. Measured: a hog on good
+ground drops exactly 0.50 m, never touches its bump stops, and settles to 0.03%
+load error and 0.4° of tilt.
 
 ---
 

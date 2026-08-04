@@ -85,6 +85,59 @@ function teamOfMarker(name) {
   return null;
 }
 
+// A vehicle's RIG config: everything about the shape of the thing, as opposed
+// to `tune`, which is the numbers it drives with.
+//
+// This is an OVERLAY, not a move. `CFG.vehicle.seats` and friends stay exactly
+// where they have always been and are the fallback; `CFG.vehicle.<key>.seats`
+// overrides for one vehicle. Two reasons it is done this way round rather than
+// nesting the Warthog's blocks under `V.warthog`:
+//
+//   The SEAT and VEHICLE tabs paste into the global paths, and those blocks
+//   hold owner-tuned measured numbers. Re-pointing every paste target is a
+//   silent way to lose them.
+//
+//   Nothing that already worked moves, so nothing that already worked can
+//   break. Adding the second vehicle should not be able to regress the first.
+//
+// The cost is that there are two places a value can live. The rule is simple
+// enough to hold: if only one vehicle in the game has it, it goes in that
+// vehicle's block.
+function rigFor(key) {
+  const own = V[key] || {};
+  const pick = (name) => (own[name] !== undefined ? own[name] : V[name]);
+  return {
+    label: own.label || key.toUpperCase(),
+    // Whether bots may claim and crew it. Defaults to true — a vehicle has to
+    // opt OUT, so a new ground vehicle joins the AI's motor pool for free and
+    // only something genuinely undriveable has to say so.
+    aiCanUse: own.aiCanUse !== undefined ? own.aiCanUse : true,
+    seats: pick('seats'),
+    corners: pick('corners'),
+    doors: pick('doors'),
+    turret: pick('turret'),
+    linkage: pick('linkage'),
+    flip: pick('flip'),
+    thirdPerson: pick('thirdPerson'),
+    camera: pick('camera'),
+    seatPose: pick('seatPose'),
+  };
+}
+
+// The vehicle a marker spawns, by longest matching prefix so a more specific
+// name always wins. Null for a marker nothing claims — the caller reports those
+// rather than dropping them silently, because a mistyped marker in Blender is
+// otherwise invisible until someone notices the vehicle is missing.
+export function vehicleKeyForMarker(name) {
+  const n = (name || '').toUpperCase();
+  let best = null;
+  for (const m of V.markers || []) {
+    if (n.startsWith(m.prefix.toUpperCase())
+      && (!best || m.prefix.length > best.prefix.length)) best = m;
+  }
+  return best ? best.key : null;
+}
+
 function indexRefs(root) {
   const refs = {};
   root.traverse((o) => {
@@ -103,7 +156,11 @@ class Wheel {
     this.id = id;
     this.front = front;          // steered, and paired with the other front for anti-roll
     this.left = left;
-    this.contactRef = refs.contact;   // moved in Y to show compression
+    // All three are OPTIONAL. A landing-gear strut has no steering node and no
+    // spinning wheel to drive, and its contact ref is a leaf rather than the
+    // parent of the corner, so there is nothing to move in Y either. Null here
+    // means "this rig does not have one", not "look it up later".
+    this.travelRef = refs.travel;     // moved in Y to show compression
     this.steerRef = refs.steer;       // turned about its own Y to steer
     this.spinRef = refs.spin;         // turned about its own Z to roll
 
@@ -133,6 +190,7 @@ export class Vehicle {
     this.world = world;
     this.refs = indexRefs(group);
     this.tune = V[key] || V.warthog;
+    this.rig = rigFor(key);
 
     // Materiel in the back. Same contract as Soldier.cargo — logistics.js owns
     // it and this class never reads it. A loaded hog handles like an empty one
@@ -162,7 +220,7 @@ export class Vehicle {
     // Crew. One entry per CFG.vehicle.seats def; `occupant` is a Player or a
     // Soldier (Phase 7) or null. The driver is seat 0 by convention and is
     // exposed as a getter so the physics never has to know about seating.
-    this.seats = V.seats.map((def) => ({ def, occupant: null }));
+    this.seats = this.rig.seats.map((def) => ({ def, occupant: null }));
     this.turretYaw = 0;                  // radians, relative to the chassis
     this.turretPitch = 0;
 
@@ -183,23 +241,40 @@ export class Vehicle {
     g.updateMatrixWorld(true);
 
     const T = this.tune;
-    const corners = [
-      ['front_left', true, true], ['front_right', true, false],
-      ['rear_left', false, true], ['rear_right', false, false],
-    ];
-    for (const [name, front, left] of corners) {
-      const contact = this.refs[`ref_contact_${name}`];
-      const steer = this.refs[`ref_steer_${name}`];
-      const spin = this.refs[`wheel_${name}`];
-      if (!contact || !steer || !spin) {
-        console.warn(`[vehicle] ${this.key}: corner ${name} incomplete — no suspension on it`);
+    // Node lookup by AUTHORED name, dots and all — three's GLTFLoader strips
+    // them. The same normalization `_measureLinkage` uses, hoisted because the
+    // corner table now addresses nodes that `indexRefs` does not index (a
+    // Pelican's gear wheels are `LandingGear_back_left_wheel`, not `wheel_*`).
+    const byName = {};
+    g.traverse((o) => { if (o.name) byName[o.name.replace(/\./g, '').toLowerCase()] = o; });
+    const node = (n) => (n ? byName[n.replace(/\./g, '').toLowerCase()] || null : null);
+
+    // Corners come from config now. The four-wheeled car was hardcoded here,
+    // which meant a tricycle undercarriage was not a different vehicle, it was
+    // four warnings and no suspension at all.
+    //
+    // `steer`, `spin` and `travel` are OPTIONAL and default to the Warthog's
+    // naming. Explicit null means the rig genuinely has no such node — an
+    // aircraft's gear does not steer — and is not the same as "missing", which
+    // still warns.
+    for (const def of this.rig.corners) {
+      const name = def.id;
+      const contact = node(def.contact || `ref_contact_${name}`);
+      const steer = def.steer === null ? null : node(def.steer || `ref_steer_${name}`);
+      const spin = def.spin === null ? null : node(def.spin || `wheel_${name}`);
+      const travel = def.travel === null ? null : node(def.travel || def.contact || `ref_contact_${name}`);
+      if (!contact) {
+        console.warn(`[vehicle] ${this.key}: corner ${name} has no contact ref — no suspension on it`);
         continue;
       }
-      const w = new Wheel(name, front, left, { contact, steer, spin });
+      if (def.steer !== null && !steer) console.warn(`[vehicle] ${this.key}: corner ${name} steer ref missing`);
+      if (def.spin !== null && !spin) console.warn(`[vehicle] ${this.key}: corner ${name} wheel mesh missing`);
+
+      const w = new Wheel(name, def.front, def.left, { contact, steer, spin, travel });
       contact.getWorldPosition(w.localXZ);
-      w.baseY = contact.position.y;
-      w.steerBase.copy(steer.quaternion);
-      w.spinBase.copy(spin.quaternion);
+      w.baseY = travel ? travel.position.y : 0;
+      if (steer) w.steerBase.copy(steer.quaternion);
+      if (spin) w.spinBase.copy(spin.quaternion);
 
       // The strut top. Height is derived so that AT REST — i.e. once the spring
       // has been compressed by the vehicle's own weight — the wheel centre sits
@@ -212,8 +287,10 @@ export class Vehicle {
       // +Z maps to chassis-left or chassis-right decides the sign. Rotating a
       // point at the top of the wheel about chassis +X carries it forward, so
       // the sign is the local Z axis's X component.
-      _v1.set(0, 0, 1).applyQuaternion(spin.getWorldQuaternion(_q1));
-      w.spinSign = _v1.x >= 0 ? 1 : -1;
+      if (spin) {
+        _v1.set(0, 0, 1).applyQuaternion(spin.getWorldQuaternion(_q1));
+        w.spinSign = _v1.x >= 0 ? 1 : -1;
+      }
 
       this.wheels.push(w);
     }
@@ -222,10 +299,20 @@ export class Vehicle {
     this._measureLinkage();
     this._measureDoors();
 
-    // Hull sample points, from the authored collision shell if it is there and
-    // the whole model's bounds if it is not. Corners only: the hull is convex
-    // enough that eight points catch anything a 6 m vehicle can drive into, and
-    // every extra point is a BVH query per substep.
+    // Hull sample points. An AUTHORED list in the tune block wins, because the
+    // eight-corner derivation below is only defensible when the shell is a
+    // reasonable convex stand-in for the vehicle — true of a Warthog, and not
+    // remotely true of an aircraft whose collision shell measures 30 x 11 x 24 m
+    // and would wrap it in a box the size of a building.
+    //
+    // Authored points are NOT inset by `hullSkin`. The inset exists to undo the
+    // inflation of taking a bounding box; a hand-placed point is already on the
+    // airframe and pulling it in would sink the belly into the ground.
+    if (T.hullPoints && T.hullPoints.length) {
+      for (const p of T.hullPoints) this.hullPoints.push(new THREE.Vector3().fromArray(p));
+      return;
+    }
+
     const hull = this.refs.collision_warthog
       || this.refs[Object.keys(this.refs).find((k) => k.startsWith('collision_')) || ''];
     _box.makeEmpty();
@@ -324,7 +411,7 @@ export class Vehicle {
   // the thing it is outlining for free, and costs one hidden LineSegments per
   // door the rest of the time.
   _measureDoors() {
-    const D = V.doors;
+    const D = this.rig.doors;
     this.doors = [];
     const nodes = [];
     this.group.traverse((o) => { if (/^ref_door/i.test(o.name || '')) nodes.push(o); });
@@ -383,7 +470,7 @@ export class Vehicle {
   // able to open its doors, and sleep is a PHYSICS optimisation.
   updateDoors(dt) {
     if (!this.doors || !this.doors.length) return;
-    const rate = dt / Math.max(0.01, V.doors.openTime);
+    const rate = dt / Math.max(0.01, this.rig.doors.openTime);
     for (const d of this.doors) {
       if (d.open === d.target) continue;
       const step = Math.min(rate, Math.abs(d.target - d.open));
@@ -485,7 +572,7 @@ export class Vehicle {
     const byName = {};
     this.group.traverse((o) => { if (o.name) byName[o.name.replace(/\./g, '')] = o; });
 
-    for (const [code, name, axis, dir, family] of V.linkage.hardware) {
+    for (const [code, name, axis, dir, family] of this.rig.linkage.hardware) {
       const node = byName[name.replace(/\./g, '')];
       const w = wheelOf[byCode[code]];
       if (!node || !w) {
@@ -542,9 +629,18 @@ export class Vehicle {
 
     // Spring rate follows from the sag target rather than being authored, so
     // mass and ride height stay independent knobs. See the CFG note.
+    //
+    // The divisor is the NUMBER OF STRUTS, not four. It was hardcoded, which is
+    // invisible while every vehicle is a car and is a 33% error the moment one
+    // is not: a three-strut aircraft would get springs sized for four corners,
+    // carry its weight on 3/4 of the intended rate, and sag past the target
+    // ride height — and it would read as "the Pelican tuning is wrong" rather
+    // than as a bug. Guarded against zero so a vehicle whose corners all failed
+    // to resolve produces a warning and not a NaN chassis.
+    const n = Math.max(1, this.wheels.length);
     this.sagLen = T.travel * T.sag;
-    this.springK = (T.mass * g) / (4 * this.sagLen);
-    const cornerMass = T.mass / 4;
+    this.springK = (T.mass * g) / (n * this.sagLen);
+    const cornerMass = T.mass / n;
     const critical = 2 * Math.sqrt(this.springK * cornerMass);
     this.damperC = T.damping * critical;
     this.damperRebound = T.dampingRebound * critical;
@@ -616,13 +712,26 @@ export class Vehicle {
       const wz = z - sin * w.localXZ.x + cos * w.localXZ.z;
       pts.push(new THREE.Vector3(wx, this.groundAt(wx, wz), wz));
     }
-    if (pts.length < 4) { this.placeAt(x, this.groundAt(x, z), z, yaw); return; }
+    if (pts.length < 3) { this.placeAt(x, this.groundAt(x, z), z, yaw); return; }
 
-    // Normal from the diagonals — four points rarely lie on a plane exactly,
-    // and the diagonal cross product is the least-squares-ish answer for a
-    // rectangle without solving anything.
-    _v1.copy(pts[3]).sub(pts[0]);
-    _v2.copy(pts[2]).sub(pts[1]);
+    // Ground normal under the contact patch.
+    //
+    // FOUR points rarely lie on a plane exactly, so the cross product of the
+    // DIAGONALS is the least-squares-ish answer for a rectangle without
+    // actually solving anything.
+    //
+    // THREE points define a plane exactly, so the tricycle case is not a
+    // degraded version of the above — it is the exact one, and it takes the
+    // plain edge-pair cross product. This used to bail to `placeAt` below four
+    // corners, which put an aircraft down LEVEL on ground that runs to 9.5
+    // degrees at the red HQ and left it to fall onto one strut and slide.
+    if (pts.length === 3) {
+      _v1.copy(pts[1]).sub(pts[0]);
+      _v2.copy(pts[2]).sub(pts[0]);
+    } else {
+      _v1.copy(pts[3]).sub(pts[0]);
+      _v2.copy(pts[2]).sub(pts[1]);
+    }
     _v3.copy(_v1).cross(_v2).normalize();
     if (_v3.y < 0) _v3.negate();
     if (!Number.isFinite(_v3.x) || _v3.y < 0.2) _v3.set(0, 1, 0);   // degenerate
@@ -636,7 +745,10 @@ export class Vehicle {
     _mat.makeBasis(_side, _v3, _fwd);
     this.quat.setFromRotationMatrix(_mat);
 
-    const c = pts[0].add(pts[1]).add(pts[2]).add(pts[3]).multiplyScalar(0.25);
+    // Centroid over however many contacts there are, not a hardcoded four.
+    const c = pts[0].clone();
+    for (let i = 1; i < pts.length; i++) c.add(pts[i]);
+    c.multiplyScalar(1 / pts.length);
     this.pos.copy(this.com).applyQuaternion(this.quat).add(c);
 
     // Geometry alone is not enough on a slope. `_probe` samples the ground
@@ -1051,7 +1163,7 @@ export class Vehicle {
     // Resolved AT the contact rather than at the centre, so a corner striking
     // first rolls the body instead of stopping it flat — which is what lets a
     // hog bounce onto its roof and settle there rather than pancaking.
-    this._resolveContact(_hullPoint, _Y, T.restitution, V.flip.groundFriction);
+    this._resolveContact(_hullPoint, _Y, T.restitution, this.rig.flip.groundFriction);
     this.wake();
   }
 
@@ -1111,7 +1223,7 @@ export class Vehicle {
   // airborne, and prompting someone to right a vehicle that is still tumbling
   // would be prompting them to walk into it.
   _flipCheck(h, upright) {
-    const F = V.flip;
+    const F = this.rig.flip;
     _v1.set(0, 1, 0).applyQuaternion(this.quat);
     const settled = this.vel.lengthSq() < 4 && this.angVel.lengthSq() < 1;
     if (_v1.y < F.upThreshold && settled) {
@@ -1129,7 +1241,7 @@ export class Vehicle {
   // ground it was just righted onto.
   rightUp() {
     this.quat.setFromAxisAngle(_Y, this.yaw);
-    this.pos.y = this.groundAt(this.pos.x, this.pos.z) + this.com.y + V.flip.rightLift;
+    this.pos.y = this.groundAt(this.pos.x, this.pos.z) + this.com.y + this.rig.flip.rightLift;
     this.vel.set(0, 0, 0);
     this.angVel.set(0, 0, 0);
     this.steerAngle = 0;
@@ -1197,7 +1309,7 @@ export class Vehicle {
   _syncLinkage() {
     const L = this.linkage;
     if (!L) return;
-    const K = V.linkage;
+    const K = this.rig.linkage;
 
     for (const a of L.arms) {
       const deg = this._travelMap(a.wheel.compression, K.armAngles[a.family]);
@@ -1245,11 +1357,11 @@ export class Vehicle {
     for (const w of this.wheels) {
       // Compression measured from the RESTING compression, since the authored
       // pose is the vehicle sitting on its springs, not hanging on full droop.
-      w.contactRef.position.y = w.baseY + (w.compression - this.sagLen);
-      if (w.front) {
+      if (w.travelRef) w.travelRef.position.y = w.baseY + (w.compression - this.sagLen);
+      if (w.front && w.steerRef) {
         w.steerRef.quaternion.copy(w.steerBase).multiply(_q2.setFromAxisAngle(_Y, this.steerAngle));
       }
-      w.spinRef.quaternion.copy(w.spinBase).multiply(_q2.setFromAxisAngle(_Z, w.spin));
+      if (w.spinRef) w.spinRef.quaternion.copy(w.spinBase).multiply(_q2.setFromAxisAngle(_Z, w.spin));
     }
   }
 
@@ -1451,7 +1563,7 @@ export class Vehicle {
   // Aim the ring. Rates rather than a snap, so a heavy gun reads as heavy and
   // whipping the mouse does not teleport the barrel across the field.
   aimTurret(yaw, pitch, dt) {
-    const T = V.turret;
+    const T = this.rig.turret;
     const dy = wrapPi(yaw - this.turretYaw);
     const my = T.yawRate * dt;
     this.turretYaw = wrapPi(this.turretYaw + Math.max(-my, Math.min(my, dy)));
@@ -1502,12 +1614,20 @@ export class VehicleManager {
   _spawnAll() {
     const spawns = this.game.world.vehicleSpawns || [];
     if (!spawns.length) return;
-    if (!this.game.assets.vehicles || !this.game.assets.vehicles.warthog) {
-      console.warn('[vehicle] warthog template missing — nothing to spawn');
-      return;
-    }
+    if (!this.game.assets.vehicles) return;
 
+    const unclaimed = [];
     for (const m of spawns) {
+      // WHAT this marker spawns is a config lookup now, not a hardcoded
+      // 'warthog'. A marker nothing claims is COLLECTED and reported rather
+      // than skipped in silence — a typo in Blender is otherwise invisible
+      // until somebody notices a vehicle is missing from the map.
+      const key = vehicleKeyForMarker(m.name);
+      if (!key) { unclaimed.push(m.name); continue; }
+      if (!this.game.assets.vehicles[key]) {
+        console.warn(`[vehicle] ${m.name}: no template loaded for "${key}"`);
+        continue;
+      }
       const team = teamOfMarker(m.name);
       // A marker whose name carries `_RESERVE` is the player's. It spawns ONE
       // vehicle rather than a pair, and that vehicle is flagged so no squad
@@ -1522,12 +1642,19 @@ export class VehicleManager {
       // driven to, which reads as staged for the push rather than abandoned.
       const yaw = this._yawTowardNearestSector(m.x, m.z);
       const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-      const n = reserved ? 1 : V.perSpawn;
+      // One per marker for anything with a real footprint. `perSpawn` lays
+      // copies out across the marker's facing at `spacing` metres, which is
+      // Warthog spacing — a 24 m wingspan would park two aircraft inside each
+      // other, so anything but a hog gets exactly one.
+      const n = (reserved || key !== 'warthog') ? 1 : V.perSpawn;
       for (let i = 0; i < n; i++) {
         const off = (i - (n - 1) / 2) * V.spacing;
-        const v = this.spawn('warthog', m.x + rx * off, m.z + rz * off, yaw, team);
+        const v = this.spawn(key, m.x + rx * off, m.z + rz * off, yaw, team, m.y);
         if (v) v.reserved = reserved;
       }
+    }
+    if (unclaimed.length) {
+      console.warn(`[vehicle] ${unclaimed.length} marker(s) match no CFG.vehicle.markers prefix: ${unclaimed.join(', ')}`);
     }
     console.log(`[vehicle] spawned ${this.vehicles.length} from ${spawns.length} marker(s)`);
   }
@@ -1542,7 +1669,7 @@ export class VehicleManager {
     return Math.atan2(best.x - x, best.z - z);
   }
 
-  spawn(key, x, z, yaw, team = null) {
+  spawn(key, x, z, yaw, team = null, markerY = null) {
     const template = this.game.assets.vehicles[key];
     if (!template) return null;
 
@@ -1550,10 +1677,44 @@ export class VehicleManager {
     const v = new Vehicle(key, group, team, this.game.world);
     this.game.scene.add(group);
 
-    // Placed the way it would come to rest — on the plane through its own four
+    // Placed the way it would come to rest — on the plane through its own
     // contact points, tilted to match, springs already at static compression —
     // rather than level at the highest corner with the rest left to fall.
     v.settleAt(x, z, yaw);
+
+    // Then LIFTED back to the marker's authored height, because the markers are
+    // placed deliberately above the floor so a vehicle drops onto it.
+    //
+    // Doing it in this order rather than simply spawning at the marker height
+    // is the whole point. `settleAt` exists because dropping a vehicle in LEVEL
+    // over sloped ground leaves the downhill corners dangling, so it lands on
+    // one corner and slides while it settles — measured at 2.6 m/s at the blue
+    // HQ. Settling first fixes the ATTITUDE to the ground it is going to land
+    // on; lifting along world Y afterwards preserves that attitude. The result
+    // is a vehicle that falls parallel to the slope and lands on all of its
+    // struts at once, which is the drop the marker was authored for and not the
+    // tumble it would otherwise get. Both HQ pads run to 7.9 and 9.5 degrees.
+    // The fall is capped at what the gear can absorb, NOT at what the marker
+    // asks for. See the `dropMin` note in config: map-3's markers stand 3.4 m
+    // to 6.4 m above the floor, which at `CFG.gravity` of 18 is an arrival at
+    // 11-15 m/s and carries an order of magnitude more energy than any of these
+    // springs can store. Uncapped, every vehicle on the map spawns by crashing.
+    if (markerY !== null && Number.isFinite(markerY)) {
+      const T = v.tune;
+      const absorb = T.dropAbsorb !== undefined
+        ? T.dropAbsorb
+        : T.travel * (1 - T.sag) / Math.max(1e-3, T.sag);
+      let drop = markerY - v.group.position.y;
+      if (drop > V.dropMax) {
+        console.warn(`[vehicle] ${key}: marker stands ${drop.toFixed(1)} m above the floor — that is almost certainly a mistake`);
+      }
+      drop = Math.min(drop, absorb, V.dropMax);
+      if (drop > V.dropMin) {
+        v.pos.y += drop;
+        v.wake();
+        v.syncVisuals();
+      }
+    }
     this.vehicles.push(v);
     return v;
   }

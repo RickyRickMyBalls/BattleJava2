@@ -149,8 +149,18 @@ function prepareMap(mapDef, gltf, renderer) {
     const p = toLocal(markers[k]);
     return { id: k.replace('FC_SECTOR_', ''), x: p.x, z: p.z, r: 32 };
   });
+  // Every marker that is not an HQ or a sector is a spawn candidate, and WHAT
+  // it spawns is decided downstream by `CFG.vehicle.markers`. This file knows
+  // what a marker is; it deliberately does not know what a Warthog is, which is
+  // why adding the Pelican needed no vehicle-key list here.
+  //
+  // The Y is carried through, and that is a behaviour change rather than tidying.
+  // Markers are authored slightly ABOVE the floor so a vehicle drops onto it,
+  // and the old filter both dropped every non-Warthog marker AND discarded the
+  // height on the ones it kept — so the authored intent had never reached the
+  // spawner. See `VehicleManager.spawn`.
   const vehicleSpawns = Object.keys(markers)
-    .filter((k) => k.startsWith('FC_VEHICLE_'))
+    .filter((k) => !k.startsWith('FC_HQ') && !k.startsWith('FC_SECTOR_'))
     .map((k) => ({ name: k, ...toLocal(markers[k]) }));
 
   // Sky items: fog would swallow them at distance — render them clean
