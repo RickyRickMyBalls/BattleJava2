@@ -7,6 +7,7 @@ import { weaponSlotGadget, classPerk } from './loadout.js';
 import { createAmmoDisplay } from './ammodisplay.js';
 import { createScopeDisplay, tagViewmodelLayer, VIEWMODEL_LAYER } from './scopedisplay.js';
 import { findMuzzle } from './soldier.js';
+import { carryScale } from './logistics.js';
 
 const P = CFG.player;
 const D = CFG.downed;
@@ -240,6 +241,25 @@ export class Player {
     this.setEnabled(false);
     for (const [target, type, fn] of this._listeners) target.removeEventListener(type, fn);
     this._listeners.length = 0;
+    if (this.scopeDisplay) { this.scopeDisplay.dispose(); this.scopeDisplay = null; }
+    // The viewmodel hangs off the CAMERA, which outlives the match — the scene
+    // sweep in Game.dispose walks root children and never reaches it. The gun
+    // inside it is the shared asset original (see applyLoadout), so it is
+    // detached, never disposed; the flash sprite's texture is this Player's own.
+    if (this.viewmodel) {
+      // `_mountGun` puts the mounted gun on the viewmodel layer, and the gun is
+      // the shared original — so the tag has to come back off, or the NEXT
+      // match's soldier clones inherit it and every AI rifle is invisible to
+      // every scope camera.
+      if (this.gunHolder) this.gunHolder.traverse((o) => o.layers.set(0));
+      this.viewmodel.removeFromParent();
+      if (this.flash && this.flash.material) {
+        if (this.flash.material.map) this.flash.material.map.dispose();
+        this.flash.material.dispose();
+      }
+    }
+    // Same trap one level down: the muzzle light IS a scene child (deliberately
+    // — see _buildViewmodel), so the sweep gets that one.
   }
 
   _bindInput() {
@@ -1733,6 +1753,9 @@ export class Player {
     if (boosting) speed *= sprintMult;
     if (this.walking) speed *= P.walkMult;
     if (this.crouching) speed *= P.crouchMult;
+    // Same load penalty the AI pays — see soldier._move. The player hauling a
+    // backpack has to feel the same drag they can see slowing their squad.
+    speed *= carryScale(this.soldier || { game: this.game, cargo: 0 });
     // Aiming slows you, and that is half of the movement spread fix: the ADS
     // penalty scales with `speed / P.speed`, so slowing the aimed walk pays for
     // itself twice. Guarded on the same condition as the aim pose — a welder has

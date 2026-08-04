@@ -99,7 +99,15 @@ let launching = false;
 // page rather than per match — it reaches the current game through a getter, so
 // launching a second match does not leave it pointed at the first.
 loadSettings();
-const pauseMenu = new PauseMenu({ get game() { return game; } });
+// The two match-level actions are handed over as callbacks rather than reached
+// for: standing a match up is this file's job (it owns the map load, the screen
+// flow and the `game` reference), and the menu should not learn any of that to
+// offer a button.
+const pauseMenu = new PauseMenu({
+  get game() { return game; },
+  restartMatch: () => restartMatch(),
+  exitToMenu: () => exitToMenu(),
+});
 session.pauseMenu = pauseMenu;
 
 // Settings that live on objects rather than being read where they are used.
@@ -186,9 +194,15 @@ async function startGame() {
 
     // Keep the character preview running behind the team select
     lobby.hidePanels();
+    // Clearing `launching` on the way in used to never happen at all — the flag
+    // was only reset on the failure path, because nothing could ever start a
+    // second match. RESTART MATCH can, so it has to come back down here or the
+    // second attempt returns at the guard up top and nothing loads.
     teamSelect.show((team) => {
       if (team === 1) game.setPlayerTeam(1);
       lobby.hide();
+      lobby.setLaunching(false);
+      launching = false;
       game.hud.show();
       game.hud.setMode('map');
       deploy.show('initial');
@@ -200,6 +214,51 @@ async function startGame() {
     launching = false;
   }
 }
+
+// ---- Leaving a match: one teardown, two exits ----
+// `game.dispose` does the real work — it empties the scene and hands the GPU
+// memory back (see game.js). This is the bookkeeping around it: the module-level
+// references, the session's copies of them, and any screen still pointed at a
+// match that no longer exists.
+function teardownMatch() {
+  if (!game) return;
+  game.dispose();
+  game = null;
+  deploy = null;
+  session.deployScreen = null;
+  // The armoury can be open over the deploy screen. Nothing is left for it to
+  // edit against, and `menuOpen` must stop reporting a screen that is gone or
+  // the lobby comes up with its keyboard already taken.
+  if (menu && menu.visible) menu.hide();
+  launching = false;
+  lobby.setLaunching(false);
+  session.refreshMenuOpen();
+}
+
+// Back to the setup screen. The lobby is where a match is configured, so it is
+// what "menu" means here; the title screen is one more click back from it.
+function exitToMenu() {
+  teardownMatch();
+  lobby.show();
+}
+
+// Same map, same game type, a fresh battle — but the side is asked again rather
+// than inherited: a restart is the natural moment to switch, and the team select
+// is one click on a screen the player is already waiting through. The lobby
+// comes back up underneath because a GLB map is parsed fresh for every match
+// (maps.js is explicit that it has to be), and that is several seconds of
+// loading with nothing behind it otherwise.
+async function restartMatch() {
+  teardownMatch();
+  lobby.show();
+  await startGame();
+}
+
+// The end screen used to reload the page to play again — the only teardown
+// available before there was one. Both buttons now go through the same two
+// functions the ESC menu uses.
+document.getElementById('endRestart').onclick = () => restartMatch();
+document.getElementById('endExit').onclick = () => exitToMenu();
 
 const clock = new THREE.Clock();
 function loop() {

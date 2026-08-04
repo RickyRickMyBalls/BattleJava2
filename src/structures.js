@@ -187,6 +187,13 @@ export class Structures {
       return { ok: false, why: 'STRUCTURE LIMIT' };
     }
 
+    // Materiel. HERE rather than in `place` on purpose: the player, the AI and
+    // any future placement ghost all ask this one method whether a spot is
+    // legal, so all three get the cost rule and the same reason string for
+    // free. Asking costs nothing — `place` is what charges. Modes with no
+    // resource pool answer true and this compiles out to a branch.
+    if (!this.game.canAfford(team, kind, x, z)) return { ok: false, why: 'NO SUPPLY IN RANGE' };
+
     // A beacon may not go down on top of the people you are fighting. Without
     // this it stops being a rally point and becomes a teleporter: reinforcements
     // arrive faster than the counterplay (shoot the thing) can possibly resolve,
@@ -263,6 +270,12 @@ export class Structures {
 
     const check = this.canPlaceAt(x, z, yaw, def, owner.team, owner.pos.y + 1);
     if (!check.ok) { this.lastRefusal = check.why; return null; }
+    // Charged only once the spot is known good, which is the same principle as
+    // the wall's charge refund in player.js: a placement refused by a rule you
+    // were never shown must not cost anything. The re-check is not redundant —
+    // `canPlaceAt` is also called speculatively, and between an AI squad's
+    // check and its commit another squad on the same team may have spent.
+    if (!this.game.spend(owner.team, kind, x, z)) { this.lastRefusal = 'NO SUPPLY IN RANGE'; return null; }
     this.lastRefusal = null;
 
     const [len, height, thick] = footprintOf(def);

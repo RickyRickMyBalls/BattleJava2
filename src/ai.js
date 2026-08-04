@@ -30,6 +30,10 @@ export class Squad {
     // — a squad could re-plant every time it lost someone.
     this.beaconCooldown = 0;
     this.beaconTimer = Math.random() * CFG.beacon.ai.checkInterval; // stagger
+    // A live supply run: { depot, leg }. `leg` is 'load' while the squad is
+    // fetching from HQ and 'deliver' once it has something to drop off. Null
+    // for every squad that is simply fighting, which is most of them.
+    this.supplyRun = null;
   }
 
   addMember(soldier) {
@@ -142,6 +146,66 @@ export class Squad {
     this.beaconCooldown = made ? A.cooldown : A.retry;
   }
 
+  // A squad on a supply run, one tick.
+  //
+  // THIS IS WHY THE MODE WORKS AT ALL. A player cannot feed 31 AI squadmates,
+  // and if only the player hauls then the front dries up everywhere they are
+  // not standing. Bots have to run supply or the economy is decorative.
+  //
+  // The run is deliberately expressed as nothing but a moving objective: leg
+  // 'load' points the squad at its own HQ, leg 'deliver' points it at the depot
+  // that needs it. `updateVehicleUse` already knows how to get a squad to its
+  // objective by road, and `_move` already knows how to walk there — so a
+  // supply run is a destination that changes twice, not a new kind of order.
+  updateSupply(game, dt) {
+    if (!this.supplyRun) return;
+    const logi = game.logistics;
+    const lead = this.leader;
+    if (!logi || !lead || !lead.alive) { this.supplyRun = null; return; }
+
+    // What is doing the carrying: the hog if the squad has one, else the
+    // leader's back. The walking case is slow and small and completely valid —
+    // it is what keeps a team with no vehicle from being locked out entirely.
+    const carrier = this.vehicle || lead;
+    const cap = this.vehicle
+      ? game.rules.resources.vehicleCargo
+      : game.rules.resources.backpack;
+
+    if (this.supplyRun.leg === 'load') {
+      // Full enough to be worth the drive back. Not "completely full": the last
+      // few units take as long as the first many and the front needs it now.
+      if (carrier.cargo >= cap * 0.9) this.supplyRun.leg = 'deliver';
+    } else if (carrier.cargo <= 0.01) {
+      // Delivered. Ending the run here rather than looping means the brain gets
+      // to re-decide whether this squad is still the right one to be doing it —
+      // the front may have moved, or this may now be the only squad alive on a
+      // sector under attack.
+      this.supplyRun = null;
+      return;
+    }
+
+    // The destination may have fallen to the enemy mid-run, which is an
+    // entirely ordinary thing to happen to a supply line. RETARGET rather than
+    // abandon: cancelling here left loaded Warthogs parked in fields for the
+    // rest of the match — 750 materiel in three hogs on one measured run —
+    // because a squad only unloads at a depot it is being sent to.
+    if (this.supplyRun.depot.sec && this.supplyRun.depot.sec.owner !== this.team) {
+      const next = logi.neediestDepot(this.team, null);
+      if (!next) { this.supplyRun = null; return; }
+      this.supplyRun.depot = next;
+    }
+    const dest = this.supplyRun.leg === 'load'
+      ? logi.hqDepot(this.team)
+      : this.supplyRun.depot;
+    if (!dest) { this.supplyRun = null; return; }
+
+    const y = game.world.heightAt(dest.x, dest.z);
+    if (!this.objective || this.objective.x !== dest.x || this.objective.z !== dest.z) {
+      this.setObjective({ id: dest.kind === 'hq' ? 'HQ' : dest.sec.id, x: dest.x, y, z: dest.z },
+        this.supplyRun.leg === 'load' ? 'RESUPPLY' : 'DELIVER');
+    }
+  }
+
   // Alpha squad escorts the player when they're alive.
   updateFollow(playerPos) {
     if (!this.followPlayer || !playerPos) return;
@@ -229,7 +293,12 @@ export class Squad {
       // Arrived. Everyone out — VEHICLE_PLAN.md open question 6 answers this:
       // capturing is done on foot, because dismounting is far more readable
       // than a hog spinning circles on a control point.
-      if (dist <= A.dismountRange) { this._releaseVehicle(); return; }
+      // Arrived — everyone out, because capturing is done on foot. EXCEPT on a
+      // supply run: arriving at HQ is the halfway point, not the end, and a
+      // crew that piles out to watch the hog load has no way to drive it back.
+      // The transfer happens to the vehicle whether or not anyone is sitting
+      // in it, so staying aboard costs nothing and keeps the run alive.
+      if (dist <= A.dismountRange && !this.supplyRun) { this._releaseVehicle(); return; }
       const driver = v.seats[0].occupant;
       if (driver && driver.driver) {
         if (!driver.driveTarget) driver.driveTarget = new THREE.Vector3();
@@ -333,6 +402,15 @@ export class TeamBrain {
     );
     if (!squads.length) return;
 
+    // Squads mid-run keep their orders. Reassigning one to a sector fight
+    // halfway through a haul strands its cargo and wastes the whole drive —
+    // the run ends itself when the cargo is delivered, and the squad comes back
+    // into the pool on the next replan.
+    const free = squads.filter((s) => !s.supplyRun);
+    this._planSupply(free);
+    const fighters = free.filter((s) => !s.supplyRun);
+    if (!fighters.length) return;
+
     // AXIS: objective topology, first half. With no prizes on the map the
     // scoring below has nothing to score — every sector filters out, the bail
     // fires, and 64 soldiers stand at their spawns waiting for an order that
@@ -344,7 +422,7 @@ export class TeamBrain {
       const jobs = sectors.map((sec) => ({
         sec, type: 'ENGAGE', weight: 1 + this._enemyPresence(sec), cap: 2,
       }));
-      this._assign(squads, jobs);
+      this._assign(fighters, jobs);
       return;
     }
 
@@ -355,7 +433,7 @@ export class TeamBrain {
       // Under a chain lattice, scoring it anyway masses squads on a point they
       // can stand in forever without the bar moving. Sectors we already OWN
       // stay jobs regardless: holding is not capturing.
-      if (sec.owner !== this.team && !this.game.capturable(sec)) continue;
+      if (sec.owner !== this.team && !this.game.capturable(sec, this.team)) continue;
       if (sec.owner === this.team) {
         const threat = this._enemyPresence(sec);
         if (threat > 0) jobs.push({ sec, type: 'DEFEND', weight: 3 + threat, cap: 2 });
@@ -365,7 +443,51 @@ export class TeamBrain {
         jobs.push({ sec, type: sec.owner === null ? 'CAPTURE' : 'ATTACK', weight: 2 + (sec.owner !== null ? 0.5 : 1) - defense * 0.15, cap: 3 });
       }
     }
-    this._assign(squads, jobs);
+    this._assign(fighters, jobs);
+  }
+
+  // How many squads this team should have hauling right now, and who.
+  //
+  // The rule is deliberately need-driven rather than a fixed detail: a team
+  // whose forward depots are full has nothing to haul and every squad should be
+  // fighting. A team that has just pushed into a new sector has an empty depot
+  // at the front and should send someone. That way the logistics load rises and
+  // falls with the front instead of permanently taxing the team a squad.
+  _planSupply(squads) {
+    const logi = this.game.logistics;
+    if (!logi || !squads.length) return;
+    const hq = logi.hqDepot(this.team);
+    if (!hq || hq.stock < 50) return;                     // nothing to give
+
+    const R = this.game.rules.resources;
+    const running = this.game.teams[this.team].squads.filter((s) => s.supplyRun).length;
+    // Never more than a third of the team on trucks, and never the last squad —
+    // a team that logistics itself to death holds nothing to deliver to.
+    const maxRuns = Math.max(1, Math.floor(this.game.teams[this.team].squads.length / 3));
+    if (running >= maxRuns) return;
+
+    const front = this.game.rules.lattice === 'chain'
+      ? (this.team === TEAM.BLUE ? this.game.front().blueNext : this.game.front().redNext)
+      : null;
+    const depot = logi.neediestDepot(this.team, front);
+    // A depot already holding a comfortable buffer is not worth a squad. The
+    // threshold is expressed in what it BUYS — four walls' worth — rather than
+    // as a bare number, so retuning the costs retunes this with them.
+    if (!depot || depot.stock >= R.cost.wall * 4) return;
+
+    // Nearest free squad to the HQ they will be loading at: the run starts with
+    // a drive to HQ, so the squad already closest to it loses the least fight
+    // time. Explicitly NOT the squad nearest the depot — that one is usually
+    // the one holding the sector the supplies are for.
+    let best = null, bestD = Infinity;
+    for (const sq of squads) {
+      const lead = sq.members.find((m) => m.alive);
+      if (!lead) continue;
+      const d = Math.hypot(lead.pos.x - hq.x, lead.pos.z - hq.z);
+      if (d < bestD) { bestD = d; best = sq; }
+    }
+    if (!best) return;
+    best.supplyRun = { depot, leg: 'load' };
   }
 
   // Greedy: each squad to the best remaining job, preferring near squads.

@@ -8,6 +8,7 @@ import { classPerk } from './loadout.js';
 import { restoreBakedDisplays } from './drivenmaterial.js';
 import { measureHipsRise, seatMeshOn, forcePose, poseFor } from './seating.js';
 import { VehicleDriver } from './vehicledriver.js';
+import { carryScale } from './logistics.js';
 
 const S = CFG.soldier;
 const AI = CFG.ai;
@@ -112,6 +113,10 @@ export class Soldier {
     this.vel = new THREE.Vector3();
     this.yaw = 0;
     this.alive = true;
+    // Materiel on this soldier's back. Filled and emptied by logistics.js
+    // purely from where they are standing — this class knows nothing about
+    // supply, which is why the field is a bare number and not a system.
+    this.cargo = 0;
     this.plate = this.plateMax;
     this.health = S.health;
     // Seconds since this soldier was last hit. Named for what it MEANS rather
@@ -1472,6 +1477,11 @@ export class Soldier {
     const wantSprint = !engaging && travelDist > ST.ai.minDist && this.calmTimer >= ST.ai.calm;
     const mult = this.stepStamina(dt, wantSprint, desired.lengthSq() > 0.16, S.sprintMult);
     if (wantSprint) desired.multiplyScalar(mult);
+    // A full backpack slows the walk. Applied AFTER the sprint boost so a
+    // carrying soldier who sprints is still slower than an empty one who does
+    // — the penalty is on the load, not on the gait.
+    const carry = carryScale(this);
+    if (carry !== 1) desired.multiplyScalar(carry);
 
     // Separation from squadmates
     for (const mate of this.squad.members) {

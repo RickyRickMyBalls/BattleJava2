@@ -233,6 +233,14 @@ export async function prewarm(renderer, scene, camera, objects = [], opts = {}) 
     renderer.setRenderTarget(prevTarget);
     rt.dispose();
     scene.remove(group);
+    // The objects handed in are throwaways, and a cloned RIG owns a Skeleton,
+    // which owns a bone texture — uploaded by the render above and never freed.
+    // Sharing geometry and materials with the originals is the whole point (see
+    // weaponClones); skeletons are the one thing a clone does not share, so they
+    // have to be given back or every warm leaks one texture per skinned mesh.
+    const skeletons = new Set();
+    group.traverse((o) => { if (o.skeleton) skeletons.add(o.skeleton); });
+    for (const s of skeletons) s.dispose();
   }
 }
 

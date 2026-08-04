@@ -17,6 +17,80 @@ import { createBeamPool } from './repairtool.js';
 import { getSetting, onSettingChange } from './settings.js';
 import { prewarm, weaponClones, characterClones } from './assets.js';
 import { resolveRules } from './rules.js';
+import { Logistics } from './logistics.js';
+
+// ---------------------------------------------------------------------------
+// Match teardown (see Game.dispose). Everything a match puts in the scene has
+// to come back out before the next one goes in, and the GPU memory with it — a
+// 235 MB map parsed twice is two copies resident.
+//
+// The hard part is that a match does not OWN most of what it draws. Soldier
+// bodies, weapons and vehicles are clones off the shared asset library, and a
+// clone shares its source's geometry and materials outright. Disposing those
+// would empty every gun in the armoury and every body in the lobby.
+//
+// So teardown disposes by EXCLUSION: collect everything reachable from the
+// asset library, and dispose only what is not in it. What is left over is
+// exactly the per-match geometry — terrain, sector rings, structures, tracer
+// pools — and the map GLB, which is parsed fresh for every match (see maps.js).
+function collectShared(assets) {
+  const keep = new Set();
+  if (!assets) return keep;
+  const roots = [
+    ...Object.values(assets.characters || {}).map((c) => c && c.template),
+    ...Object.values(assets.weaponModels || {}),
+    ...Object.values(assets.props || {}),
+    ...Object.values(assets.vehicles || {}),
+  ];
+  for (const root of roots) {
+    if (!root || !root.traverse) continue;
+    root.traverse((o) => {
+      if (o.geometry) keep.add(o.geometry);
+      if (o.skeleton) keep.add(o.skeleton);
+      for (const m of materialsOf(o)) {
+        keep.add(m);
+        for (const t of texturesOf(m)) keep.add(t);
+      }
+    });
+  }
+  return keep;
+}
+
+function materialsOf(o) {
+  if (!o.material) return [];
+  return Array.isArray(o.material) ? o.material : [o.material];
+}
+
+// Own enumerable properties only — every map slot a material actually uses is
+// assigned in its constructor, and walking the prototype instead would poke
+// three's deprecated accessors.
+function texturesOf(m) {
+  const out = [];
+  for (const v of Object.values(m)) if (v && v.isTexture) out.push(v);
+  return out;
+}
+
+function disposeTree(root, keep) {
+  // Skeletons are collected and disposed after the walk because one is shared
+  // by every skinned mesh of a rig — disposing in place would run it nine times
+  // per soldier.
+  const skeletons = new Set();
+  root.traverse((o) => {
+    if (o.geometry && !keep.has(o.geometry)) o.geometry.dispose();
+    // MEASURED: this line is most of the leak it exists to close. A cloned rig
+    // gets its own Skeleton, and a Skeleton owns a BONE TEXTURE — one per
+    // skinned mesh, nine per soldier, ~1100 per 64-soldier match. It is not a
+    // material map, so the sweep below never sees it, and three's own texture
+    // count climbed by that much on every restart until this was here.
+    if (o.skeleton && !keep.has(o.skeleton)) skeletons.add(o.skeleton);
+    for (const m of materialsOf(o)) {
+      if (keep.has(m)) continue;
+      for (const t of texturesOf(m)) if (!keep.has(t)) t.dispose();
+      m.dispose();
+    }
+  });
+  for (const s of skeletons) s.dispose();
+}
 
 const BLUE_NAMES = ['Reyes', 'Okafor', 'Tanaka', 'Silva', 'Novak', 'Baptiste', 'Kowalski', 'Iversen', 'Mbeki', 'Duarte', 'Halvorsen', 'Cross', 'Vega', 'Antar', 'Riley', 'Song', 'Petrov', 'Lindqvist', 'Moreau', 'Adeyemi', 'Castillo', 'Brandt', 'Oyelaran', 'Whitaker', 'Nakamura', 'Sorenson', 'Blake', 'Ferreira', 'Zhou', 'Kaminski', 'Dubois'];
 const RED_NAMES = ['Zar\'Kul', 'Vestam', 'Ontar', 'Krellus', 'Sar\'Vek', 'Molvane', 'Teth', 'Uzek', 'Rathkar', 'Volsun', 'Ekar', 'Themos', 'Drax', 'Onvelu', 'Kaidon', 'Serevu', 'Tulkar', 'Wren', 'Ossek', 'Varn', 'Ilmar', 'Zetes', 'Korag', 'Mendu', 'Sulvan', 'Orrek', 'Talvu', 'Nezar', 'Ukam', 'Rhoss', 'Ventar', 'Ghelan'];
@@ -27,6 +101,11 @@ export class Game {
     this.camera = camera;
     this.assets = assets;
     this.session = session || null;
+    // What was in the scene BEFORE this match existed — the camera, and nothing
+    // else today. `dispose` removes every root-level child that is not in here,
+    // which covers the world, the soldiers, the vehicles, the structures and the
+    // tracer pools without any of them having to register anything.
+    this._sceneBaseline = new Set(scene.children);
     // The match's rule set, resolved ONCE and frozen. Until now the lobby's
     // game-type selector wrote `session.gameType` and nothing read it; this is
     // the line that makes the choice mean something. A scripted or headless
@@ -50,6 +129,9 @@ export class Game {
     this.audio = new GameAudio(this);
     this.audio.init(assets.audio);
     this.combat = new Combat(this);
+    // Null in modes with no resource economy, and every caller is written to
+    // read that as "everything is free" rather than as a missing system.
+    this.logistics = this.rules.resources ? new Logistics(this, this.rules.resources) : null;
     this.supply = new Supply(this);
     this.structures = new Structures(this);
     // Before `prewarm`, for the same reason the beam pool below is: the hogs
@@ -57,6 +139,10 @@ export class Game {
     // behind the loading bar instead of hitching the first frame one is in view.
     this.vehicles = new VehicleManager(this);
     this.hud = new Hud(this);
+    // Said once, because it never changes inside a match. A counter labelled
+    // TICKETS that only ever goes up would misread the mode at a glance.
+    this.hud.setCounterLabel(this.rules.victory === 'chain' ? 'SECTORS' : 'TICKETS');
+    this.hud.setMaterielVisible(!!this.rules.resources);
     // Built HERE, before `prewarm`, and that ordering is the whole point: the
     // pool's lights are in the scene when the match compiles its materials, so
     // the compile happens once behind the loading bar instead of the first time
@@ -290,6 +376,60 @@ export class Game {
     return true;
   }
 
+  // Walk off the field on purpose: the ESC menu's REDEPLOY. A real death, not a
+  // teleport — the deaths column, the ticket and the respawn timer are all paid,
+  // because a free trip back to the spawn menu would be the cheapest way to
+  // cross the map. `die` does the rest, including opening the deploy screen.
+  redeploy() {
+    if (this.gameOver || this.playerDead) return false;
+    const p = this.playerSoldier;
+    // Giving up while DOWNED is a kill for whoever put you there — that is what
+    // the SPACE hold already does, and `die` credits `downedBy` for it. Walking
+    // off under your own power is nobody's kill, and `downedBy` survives a
+    // revive, so it has to be cleared or a redeploy an hour later still pays out
+    // to the soldier who once knocked you over.
+    if (!p.downed) p.downedBy = null;
+    p.die(p.downed ? p.downedBy : null);
+    return true;
+  }
+
+  // Tear the match down. After this the Game is dead: `update` must never run
+  // again and the caller drops the reference (see main.js teardownMatch).
+  //
+  // ORDER MATTERS. The deploy screen goes first because its tactical-map style
+  // MUTATES shared asset materials — left dimmed, half the armoury would follow
+  // the player back to the lobby at 50% opacity. Then the subsystems that own
+  // scene objects, so their own disposals run; the scene sweep is the backstop
+  // for everything nobody claimed.
+  dispose() {
+    this.gameOver = true;   // anything still holding a reference stops simulating
+    if (this._unsubSettings) this._unsubSettings();
+    if (this.deployScreen) this.deployScreen.dispose();
+    if (this.hud) this.hud.dispose();
+    if (this.player) this.player.dispose();
+    if (this.beams) this.beams.dispose();
+    if (this.vehicles) this.vehicles.dispose();
+    if (this.structures) this.structures.dispose();
+    if (this.supply) this.supply.dispose();
+    if (this.audio) this.audio.dispose();
+
+    const keep = collectShared(this.assets);
+    for (const child of [...this.scene.children]) {
+      if (this._sceneBaseline.has(child)) continue;
+      this.scene.remove(child);
+      disposeTree(child, keep);
+    }
+    // Both are the World's, and whatever comes next (lobby, armoury, the next
+    // match) sets its own. `scene.environment` is main.js's and stays.
+    this.scene.fog = null;
+    this.scene.background = null;
+
+    this.deployScreen = null;
+    this.armory = null;
+    this.pauseMenu = null;
+    if (this.session && this.session.deployScreen) this.session.deployScreen = null;
+  }
+
   // Menu-open state lives on the session so the armory works pre-game too.
   get menuOpen() {
     return this.session ? this.session.menuOpen : this._menuOpen || false;
@@ -453,7 +593,24 @@ export class Game {
     this.hud.setStamina(this.playerSoldier.stamina, this.playerSoldier.maxStamina,
       this.playerSoldier.staminaUnlimited, this.playerSoldier.exhausted);
     this.hud.updateSectors(this.world.sectors);
-    this.hud.setTickets(this.teams[0].tickets, this.teams[1].tickets);
+    // One readout, whatever the mode actually counts. A mode won by taking the
+    // map counts SECTORS — a frozen ticket pair that can never move would be
+    // two numbers pretending to be a scoreboard.
+    if (this.rules.victory === 'chain') {
+      let blue = 0, red = 0;
+      for (const s of this.world.sectors) {
+        if (s.owner === TEAM.BLUE) blue++; else if (s.owner === TEAM.RED) red++;
+      }
+      this.hud.setTickets(blue, red);
+    } else {
+      this.hud.setTickets(this.teams[0].tickets, this.teams[1].tickets);
+    }
+    if (this.logistics) {
+      const p = this.playerSoldier;
+      const at = this.player.vehicle || p;
+      const depot = this.logistics.supplyAt(this.playerTeam, at.pos.x, at.pos.z);
+      this.hud.setSupply(depot ? depot.stock : null, at.cargo || 0);
+    }
     this.hud.updateSquadList(this.playerSquad);
     const sq = this.playerSquad;
     const nearest = this._nearestObjectiveText();
@@ -475,6 +632,9 @@ export class Game {
       t.brain.update(dt);
       for (const sq of t.squads) {
         sq.refreshLeader();
+        // Before the beacon and the follow rules: a squad on a supply run owns
+        // its own objective, and the two below both read it.
+        sq.updateSupply(this, dt);
         sq.updateBeacon(dt, this);
         sq.updateFollow(followPos);
         sq.updateVehicleFollow(this);
@@ -502,6 +662,7 @@ export class Game {
     this._updateCapture(dt);
     this._updateEconomy(dt);
     this.combat.update(dt);
+    if (this.logistics) this.logistics.update(dt);
     this.supply.update(dt);
     this.structures.update(dt);
     this.vehicles.update(dt);
@@ -523,6 +684,10 @@ export class Game {
     // Suggest the closest non-friendly or contested sector as the player's objective
     let best = null, bestD = Infinity;
     for (const s of this.world.sectors) {
+      // Under a chain, a nearer enemy sector the player is not allowed to take
+      // is the wrong place to send them — the order line is the one piece of
+      // HUD that says what the mode wants from you.
+      if (s.owner !== this.playerTeam && !this.capturable(s, this.playerTeam)) continue;
       const score = (s.owner !== this.playerTeam ? 0 : s.contested ? 200 : 100000);
       const d = Math.hypot(s.x - this.player.pos.x, s.z - this.player.pos.z) + score;
       if (d < bestD) { bestD = d; best = s; }
@@ -549,6 +714,19 @@ export class Game {
     if (R.sectors === 'held') {
       for (const sec of this.world.sectors) {
         if (sec.owner === team && !sec.contested) opts.push(sec);
+      }
+    } else if (R.sectors === 'frontmost') {
+      // The tip of this team's run down the chain, and only that — spawning
+      // three sectors back is the distance tax that replaces the ticket in a
+      // mode where dying costs no score. If the tip is CONTESTED it is skipped
+      // for the next one back: a spawn you are currently losing a fight over
+      // is a meat grinder, and the existing 'held' rule refuses those for the
+      // same reason.
+      const c = this.world.chain;
+      const f = this.front();
+      const step = team === TEAM.BLUE ? -1 : 1;
+      for (let i = team === TEAM.BLUE ? f.bIdx : f.rIdx; i >= 0 && i < c.length; i += step) {
+        if (c[i].owner === team && !c[i].contested) { opts.push(c[i]); break; }
       }
     }
     // A team with nowhere to come back is a soft-locked match, not a hard mode.
@@ -608,9 +786,50 @@ export class Game {
   // answers from adjacency and produces a frontline instead; when it lands, it
   // lands HERE and nowhere else. Consulted by `_updateCapture` and by the team
   // brain in ai.js, which must not send squads at a point nobody can take.
-  capturable(sec) {
+  // `team` omitted asks "can ANYONE take this", which is what a sector ring
+  // wants to know. Passing it asks "can THIS team", which is what the team
+  // brain wants — and the two are different questions under a chain, where
+  // blue's next target and red's are opposite ends of the same map. Answering
+  // the loose question for both would march blue squads at red's front, where
+  // they can stand forever without the bar moving.
+  capturable(sec, team) {
     if (this.rules.objectives !== 'capture') return false;
-    return this.rules.lattice === 'open';
+    if (this.rules.lattice === 'open') return true;
+    const f = this.front();
+    if (team === TEAM.BLUE) return sec === f.blueNext;
+    if (team === TEAM.RED) return sec === f.redNext;
+    return sec === f.blueNext || sec === f.redNext;
+  }
+
+  // Where each team's unbroken run down the chain ends, and therefore the one
+  // sector each may push into. Everything the chain lattice does is read off
+  // this: what is capturable, where you may spawn, and whether someone has run
+  // out of map.
+  //
+  // CONTIGUITY, not "highest index owned", and the difference is the whole
+  // correctness of the thing. A team that has had a sector taken from BEHIND
+  // its front must retake that one — the naive version lets them leapfrog it
+  // and the front silently becomes two fronts, which is the mode's one
+  // premise gone.
+  //
+  // Recomputed per call rather than cached: it is a walk over five sectors,
+  // and a cache would need invalidating on every capture, on respawn and on
+  // the deploy screen's per-frame revalidation. Measure before optimising.
+  front() {
+    const c = this.world.chain;
+    let b = -1;
+    while (b + 1 < c.length && c[b + 1].owner === TEAM.BLUE) b++;
+    let r = c.length;
+    while (r - 1 >= 0 && c[r - 1].owner === TEAM.RED) r--;
+    return {
+      bIdx: b, rIdx: r,
+      blueNext: b + 1 < c.length ? c[b + 1] : null,
+      redNext: r - 1 >= 0 ? c[r - 1] : null,
+      // Nowhere left for the other side to stand. Not a score condition — a
+      // team with no ground left is not owed a countdown.
+      blueAll: c.length > 0 && b === c.length - 1,
+      redAll: c.length > 0 && r === 0,
+    };
   }
 
   _updateCapture(dt) {
@@ -628,10 +847,16 @@ export class Game {
       // the HUD tells. Only the progress bar is gated.
       sec.contested = blue > 0 && red > 0;
       const net = Math.max(-3, Math.min(3, blue - red));
-      if (net !== 0 && this.capturable(sec)) {
+      if (net !== 0) {
         const dir = net > 0 ? 1 : -1; // + toward blue
         const attackingTeam = dir > 0 ? TEAM.BLUE : TEAM.RED;
         if (sec.owner !== attackingTeam) {
+          // AXIS: objective topology. Asked of the team actually pushing, not
+          // of the sector in the abstract — a chain sector that is red's next
+          // target is not thereby blue's, and letting blue bank progress in it
+          // would let them skip the sector in between and break the front into
+          // two. Under 'open' this is always true and the branch vanishes.
+          if (!this.capturable(sec, attackingTeam)) { this._tintSector(sec); continue; }
           sec.progress += dir * Math.abs(net) * CFG.captureRate * dt;
           if (sec.progress >= 100) this._captureSector(sec, TEAM.BLUE);
           else if (sec.progress <= -100) this._captureSector(sec, TEAM.RED);
@@ -671,6 +896,27 @@ export class Game {
     if (this.rules.economy === 'attrition') this._bleedTickets(dt);
   }
 
+  // What a placement costs, and whether it can be paid for FROM HERE. The
+  // position arguments are the whole difference between this and a team pool:
+  // materiel is somewhere, and a build reaches for the nearest depot that has
+  // it. A mode with no `resources` block answers 0 / true / true rather than
+  // making every call site check first, which is what keeps the gate in
+  // structures.js and supply.js to one line each and free everywhere else.
+  costOf(key) {
+    const R = this.rules.resources;
+    return (R && R.cost[key]) || 0;
+  }
+
+  canAfford(team, key, x, z) {
+    if (!this.logistics) return true;
+    return this.logistics.canDraw(team, x, z, this.costOf(key));
+  }
+
+  spend(team, key, x, z) {
+    if (!this.logistics) return true;
+    return this.logistics.draw(team, x, z, this.costOf(key));
+  }
+
   _bleedTickets(dt) {
     this.bleedAccum += dt;
     if (this.bleedAccum >= CFG.bleedInterval) {
@@ -695,6 +941,16 @@ export class Game {
       if (this.teams[0].tickets <= 0 || this.teams[1].tickets <= 0) {
         this._endMatch(this.teams[1 - this.playerTeam].tickets <= 0);
       }
+      return;
+    }
+    if (this.rules.victory === 'chain') {
+      // The map is the scoreboard. Take every sector or the match does not end
+      // — no clock, no counter, no tiebreak. Owner's call; two sides dug in
+      // with neither advancing has no resolution, and a clock is the smallest
+      // fix if that turns out to be the common case.
+      const f = this.front();
+      if (f.blueAll) this._endMatch(this.playerTeam === TEAM.BLUE);
+      else if (f.redAll) this._endMatch(this.playerTeam === TEAM.RED);
     }
   }
 

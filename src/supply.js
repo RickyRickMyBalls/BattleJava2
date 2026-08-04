@@ -56,6 +56,16 @@ export class Supply {
     const yaw = owner.yaw;
     const x = owner.pos.x + Math.sin(yaw) * C.placeAhead;
     const z = owner.pos.z + Math.cos(yaw) * C.placeAhead;
+    // A crate is a placeable like any other, so it draws from a depot near
+    // where it is going down — see `game.spend`. Charged after the position is
+    // known, because that position is what decides which depot can pay. Free in
+    // modes with no resource block, and the refusal rides the channel
+    // player.js already reads.
+    if (!this.game.spend(owner.team, 'crate', x, z)) {
+      this.lastRefusal = 'NO SUPPLY IN RANGE';
+      return null;
+    }
+    this.lastRefusal = null;
     const world = this.game.world;
     const col = world.collision;
     let y = col ? col.groundAt(x, owner.pos.y + 1, z) : null;

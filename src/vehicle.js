@@ -134,6 +134,11 @@ export class Vehicle {
     this.refs = indexRefs(group);
     this.tune = V[key] || V.warthog;
 
+    // Materiel in the back. Same contract as Soldier.cargo — logistics.js owns
+    // it and this class never reads it. A loaded hog handles like an empty one
+    // on purpose: the cost of a supply run is the exposure, not the handling.
+    this.cargo = 0;
+
     // --- Rigid body state (world) ---
     this.pos = new THREE.Vector3();      // centre of mass
     this.quat = new THREE.Quaternion();

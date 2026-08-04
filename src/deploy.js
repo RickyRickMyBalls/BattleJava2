@@ -39,13 +39,24 @@ export class DeployScreen {
     // by the world-space shader grid — flip to true to bring it back
     this.meshWireframe = false;
 
+    // Window-level listeners are the ones a match cannot leave behind: the DOM
+    // this screen owns is removed wholesale on dispose and takes its own
+    // handlers with it, but these outlive it. Registered through `_onWindow` so
+    // there is one list to unhook. Initialised before `_buildDom`, which
+    // registers two of them.
+    this._winListeners = [];
     this._buildDom();
-    window.addEventListener('resize', () => {
+    this._onWindow('resize', () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this._resizeCanvas();
       if (this.post) { this.post.rtColor.dispose(); this.post.rtNormal.dispose(); this.post = null; }
     });
+  }
+
+  _onWindow(type, fn, opts) {
+    window.addEventListener(type, fn, opts);
+    this._winListeners.push([type, fn, opts]);
   }
 
   // ------------------------------------------------------------------ DOM --
@@ -158,8 +169,8 @@ export class DeployScreen {
       this.lastX = e.clientX;
       this.lastY = e.clientY;
     });
-    window.addEventListener('mouseup', () => { this.dragging = false; });
-    window.addEventListener('mousemove', (e) => {
+    this._onWindow('mouseup', () => { this.dragging = false; });
+    this._onWindow('mousemove', (e) => {
       if (!this.dragging || !this.visible || this.transition) return;
       const wpp = (2 * this.h * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / window.innerHeight;
       this.cx -= (e.clientX - this.lastX) * wpp;
@@ -352,6 +363,41 @@ export class DeployScreen {
     const fog = this.game.scene.fog;
     if (fog && this._fogFar) { fog.near = this._fogNear; fog.far = this._fogFar; }
     this._applyMapStyle(false);
+  }
+
+  // Leaving the match for good. This screen builds its own `#deploy` element
+  // per match, so a restart that did not remove it would stack a second copy of
+  // every id on the page and the older one would win every getElementById.
+  //
+  // `_applyMapStyle(false)` FIRST and unconditionally: the map style mutates
+  // MATERIALS, and those materials are the shared asset library. Skipping it
+  // would hand the lobby and the armoury back at 50% opacity over a background
+  // this screen picked.
+  dispose() {
+    this.unwatch();
+    this._applyMapStyle(false);
+    const fog = this.game.scene.fog;
+    if (fog && this._fogFar) { fog.near = this._fogNear; fog.far = this._fogFar; }
+    this.visible = false;
+    this.transition = null;
+    for (const [type, fn, opts] of this._winListeners) window.removeEventListener(type, fn, opts);
+    this._winListeners.length = 0;
+    if (this.post) {
+      this.post.rtColor.dispose();
+      this.post.rtNormal.dispose();
+      this.post.quadScene.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+      this.post.material.dispose();
+      this.post.normalMat.dispose();
+      this.post = null;
+    }
+    if (this._floorEdges) {
+      this.game.scene.remove(this._floorEdges);
+      this._floorEdges.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+      if (this._floorEdgeMat) this._floorEdgeMat.dispose();
+      this._floorEdges = null;
+      this._floorEdgesFor = null;
+    }
+    this.el.root.remove();
   }
 
   // Tactical map style: opaque world materials drop to 50% opacity over a dark

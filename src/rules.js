@@ -62,9 +62,43 @@ export const DEFAULT_RULES = {
 
   // Where a soldier may re-enter the field.
   //   hq      — the home spawn is always available (deploy.js falls back to it)
-  //   sectors — 'held' (any uncontested sector you own) | 'none'
+  //   sectors — 'held' (any uncontested sector you own)
+  //           | 'frontmost' (only the tip of your run down the chain)
+  //           | 'none'
   //   beacon  — a squad rally beacon is a spawn option
   spawn: { hq: true, sectors: 'held', beacon: true },
+
+  // The supply network, or null for a mode with no resource economy.
+  //
+  // THE ONE THING TO UNDERSTAND: materiel is PRODUCED AT HQ and has to be
+  // CARRIED to the front. It is not earned by holding ground. Holding ground is
+  // what gives you somewhere to carry it TO, and what shortens the drive.
+  //
+  // An earlier build had sectors pay materiel per second the way they might pay
+  // score. That is a different game: it rewards standing still, and the supply
+  // line — the thing this economy exists to create — never has to exist at all.
+  // The counter you spend at the front is the one somebody drove there.
+  //
+  //   produce         — materiel/second generated at each HQ
+  //   hqMax           — HQ stockpile ceiling
+  //   sectorMax       — per-sector depot ceiling
+  //   transferRate    — materiel/second moved while parked at a depot
+  //   transferRadius  — how close a carrier must be for that to happen
+  //   supplyRadius    — how far a build may reach for a stocked depot
+  //   backpack        — what one soldier can hand-carry
+  //   vehicleCargo    — what a vehicle can haul
+  //   carryPenalty    — move-speed multiplier while hand-carrying
+  //   cost            — keyed by placement kind: beacon | wall | crate
+  //
+  // Deliberately ONE system with construction's limiter rather than two.
+  // CLASS_AND_GADGET_PLAN.md's "limiter problem" asks how to throttle building
+  // once the repair tool is global; a supply network answers that and the
+  // resource economy at once. Built separately they get reconciled later at a
+  // cost.
+  //
+  // **Never a loss condition.** Resources throttle tempo; they must not decide
+  // the match. Nothing here can reach zero and end anything.
+  resources: null,
 };
 
 // Plain-object deep merge. Deliberately not general: rules are two levels of

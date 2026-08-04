@@ -16,6 +16,9 @@ Design docs — all aspirational; build incrementally, owner approves each step
   bot driving. Built around the Warthog. Its "what is already true" and "rig
   contract" sections are MEASURED (scale, -X forward, the ±90° steer trap) —
   read them before touching `vehicle.js` or a vehicle GLB.
+- `docs/GLOSSARY.md` — what the words mean. Not a design doc; nothing is decided
+  there. Its "pairs that get confused" table is the part worth reading whole
+  (combatant seat vs vehicle seat, ticket vs materiel, `rules` vs `CFG`).
 
 Each carries **Locked / Working / Open / Long-term** labels per decision — check
 the label before treating anything in them as a requirement.
@@ -42,7 +45,13 @@ the label before treating anything in them as a requirement.
 - `main.js` — boot, session object (owns `playerLoadout` + `menuOpen`), screen flow:
   title → lobby → team select → deploy. GPU prewarm (`prewarmWeapons`) runs at match
   setup so first renders don't hitch.
-- `game.js` — match state, teams, tickets, deploy/respawn, win check.
+- `game.js` — match state, teams, tickets, deploy/respawn, win check, and match
+  TEARDOWN. `dispose()` is what makes RESTART MATCH / EXIT TO MENU possible: it
+  sweeps the scene by EXCLUSION against the shared asset library (soldier and
+  weapon clones share their source's geometry and materials — disposing those
+  empties the armoury). Read the header comment above `collectShared` before
+  touching it; the non-obvious leak is per-clone `Skeleton` bone textures, which
+  are not material maps and cost ~1100 textures a match.
 - `soldier.js` — AI soldier entity. Weapon mounts: scale-compensated holders on bones
   (`GRIP` global + per-weapon `WEAPONS[k].grip`; stowed gun on spine via per-character
   `BACK`). Both guns pre-cloned at spawn — switching only re-parents (never clone

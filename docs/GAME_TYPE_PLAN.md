@@ -71,44 +71,38 @@ different thing.
 
 | | **Sector Control** | **Frontline** |
 | --- | --- | --- |
-| Reference | Battlefield Conquest | Foxhole, not Squad |
+| Reference | Battlefield Conquest | Foxhole / Hell Let Loose |
 | Currency | **Lives** | **Materiel** |
-| Counter moves | **Down**, as you die | **Up**, as you hold |
+| Counter | tickets, moving **down** as you die | sectors held — **the map is the scoreboard** |
 | Death costs | 1 ticket + respawn time | Respawn time + what you were carrying |
 | You lose by | Running out of lives | Running out of map |
-| Victory | Drain the enemy counter to zero | Reach the score target, or hold more at time |
+| Victory | Drain the enemy counter to zero | Capture the entire chain |
 
 **Locked:** In Frontline, a death costs no score of any kind — not to the dier,
-not to their team. Territory is the only thing the counter reads.
+not to their team.
 
-**Working — the one-line statement of the whole difference:**
+**Superseded, and worth recording because it was wrong twice.** This section
+used to read "in Sector Control the counter goes *down* when you die; in
+Frontline it goes *up* when you hold," with score accruing in sector-seconds
+against a target and a match clock. That was built and removed. Two problems:
 
-> In Sector Control the counter goes **down** when you die.
-> In Frontline the counter goes **up** when you hold.
+1. **It measured the wrong thing.** The point of Frontline is to take ground.
+   A second counter measuring how long you had already been sitting on ground
+   you took was answering a question nobody asked, and it let a team win without
+   ever advancing.
+2. **Materiel is not a counter at all.** It is a *thing in a place* that has to
+   be carried — see the resources section. Listing it as Frontline's "currency"
+   in the sense that tickets are Sector Control's currency confused a scoreboard
+   with an economy.
 
-That reuses the existing HUD ticket readout unchanged, and it gives Frontline a
-monotone progress bar that both sides can read — which a pure "who holds what at
-the end" rule does not have. A 2–2 stalemate for twenty minutes needs to show
-*someone* inching ahead, or it reads as nothing happening.
+The surviving one-line statement is simpler:
 
-### Frontline scoring
+> Sector Control asks how many lives you have left.
+> Frontline asks how much of the map you hold — and makes you drive the tools
+> for taking it up from your own HQ.
 
-**Working:** Score accrues in **sector-seconds**. Each sector a team holds pays
-its team a point per second, per sector. First to the target wins; if the timer
-expires first, the higher score wins.
-
-Consequences worth stating up front:
-
-- Holding early is worth as much as holding late. No sudden-death swing, no
-  reason to turtle for twenty minutes and lunge at the end.
-- The centre sector can be worth more than a flank simply by carrying a higher
-  rate. That is a per-sector knob, not a new system.
-- Capturing the **entire chain** should end the match immediately regardless of
-  score. A team with nowhere left to spawn is not owed a countdown.
-
-**Open:** The score target and match length. These have to be felt, not
-calculated — but the scripted fast-forward harness (`setTimeScale(8)`) can
-produce the curve for a first guess before anyone plays it.
+The known cost of dropping the score is that a 2–2 stalemate has no resolution
+and nothing inching. A clock is the smallest fix if that turns out to be common.
 
 ### Why death is still expensive without costing score
 
@@ -154,14 +148,39 @@ aware or simply not say it.
 The good news: this is not a rewrite. Six call sites carry the entire
 distinction between the modes.
 
+**Built.** All six now read `game.rules`; the table below is the map of where.
+
 | Axis | Sector Control | Frontline | Code site |
 | --- | --- | --- | --- |
-| **Objective topology** | all points open | chain lattice, one front | `_updateCapture` `game.js:429` |
-| **AI objective gate** | scores every sector | must skip locked sectors | `replan` `ai.js:117` |
-| **Spawn set** | any held sector | frontmost held + rallies | `_spawnPoints` `deploy.js:217`, `_respawnAI` `game.js:394` |
-| **Economy** | ticket bleed on majority | sector-seconds accrual | `_updateTickets` `game.js:476` |
-| **Death cost** | `tickets -= 1` | **no-op** | `onKill` `game.js:211` |
-| **Victory** | a counter hit zero | target, timer, or full chain | `_checkWin` `game.js:491` |
+| **Objective topology** | all points open | chain lattice, one front | `game.capturable(sec)`, consulted in `_updateCapture` |
+| **AI objective gate** | scores every sector | must skip locked sectors | `replan` `ai.js` |
+| **Spawn set** | any held sector | frontmost held + rallies | `spawnOptionsFor` `game.js` |
+| **Economy** | ticket bleed on majority | none — nothing drains, nothing accrues | `_updateEconomy` `game.js` |
+| **Death cost** | `tickets -= 1` | **no-op** | `onKill` `game.js` |
+| **Victory** | a counter hit zero | the full chain | `_checkWin` → `_endMatch` `game.js` |
+
+Line numbers are deliberately absent: the previous revision of this table carried
+them and every one had drifted ~100 lines by the time anyone read it. Grep the
+method name.
+
+Two things the build changed about this table:
+
+- **Spawn topology is written once now.** `deploy.js:_spawnPoints` used to
+  re-derive the player's spawn list independently of `spawnOptionsFor`; it now
+  reads through it, so a mode states its topology in one place. The rally beacon
+  stays out of `spawnOptionsFor` on purpose — for a bot a rally OUTRANKS every
+  sector rather than joining them, which is that method's whole shape.
+- **Topology split in two.** `capturable` turned out to answer two questions,
+  not one, and SKIRMISH is what forced them apart:
+
+  | Rule | Question |
+  | --- | --- |
+  | `objectives` | Are sectors PRIZES at all? `capture` \| `none` |
+  | `lattice` | If they are, which ones are live? `open` \| *chain, unbuilt* |
+
+  `capturable(sec)` is the AND of the two. Worth keeping separate: a mode with
+  no objectives is not a mode with a degenerate lattice, and collapsing them
+  would have made SKIRMISH claim a topology it does not have.
 
 **Working — topology is the big one.** Bigger than spawn rules, bigger than the
 economy. Open-lattice conquest feels like Battlefield because the fight is
@@ -179,28 +198,59 @@ It is also cheap: one `_capturable(sec)` predicate consulted in three places.
 
 ### 1. Game types carry a rules *delta*, not a config
 
-`GAME_TYPES` in `config.js:1716` is currently one entry with a name and a
-description. Each entry grows a `rules` block holding only what differs from
-`CFG`:
+**Built.** `GAME_TYPES` was one entry with a name and a description. Each entry
+now carries a `rules` block holding only what differs from the defaults in
+`rules.js` — as shipped:
 
 ```js
 frontline: {
   id: 'frontline', name: 'FRONTLINE', desc: '…',
   rules: {
-    lattice:  'chain',                          // vs 'open'
-    spawn:    { sectors: 'frontmost', beacon: true, hq: true },
-    economy:  'territory',                      // vs 'attrition'
-    score:    { target: 1200, perSectorSecond: 1, matchLength: 1500 },
-    deathCost: 0,
-    maps:     ['demo', 'map3'],
+    objectives: 'capture',
+    lattice:    'chain',                        // vs 'open'
+    economy:    'none',                         // vs 'attrition'
+    victory:    'chain',                        // vs 'ticketsZero'
+    deathCost:  0,
+    spawn:      { hq: true, sectors: 'frontmost', beacon: true },
+    resources:  { produce: 4, hqMax: 1500, sectorMax: 600, /* … */
+                  cost: { beacon: 60, wall: 25, crate: 40 } },
   },
 }
 ```
 
+`maps: [...]` is **not** built — no type restricts which maps it runs on yet,
+and nothing needs it while all three types work everywhere.
+
 ### 2. Resolve once per match into `game.rules`
 
-Deep-merge the delta over `CFG`, freeze the result, hang it on the game. Then
-migrate **only the six call sites in the table above** to read `game.rules.*`.
+**Built** — `src/rules.js`, resolved in the `Game` constructor from
+`session.gameType`, which the lobby had been writing and nothing had been
+reading.
+
+**One deviation from this plan as written, and it matters.** The instruction was
+"deep-merge the delta over `CFG`". The build merges over a `DEFAULT_RULES`
+object instead, and never snapshots `CFG` at all — because a frozen copy of
+`CFG` hanging on the game would have silently killed `FC.cfg.bleedInterval = 2`
+live editing for exactly the six sites the modes care about most, which is the
+thing the very next paragraph of this plan locks. So the split is:
+
+> `rules` answers WHICH RULE applies. `CFG` answers WHAT THE NUMBER IS.
+
+A mode decides the counter measures attrition rather than territory. It does not
+decide that the bleed interval is 4 seconds — that stays in `CFG`, read live at
+the call site.
+
+**The one exception, and why it is one:** `rules.tickets` (null = take
+`CFG.tickets`). What a counter starts at only means something alongside what
+drains it, so 400 under a ticket bleed and 400 under kills-only are not the same
+match length. It is read once at construction, so it was never live-editable
+through `FC.cfg` anyway — the property this split exists to protect is intact.
+`rules.resources` arrived on the same terms and for the same reason: a supply
+network's rates only mean something against its costs, so they travel together
+as one mode-owned block rather than scattering into `CFG`.
+
+Then migrate **only the six call sites in the table above** to read
+`game.rules.*`.
 
 **Locked:** Do *not* sweep `CFG` → `rules` across the codebase. Modules capture
 it at import scope (`const C = CFG.crate` in `supply.js:17`), and a broad rewrite
@@ -230,42 +280,133 @@ can take. This is a small change and a mandatory one.
 
 ## Resources
 
-**Open — the system is not designed here.** This section defines only the *seam*,
-so the rules work does not have to be redone when resources land.
+**Built as a SUPPLY NETWORK.** `rules.resources`, `src/logistics.js`; null in
+every mode that does not want one, which is how SECTOR CONTROL and SKIRMISH
+stay free.
 
-**Working:** Resources are a **team-level materiel pool**, spent on things that
-persist in the world, earned by holding territory.
+> **HQ is a SOURCE. A sector is a DEPOT. Nothing moves between them by itself.**
 
-What it must gate, at minimum:
+**This section previously described a team-level pool earned by holding
+territory, and that was built and then torn out.** It is worth recording why,
+because the two designs look similar in config and are opposites in play:
 
-- Rally beacon placement (currently free — `CFG.beacon`, "the cooldown IS the cost")
-- Structure placement (currently capped by `structure.maxPerTeam: 12`)
-- Vehicle spawning, when vehicles exist
-- Gadget resupply beyond the base kit
+| | Pool (wrong) | Network (right) |
+| --- | --- | --- |
+| Where materiel is | one number per team | in a specific place |
+| How you get it | hold ground | produce at HQ, then **carry it** |
+| What it rewards | standing still | running the supply line |
+| Supply line | never has to exist | is the game |
 
-**This answers an open question that is already blocking other work.**
+A team-wide pool lets a squad at the front spend materiel sitting in a warehouse
+eighty seconds' drive away — which deletes the single decision the economy
+exists to create. The counter you spend at the front has to be the one somebody
+drove there.
+
+**Which way materiel flows is decided by where you are standing**, not by a key
+or a menu: at your HQ you LOAD, at your sector you UNLOAD. That is the whole
+interface. It needs no UI, reads identically for a player and a bot, and has no
+state to get stuck in — which matters when 63 of the 64 soldiers on the field
+will never be told what a load button is.
+
+**Two rules that had to be discovered by measurement, not reasoning:**
+
+1. **Who may LOAD is not who may UNLOAD.** Letting every bot top up a backpack
+   simply by respawning at HQ drained 1500 materiel out of a home stockpile in
+   two minutes on reinforcement traffic alone, and not one unit of it was a
+   decision anybody made. A bot now loads only while its squad is on a run; the
+   player always may, because standing at your own HQ is a choice. Unloading
+   stays open to everyone always, so materiel on the wrong person still reaches
+   a depot when they walk past one.
+2. **A cancelled run must RETARGET, not abandon.** When a delivery's destination
+   fell to the enemy mid-run the squad dropped the job, and since a squad only
+   unloads where it is being sent, the loaded Warthog stayed parked in a field
+   for the rest of the match — 750 materiel in three hogs on one measured run.
+
+**Capturing a stocked sector captures its supplies.** Deliberate: it makes a
+well-fed front worth *taking* rather than merely worth killing, and it punishes
+banking at a sector you cannot hold. Burning it on capture is one line in
+`Logistics.teamOf` if that plays better.
+
+**The gate is three methods on `Game`** — `costOf`, `canAfford`, `spend` — and
+the reason it is that and not more: a mode with no `resources` block answers
+`0 / true / true`, so no call site has to check first. That keeps the gate to
+one line each in `structures.canPlaceAt` and `supply.place`.
+
+**Where the check lives is the whole trick.** It goes in
+`structures.canPlaceAt`, not in `place`, because the player, the AI and any
+future placement ghost all ask that one method whether a spot is legal. All
+three inherit the cost rule and the same `NO MATERIEL` reason string, through a
+channel `player.js` already surfaces to the HUD. `place` re-checks and charges —
+not redundant, since `canPlaceAt` is also called speculatively and two squads on
+one team can spend between a check and its commit.
+
+What it gates today:
+
+- Rally beacon placement — 60 (was free; `CFG.beacon`, "the cooldown IS the cost")
+- Wall placement — 25 (the `structure.maxPerTeam: 12` cap still stands *as well*)
+- Supply crate placement — 40
+- **Not yet:** vehicle spawning, better classes, better weapons — the things this
+  economy is ultimately for. All three are now a cost lookup and a call to
+  `game.spend(team, key, x, z)` away.
+
+### Bots must run supply, or the economy is decorative
+
+**This is the load-bearing half of the mode, not a polish item.** A player
+cannot feed 31 AI squadmates, and if only the player hauls then the front dries
+up everywhere they are not standing.
+
+`Squad.supplyRun` + `TeamBrain._planSupply`. A run is expressed as nothing but a
+**moving objective** — leg `load` points the squad at its own HQ, leg `deliver`
+points it at the depot that needs it — so `updateVehicleUse` drives it by road
+and `_move` walks it, and no new kind of order had to exist. One change was
+needed in the vehicle code: a crew must NOT dismount on arrival during a run,
+because arriving at HQ is the halfway point and a crew that piles out to watch
+the hog load cannot drive it back.
+
+Dispatch is **need-driven, not a fixed detail**: a team whose forward depots are
+full sends nobody, a team that just pushed into an empty sector sends someone.
+Capped at a third of the team. The threshold is written as what it buys — four
+walls' worth — so retuning the costs retunes dispatch with them.
+
+Losing a loaded truck to a squad wipe is a real and correct cost; the materiel
+is not destroyed, and a later squad reclaiming that hog resumes the delivery
+immediately because its cargo already reads as loaded.
+
+**Untuned, all of it.** The ratio that matters is `produce` against the costs.
+Measured on `map3` (8 Warthogs): forward depots settle around 300–450 with runs
+dispatching and standing down as the front demands, which is the right shape.
+The demo map has **no vehicle spawns at all**, so it exercises the backpack path
+only — worth knowing when a change looks fine there and not on map3.
+
+**This answers an open question that was already blocking other work.**
 `CLASS_AND_GADGET_PLAN.md` → "The limiter problem" asks how to throttle
 construction once the repair tool is global, and lists a per-sector build budget
-(safest) and supply-drawn-from-Support (most interesting) as candidates. A team
-materiel pool is both of those, generalised. **Construction's limiter and the
-Frontline economy should be one system, not two.** If they are built separately
-they will be reconciled later at a cost.
+(safest) and supply-drawn-from-Support (most interesting) as candidates. **The
+supply network is literally the first one** — a per-sector build budget is
+exactly what a sector depot is — and it reaches the second's intent by a better
+route, since the budget is refilled by players rather than by a timer.
+Construction's limiter and the Frontline economy are one system, as required.
 
-**Working:** Income is territorial. Sectors pay materiel per second the same way
-they pay score, which means the same held-sector loop drives both the win
-condition and the ability to keep fighting — and a team being pushed back
-naturally builds less, without a rule saying so.
+A team being pushed back does still build less, but for a sharper reason than
+income: its depots are further from HQ, its runs take longer, and the depot it
+just lost took its stockpile with it.
 
-Open questions, in order of how much they change:
+Open questions. The build answered the first three **by assumption, not by
+decision** — they were assumed so FRONTLINE could ship whole, and every one is a
+line of config away from the other answer:
 
-1. One pool per team, or per squad? Per team is simpler and makes hoarding a
-   real problem; per squad is more interesting and much more UI.
-2. Is materiel *transported* (Foxhole, Squad logistics trucks) or does it simply
-   accrue? Transport is the deepest version and by far the most work; it also
-   needs vehicles, which do not exist yet.
-3. Does Sector Control use resources at all, or is it deliberately the simple
-   mode with none?
-4. Does losing a sector destroy the structures inside it?
+1. **One pool per team, or per squad?** **Neither — per PLACE.** One stockpile
+   at each HQ and one at each sector. The question turned out to be wrong: the
+   interesting unit of ownership is geography, not org chart.
+2. **Is materiel transported (Foxhole, Squad logistics trucks) or does it
+   accrue?** **Transported — owner-decided, and the point of the whole
+   economy.** Warthog cargo (250, ~10 walls a run) plus a soldier backpack (30,
+   at 0.8× move speed) so a team with no vehicle nearby is slowed rather than
+   locked out.
+3. **Does Sector Control use resources at all?** *Assumed no* — it is
+   deliberately the simple mode. `resources: null`.
+4. **Does losing a sector destroy the structures inside it?** *Still open, and
+   untouched.* Walls currently outlive the ground they were built on.
 
 ---
 
@@ -276,28 +417,92 @@ exists.
 
 ### 1. SKIRMISH — the plumbing test
 
-No objectives. Kills only. Roughly twenty lines of rules.
+**Built.** No objectives. Kills only. `objectives: 'none'`, `economy: 'none'`,
+HQ and rally spawns, 150 tickets.
 
 Worthless as a mode; **invaluable as proof the rules resolver works** before it
 touches capture logic. It is also genuinely useful for tuning combat without
 capture noise in the way, which `/chartest.html` cannot give you — that is a
 range, this is 64 soldiers actually fighting.
 
+It earned that keep twice over, because it found the one thing this plan had
+missed. **A mode with no objectives leaves the AI with nothing to walk toward.**
+Every sector filtered out of the gate in `replan`, and 64 soldiers stood at
+their spawns waiting for an order that could not come. So a mode without
+objectives gets the other reason to move: the sectors remain the map's
+landmarks, and the best one is wherever the enemy already is. Squads converge,
+fight, and re-converge when the crowd moves. The greedy assignment split out of
+`replan` into `_assign` at the same time — how a team WEIGHS the map is
+per-mode, how it hands out the work is not.
+
+The proof it produced is worth recording as the acceptance test for any future
+mode: over 240 s of `setTimeScale(8)`, the two teams' ticket losses summed to
+*exactly* the death count (45 + 39 = 84), so `deathCost` was the only drain and
+`economy: 'none'` genuinely stopped the bleed. The same run under SECTOR CONTROL
+drained 61 tickets that no kill accounts for. **A game type gates behaviour, not
+merely constants** — and that is a measurement, not an assertion.
+
+**Untuned:** 150 tickets is a first guess. Under kills-only, 400 runs well past
+half an hour.
+
 ### 2. SECTOR CONTROL — the Battlefield preset
 
-What exists today, reframed as a preset rather than the hardcoded truth.
-`economy: 'attrition'`, `lattice: 'open'`. Zero new gameplay; the work is
-entirely in moving the existing behaviour behind the rules object so it can be
-verified unchanged.
+**Built.** What existed already, reframed as a preset rather than the hardcoded
+truth. `objectives: 'capture'`, `lattice: 'open'`, `economy: 'attrition'`. Zero
+new gameplay; the work was entirely in moving the existing behaviour behind the
+rules object, verified unchanged by a scripted battle before and after.
 
 ### 3. FRONTLINE — the territorial mode
 
-**The highest-value item on this list.** Chain lattice, sector-second scoring, no
-death cost, spawning restricted to the frontmost held sector plus rally beacons.
+**Built.** Chain lattice, no death cost, spawning restricted to the frontmost
+held sector plus rally beacons, and the supply network from the resources
+section below.
+
+**Won by capturing the whole chain, and by nothing else** — owner-decided.
+No ticket bleed, no clock, no score: the map is the scoreboard, and the HUD
+counter reads SECTORS. Sector-second scoring was built here first and removed;
+the point of the mode is to take ground, and a second counter measuring how long
+you sat on it was answering a question nobody asked. The known cost of the pure
+rule is that two sides dug in with neither advancing has no resolution. A clock
+is the smallest fix if that turns out to be the common case rather than the rare
+one.
 
 It reuses the beacon system already built, gives the cover and construction work
 a reason to exist, and it is where the Battlefield-versus-Squad question stops
 being an argument and becomes something that can be felt in a match.
+
+**The chain is derived, not authored.** `world._buildChain` projects each sector
+onto the blue-HQ → red-HQ axis and sorts. That covers the procedural map and
+marker-authored GLB maps without either declaring anything, and it degrades
+predictably rather than sanely: the order stays monotone along the axis the two
+bases define, which is the axis a frontline runs across. `MAPS[x].chain` is the
+override, and a declared chain that does not name every sector is refused with a
+warning rather than run — sectors it left out could never be captured by anyone.
+
+**Open, and map3 is the reason:** its four sectors are not in a line, so the
+derived order comes out A → C → B → D with C sitting ~500 units off the axis.
+That is defensible and it plays, but it is not obviously the order a person
+would pick. Whoever authored those markers should decide, and say so:
+
+```js
+map3: { …, chain: ['A', 'B', 'C', 'D'] },
+```
+
+**Correctness note worth keeping.** Two things about the lattice were wrong in
+the obvious implementation and are worth not rediscovering:
+
+1. **The front is the end of a CONTIGUOUS run, not the highest index owned.**
+   A team that loses a sector *behind* its front must retake that one. The
+   naive version lets them leapfrog it, and the single front silently becomes
+   two — the mode's one premise gone.
+2. **`capturable` needs to know which team is asking.** Blue's next target and
+   red's are opposite ends of the same map. Answering the loose "can anyone take
+   this" for both marches blue squads at red's front, where they can stand
+   forever without the bar moving, and lets a team bank progress in a sector it
+   is not allowed to take. `capturable(sec, team)`; the team-less form is for
+   the sector ring, which genuinely wants the loose question.
+
+**Untuned:** every resource number. See the resources section.
 
 ### 4. BREAKTHROUGH — asymmetric attack and defend
 

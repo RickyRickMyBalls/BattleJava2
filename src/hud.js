@@ -16,6 +16,10 @@ export class Hud {
       hud: document.getElementById('hud'),
       ticketsBlue: document.getElementById('ticketsBlue'),
       ticketsRed: document.getElementById('ticketsRed'),
+      counterLabel: document.getElementById('counterLabel'),
+      materiel: document.getElementById('materiel'),
+      materielVal: document.getElementById('materielVal'),
+      cargoVal: document.getElementById('cargoVal'),
       sectors: document.getElementById('sectors'),
       minimap: document.getElementById('minimap'),
       killfeed: document.getElementById('killfeed'),
@@ -87,6 +91,28 @@ export class Hud {
 
   show() { this.el.hud.style.display = 'block'; }
   hide() { this.el.hud.style.display = 'none'; }
+
+  // This HUD's markup is STATIC — it lives in index.html and every Hud ever
+  // built binds to the same elements. So leaving a match cannot throw anything
+  // away; it has to blank the parts a match filled in, or the next one opens
+  // showing the last one's kill feed and its VICTORY banner. Anything rebuilt
+  // from scratch at construction (the sector pips) is left for the next Hud.
+  dispose() {
+    this.hide();
+    this.el.endScreen.style.display = 'none';
+    this.el.killfeed.replaceChildren();
+    this.el.casualties.replaceChildren();
+    this.el.squadList.replaceChildren();
+    this.el.sectors.replaceChildren();
+    this.el.gadgets.innerHTML = '';
+    this._gadgetSig = null;
+    this.el.msg.style.opacity = 0;
+    this.el.hitmarker.style.opacity = 0;
+    this.el.damageVignette.style.opacity = 0;
+    this.el.downVignette.style.opacity = 0;
+    this.setPrompt(null);
+    this.spottedShooters.clear();
+  }
 
   setAmmo(mag, res, capacity) {
     this.el.ammoMag.textContent = mag;
@@ -366,6 +392,30 @@ export class Hud {
   setTickets(blue, red) {
     this.el.ticketsBlue.textContent = Math.max(0, Math.ceil(blue));
     this.el.ticketsRed.textContent = Math.max(0, Math.ceil(red));
+  }
+
+  // What the pair of numbers above actually means, per game type. Set once at
+  // match setup — see the note in the Game constructor.
+  setCounterLabel(text) {
+    if (this.el.counterLabel) this.el.counterLabel.textContent = text;
+  }
+
+  setMaterielVisible(on) {
+    if (this.el.materiel) this.el.materiel.style.display = on ? 'flex' : 'none';
+  }
+
+  // Two different facts, and conflating them was never an option: SUPPLY is
+  // what a build here could draw on — em-dash when no friendly depot is in
+  // range, which is the state the mode is actually about — and CARRYING is what
+  // is on your back or in your hog and has not been delivered yet.
+  //
+  // Floored, not rounded: a depot reading 60 you cannot spend a 60-cost beacon
+  // out of is the readout calling the rule a liar.
+  setSupply(depotStock, cargo) {
+    if (this.el.materielVal) {
+      this.el.materielVal.textContent = depotStock === null ? '—' : Math.floor(depotStock);
+    }
+    if (this.el.cargoVal) this.el.cargoVal.textContent = Math.floor(cargo);
   }
 
   // The crosshair marks where the shot goes, so it has no business being up in

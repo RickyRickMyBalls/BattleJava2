@@ -19,8 +19,20 @@
 // included. That is the right behaviour anyway: "give me my cursor back" and
 // "show me the menu" are the same intent from the player's side.
 // ---------------------------------------------------------------------------
+//
+// The footer carries the three ways OUT of a match — redeploy, restart, exit.
+// Only the first is the menu's own (it is one call on the match); the other two
+// tear a match down and stand a screen back up, which is main.js's job, so they
+// arrive as host callbacks. A host that does not supply them (a scripted or
+// headless one) simply has those buttons hidden rather than dead.
 
 import { SETTING_DEFS, SETTING_TABS, getSetting, setSetting } from './settings.js';
+
+// Buttons that end something get a second click before they do it. The cost of
+// a misclick here is a match, and the menu sits one keypress away from the
+// fight — "are you sure" as a state on the button itself, rather than a dialog
+// stacked on a dialog.
+const CONFIRM_HOLD = 4;   // seconds a primed button stays primed
 
 export class PauseMenu {
   // `host` supplies the game through a getter rather than as a value: the menu
@@ -66,7 +78,14 @@ export class PauseMenu {
           <div class="pm-tabs"></div>
           <div class="pm-content"></div>
         </div>
-        <div class="pm-foot"><button class="pm-resume">RESUME</button></div>
+        <div class="pm-foot">
+          <div class="pm-actions">
+            <button class="pm-act" data-act="redeploy">REDEPLOY</button>
+            <button class="pm-act danger" data-act="restart">RESTART MATCH</button>
+            <button class="pm-act danger" data-act="exit">EXIT TO MENU</button>
+          </div>
+          <button class="pm-resume">RESUME</button>
+        </div>
       </div>`;
     document.body.appendChild(ov);
 
@@ -74,11 +93,19 @@ export class PauseMenu {
       root: ov,
       tabs: ov.querySelector('.pm-tabs'),
       content: ov.querySelector('.pm-content'),
+      actions: ov.querySelector('.pm-actions'),
     };
     ov.querySelector('.pm-resume').onclick = () => this.hide();
     // Clicking the backdrop resumes. Clicking the panel must not, or every
     // slider drag that ends outside the thumb would close the menu.
     ov.onclick = (e) => { if (e.target === ov) this.hide(); };
+
+    this.act = {};
+    this._primed = null;      // which action is one click from happening
+    for (const b of this.el.actions.querySelectorAll('.pm-act')) {
+      this.act[b.dataset.act] = b;
+      b.onclick = () => this._onAction(b.dataset.act, b);
+    }
 
     for (const t of SETTING_TABS) {
       const b = document.createElement('button');
@@ -90,6 +117,58 @@ export class PauseMenu {
     }
     this._renderTabs();
     this._renderContent();
+  }
+
+  // A destructive action arms on the first click and fires on the second.
+  // REDEPLOY is not destructive — trading a life for a spawn point is an
+  // ordinary thing to do mid-match — so it goes straight through.
+  _onAction(act, btn) {
+    if (btn.disabled) return;
+    if (btn.classList.contains('danger') && this._primed !== act) { this._prime(act); return; }
+    this._unprime();
+    // Close WITHOUT re-grabbing the mouse, and close before acting. `hide()`
+    // normally requests pointer lock on the way out; a lock request that
+    // resolves after `redeploy` has released it would re-lock the cursor on top
+    // of the deploy map, and after a restart it would grab the loading screen.
+    const g = this.game;
+    this.hide(false);
+    if (act === 'redeploy') { if (g) g.redeploy(); return; }
+    if (act === 'restart' && this.host.restartMatch) this.host.restartMatch();
+    else if (act === 'exit' && this.host.exitToMenu) this.host.exitToMenu();
+  }
+
+  _prime(act) {
+    this._primed = act;
+    this._paintActions();
+    clearTimeout(this._primeTimer);
+    // Un-arms itself: a button left reading CONFIRM? while the player reads a
+    // settings tab is a button that fires on a click they meant for something
+    // else three minutes later.
+    this._primeTimer = setTimeout(() => this._unprime(), CONFIRM_HOLD * 1000);
+  }
+
+  _unprime() {
+    clearTimeout(this._primeTimer);
+    this._primed = null;
+    this._paintActions();
+  }
+
+  // Labels and availability. Redeploy only means something while the player is
+  // fielded — dead, undeployed or game over there is no life to spend, and the
+  // deploy map they would be sent to is already up. Restart and exit are hidden
+  // outright for a host that cannot perform them rather than shown dead.
+  _paintActions() {
+    const g = this.game;
+    this.act.redeploy.disabled = !g || g.gameOver || g.playerDead;
+    for (const [act, label, fn] of [
+      ['restart', 'RESTART MATCH', this.host.restartMatch],
+      ['exit', 'EXIT TO MENU', this.host.exitToMenu],
+    ]) {
+      const b = this.act[act];
+      b.style.display = fn ? '' : 'none';
+      b.classList.toggle('armed', this._primed === act);
+      b.textContent = this._primed === act ? 'CONFIRM?' : label;
+    }
   }
 
   _renderTabs() {
@@ -177,6 +256,14 @@ export class PauseMenu {
     if (this.visible) return;
     this.visible = true;
     this.el.root.style.display = 'flex';
+    this._unprime();   // nothing stays armed across an open
+    // The sim does not stop for this menu (see the header), so the player can be
+    // shot while reading a settings tab — and REDEPLOY has to stop offering a
+    // life they no longer have. This menu has no frame hook of its own, so it
+    // borrows a slow timer rather than being driven from the match: at four
+    // repaints a second it is free, and it stops the moment the menu closes.
+    clearInterval(this._pollTimer);
+    this._pollTimer = setInterval(() => this._paintActions(), 250);
     const g = this.game;
     if (g) {
       g.refreshMenuOpen();
@@ -187,16 +274,22 @@ export class PauseMenu {
     }
   }
 
-  hide() {
+  // `relock` false is for the footer actions: they close this menu on their way
+  // to somewhere that owns the mouse itself (the deploy map, the lobby), and a
+  // lock request racing that hand-off wins it back a frame too late.
+  hide(relock = true) {
     if (!this.visible) return;
     this.visible = false;
     this.el.root.style.display = 'none';
+    clearInterval(this._pollTimer);
+    this._pollTimer = null;
+    this._unprime();
     const g = this.game;
     if (!g) return;
     g.refreshMenuOpen();
     // Back to the fight. Guarded inside requestLock — dead, spectating and
     // game-over states all refuse it, so this cannot re-grab the mouse at a
     // moment the player is meant to have it.
-    if (g.player && !g.menuOpen) g.player.requestLock();
+    if (relock && g.player && !g.menuOpen) g.player.requestLock();
   }
 }

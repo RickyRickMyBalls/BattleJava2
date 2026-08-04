@@ -28,6 +28,7 @@
 //   spectating                 [Combat: skip the player's own body]
 //   spectatedSoldier           [Soldier._updateAnim: full-rate anim for the feed]
 //   rules                      resolved match rules    [game.js six axes]
+//   costOf/canAfford/spend     materiel gate           [structures, supply]
 //   onKill(attacker, victim)   [Soldier.die]
 //   onDown(victim, attacker)   [Soldier.goDown]
 //   onRevive(victim, by)       [Soldier.revive]
@@ -127,6 +128,13 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     // it carries `playerTeam`: the day a shared module asks, the answer must
     // not be undefined. Defaults, not a mode.
     rules: resolveRules('conquest'),
+
+    // The lobby has no economy, so everything it can place is free. Stubbed
+    // rather than left absent because `supply.place` runs on the lobby stage —
+    // the armoury lets you try a crate — and it now asks before it builds.
+    costOf() { return 0; },
+    canAfford() { return true; },
+    spend() { return true; },
 
     // The lobby is never over, never dead, never bleeding tickets.
     gameOver: false,

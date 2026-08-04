@@ -2557,6 +2557,40 @@ export const GAME_TYPES = {
       tickets: 150,
     },
   },
+
+  // The territorial mode. A chain lattice means there is exactly one front,
+  // which is what finally makes the cover-placement and rally work pay off —
+  // cover only matters when the enemy has one direction to come from.
+  //
+  // Win by taking the WHOLE CHAIN and nothing else. No ticket bleed, no clock,
+  // no score: the map is the scoreboard. Owner's call, made knowing that two
+  // sides dug in with nobody advancing has no resolution — if that turns out to
+  // be the common case rather than the rare one, a clock is the smallest fix.
+  frontline: {
+    id: 'frontline', name: 'FRONTLINE',
+    desc: 'One moving front. Materiel is made at HQ and must be driven forward — take the whole chain to win.',
+    rules: {
+      objectives: 'capture',
+      lattice: 'chain',
+      // Nothing drains and nothing accrues. The counter is the map.
+      economy: 'none',
+      victory: 'chain',
+      // Dying costs position, materiel and your squad's rally — never score.
+      deathCost: 0,
+      spawn: { hq: true, sectors: 'frontmost', beacon: true },
+      // Untuned, all of it. The ratio that matters is `produce` against the
+      // costs: 4/s at HQ pays for a wall every 6 s or a beacon every 15 s IF
+      // somebody is hauling it. `vehicleCargo` of 250 is ten walls a run, which
+      // is meant to make a Warthog run worth the drive and a backpack run a
+      // stopgap. `sectorMax` is the ceiling on how much a front can bank.
+      resources: {
+        produce: 4, hqMax: 1500, sectorMax: 600,
+        transferRate: 60, transferRadius: 12, supplyRadius: 40,
+        backpack: 30, vehicleCargo: 250, carryPenalty: 0.8,
+        cost: { beacon: 60, wall: 25, crate: 40 },
+      },
+    },
+  },
 };
 
 export const MAPS = {

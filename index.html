@@ -77,7 +77,28 @@
     .pm-slider input { flex: 1; accent-color: var(--hud-cyan); cursor: pointer; }
     .pm-val { font-size: 12px; letter-spacing: 1px; color: #e8f4fc; min-width: 46px; text-align: right; }
     .pm-empty { font-size: 12px; letter-spacing: 3px; color: #5d7a8c; }
-    .pm-foot { padding: 14px 22px; border-top: 1px solid var(--hud-cyan-dim); text-align: right; }
+    /* The ways OUT of a match sit on the left, away from RESUME on the right —
+       the one button you press by reflex must not share an edge with the two
+       that end the thing you are in. */
+    .pm-foot {
+      padding: 14px 22px; border-top: 1px solid var(--hud-cyan-dim);
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+    .pm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-right: auto; }
+    .pm-act {
+      appearance: none; cursor: pointer; font-family: inherit;
+      font-size: 11px; letter-spacing: 2px; padding: 9px 16px;
+      color: #9ab4c4; background: rgba(127, 212, 255, 0.05);
+      border: 1px solid var(--hud-cyan-dim); border-radius: 3px;
+    }
+    .pm-act:hover { color: #e8f4fc; border-color: var(--hud-cyan); }
+    .pm-act:disabled { opacity: 0.35; cursor: default; color: #5d7a8c; border-color: rgba(127,212,255,0.18); }
+    .pm-act.danger:hover { color: #ffd0c8; border-color: #ff5a4d; }
+    /* Armed: one more click and the match is gone. Solid red, because at that
+       point it is no longer offering a choice — it is holding one. */
+    .pm-act.armed, .pm-act.armed:hover {
+      color: #12060a; background: #ff5a4d; border-color: #ff5a4d; font-weight: 600;
+    }
     .pm-resume {
       appearance: none; cursor: pointer; font-family: inherit;
       font-size: 12px; letter-spacing: 3px; padding: 10px 26px;
@@ -112,6 +133,11 @@
     #tickets .blue { color: var(--hud-blue); }
     #tickets .red { color: var(--hud-red); }
     #tickets .vs { font-size: 11px; color: #6e93a8; }
+    #materiel {
+      display: flex; gap: 10px; align-items: baseline; padding: 3px 14px; margin-top: 2px;
+    }
+    #materiel .m-label { font-size: 10px; letter-spacing: 2px; color: #6e93a8; }
+    #materiel .m-val { font-size: 15px; font-weight: 600; color: var(--hud-cyan); }
     #sectors { display: flex; gap: 6px; }
     .sector-pip {
       width: 34px; height: 22px; display: flex; align-items: center; justify-content: center;
@@ -775,6 +801,9 @@
       cursor: pointer; background: rgba(127,212,255,0.12); color: var(--hud-cyan); border: 1px solid var(--hud-cyan);
       padding: 12px 40px; font-size: 15px; letter-spacing: 3px; text-transform: uppercase;
     }
+    #endScreen .end-actions { display: flex; gap: 14px; }
+    #endScreen button.ghost { background: none; color: #9ab4c4; border-color: var(--hud-cyan-dim); }
+    #endScreen button.ghost:hover { color: #e8f4fc; border-color: var(--hud-cyan); }
 
     #hint { position: absolute; bottom: 8px; left: 16px; font-size: 11px; color: #46606f; letter-spacing: 1px; }
 
@@ -1284,10 +1313,17 @@
     <div id="topbar">
       <div id="tickets" class="panel">
         <span class="t blue" id="ticketsBlue">400</span>
-        <span class="vs">TICKETS</span>
+        <span class="vs" id="counterLabel">TICKETS</span>
         <span class="t red" id="ticketsRed">400</span>
       </div>
       <div id="sectors"></div>
+      <!-- Only modes with a supply network show this; game.js hides it otherwise. -->
+      <div id="materiel" class="panel" style="display:none">
+        <span class="m-label">SUPPLY</span>
+        <span class="m-val" id="materielVal">—</span>
+        <span class="m-label">CARRYING</span>
+        <span class="m-val" id="cargoVal">0</span>
+      </div>
     </div>
     <!-- Sim controls, not match state — hence out of the topbar and down at the
          bottom centre, in the space the vitals stack used to hold. -->
@@ -1333,7 +1369,10 @@
   <div id="endScreen">
     <h1 id="endTitle">VICTORY</h1>
     <div class="stats" id="endStats"></div>
-    <button onclick="location.reload()">PLAY AGAIN</button>
+    <div class="end-actions">
+      <button id="endRestart">PLAY AGAIN</button>
+      <button id="endExit" class="ghost">EXIT TO MENU</button>
+    </div>
   </div>
 
   <div id="loading">

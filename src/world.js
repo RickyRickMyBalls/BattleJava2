@@ -85,6 +85,35 @@ export class World {
       this._buildCover();
       this._buildBounds();
     }
+    this._buildChain();
+  }
+
+  // The sectors in FRONT-LINE ORDER: index 0 nearest blue's HQ, last nearest
+  // red's. A chain-lattice mode needs an adjacency, and `CFG.sectors` is five
+  // scattered points that carry none.
+  //
+  // DERIVED, not authored, by projecting each sector onto the blue-HQ → red-HQ
+  // axis. That covers the procedural map and marker-authored GLB maps without
+  // either declaring anything, and it degrades sanely on a map whose sectors
+  // are not in a neat line: the order stays monotone along the axis the two
+  // bases define, which is the axis a frontline runs across. A map that wants
+  // a different order says so with `chain: ['A','B',…]` on its MAPS entry.
+  _buildChain() {
+    if (this.def.chain) {
+      const byId = new Map(this.sectors.map((s) => [s.id, s]));
+      const named = this.def.chain.map((id) => byId.get(id)).filter(Boolean);
+      // A declared chain that does not name every sector is map-data breakage,
+      // not a mode to run — the sectors it left out could never be captured by
+      // anyone. Fall through to the derived order rather than ship that.
+      if (named.length === this.sectors.length) { this.chain = named; return; }
+      console.warn(`[world] ${this.def.id}: chain names ${named.length} of ${this.sectors.length} sectors — deriving instead`);
+    }
+    const blue = this.hqDefs.find((h) => h.team === TEAM.BLUE) || this.hqDefs[0];
+    const red = this.hqDefs.find((h) => h.team === TEAM.RED) || this.hqDefs[1];
+    const ax = red.x - blue.x, az = red.z - blue.z;
+    const len2 = ax * ax + az * az || 1;
+    const along = (s) => ((s.x - blue.x) * ax + (s.z - blue.z) * az) / len2;
+    this.chain = [...this.sectors].sort((p, q) => along(p) - along(q));
   }
 
   _buildLights() {

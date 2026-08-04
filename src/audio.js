@@ -30,6 +30,22 @@ export class GameAudio {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
 
+  // The context is per-match, and a browser caps how many one page may hold
+  // open — so leaving a match has to hand this one back rather than leak it and
+  // let the fourth or fifth restart come up silent. `buffers` is the shared
+  // asset library and is only being let go of, not freed.
+  dispose() {
+    this._pending.length = 0;
+    this.buffers = {};
+    this.noise = null;
+    this.master = null;
+    if (this.ctx) {
+      const ctx = this.ctx;
+      this.ctx = null;
+      ctx.close().catch(() => {});   // already closing, or never opened
+    }
+  }
+
   _makeNoiseBuffer() {
     if (!this.ctx) return null;
     const len = Math.floor(this.ctx.sampleRate * 0.7);
