@@ -6,8 +6,17 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { buildMapCollision } from './collision.js';
 
-const TARGET_MAX_DIM = 900;   // largest XZ extent after normalization (meters)
-const BAKE_COLS = 384;
+// Largest XZ extent after normalization (meters). map-3 is authored in metres —
+// its FC_VEHICLE_ slots sit 10.6 units apart, which only reads as sane Warthog
+// parking (5.6 m hog) at 1 unit = 1 m — so this is set to that map's marker span
+// (2352.27) + 240 of breathing room, giving s = 1.0 and HQs 2578 m apart.
+const TARGET_MAX_DIM = 2592;
+// Backstop only. By construction max(spanX, spanZ) * s + 240 === TARGET_MAX_DIM,
+// so this can never bite unless the math above changes; it was a fixed 1400,
+// which silently truncated the playfield (and with it the baked heightfield) the
+// moment TARGET_MAX_DIM went past it, leaving both HQs outside the bake.
+const MAX_PLAYFIELD = TARGET_MAX_DIM;
+const BAKE_COLS = 1024;
 
 // Fetching the GLB is split from preparing it so the download can start while
 // the player is still in the lobby picking a kit. map-3.glb is 235 MB — more
@@ -116,8 +125,8 @@ function prepareMap(mapDef, gltf, renderer) {
 
   // Scale so the marker span plus breathing room lands at battlefield size
   const s = (TARGET_MAX_DIM - 240) / Math.max(spanX, spanZ);
-  const w = Math.min(1400, spanX * s + 240);
-  const d = Math.min(1400, spanZ * s + 240);
+  const w = Math.min(MAX_PLAYFIELD, spanX * s + 240);
+  const d = Math.min(MAX_PLAYFIELD, spanZ * s + 240);
   const maxY = (max.y - groundY) * s + 200; // bake ceiling: above markers, below sky
 
   const group = new THREE.Group();
@@ -169,20 +178,52 @@ function prepareMap(mapDef, gltf, renderer) {
   for (const o of bakeExcluded) {
     if (o.visible) { o.visible = false; hidden.push(o); }
   }
-  const heightfield = bakeHeightfield(group, w, d, maxY, renderer);
+  // The bake encodes world Y into 16 bits over a FIXED range, and anything below
+  // that range's floor clamps to it. That floor used to sit at Y=0 — the LOWEST
+  // FC_ MARKER — so every metre of ground authored below the markers read back as
+  // flat marker height: you spawn standing on an invisible plane with the real
+  // terrain somewhere underneath. Take the floor from the geometry the bake
+  // actually renders instead, so the range covers what it encodes. Clamped to at
+  // most 0, so a map with nothing below its markers bakes exactly as it always did.
+  const bakeMinY = Math.min(0, visibleMinY(group));
+  const heightfield = bakeHeightfield(group, w, d, bakeMinY, maxY, renderer);
   for (const o of hidden) o.visible = true;
 
   ambient.scale = s;
   return { def: mapDef, group, w, d, maxY, sample: heightfield.sample, hqDefs, sectorDefs, vehicleSpawns, ambient, collision };
 }
 
-function bakeHeightfield(group, w, d, maxY, renderer) {
+// Lowest world Y among the meshes the bake will actually draw. `Box3.setFromObject`
+// is no use here: it ignores `visible`, so it would fold the sky and the wall
+// shells — the very things hidden for the bake — straight back in.
+function visibleMinY(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  let min = Infinity;
+  const walk = (o) => {
+    if (!o.visible) return;   // hidden subtree: the bake will not draw it either
+    if (o.isMesh && o.geometry) {
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      box.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+      if (box.min.y < min) min = box.min.y;
+    }
+    for (const c of o.children) walk(c);
+  };
+  walk(root);
+  return isFinite(min) ? min : 0;
+}
+
+function bakeHeightfield(group, w, d, minY, maxY, renderer) {
   const cols = BAKE_COLS;
   const rows = Math.max(32, Math.round(cols * (d / w)));
+  const spanY = Math.max(1, maxY - minY);
 
-  // Height-writing material: world Y packed into R (high byte) + G (low byte)
+  // Height-writing material: world Y packed into R (high byte) + G (low byte),
+  // normalized over minY..maxY. B is a WRITTEN FLAG — the clear color has none —
+  // which is how the readback tells "no geometry in this pixel" apart from
+  // "geometry sitting exactly on the bottom of the range".
   const heightMat = new THREE.ShaderMaterial({
-    uniforms: { maxY: { value: maxY } },
+    uniforms: { minY: { value: minY }, spanY: { value: spanY } },
     vertexShader: /* glsl */`
       varying float vH;
       void main() {
@@ -192,13 +233,14 @@ function bakeHeightfield(group, w, d, maxY, renderer) {
       }`,
     fragmentShader: /* glsl */`
       varying float vH;
-      uniform float maxY;
+      uniform float minY;
+      uniform float spanY;
       void main() {
-        float h = clamp(vH / maxY, 0.0, 1.0);
+        float h = clamp((vH - minY) / spanY, 0.0, 1.0);
         float hh = h * 65535.0;
         float hi = floor(hh / 256.0);
         float lo = hh - hi * 256.0;
-        gl_FragColor = vec4(hi / 255.0, lo / 255.0, 0.0, 1.0);
+        gl_FragColor = vec4(hi / 255.0, lo / 255.0, 1.0, 1.0);
       }`,
   });
 
@@ -206,8 +248,12 @@ function bakeHeightfield(group, w, d, maxY, renderer) {
   bakeScene.add(group);
   bakeScene.overrideMaterial = heightMat;
 
-  const cam = new THREE.OrthographicCamera(-w / 2, w / 2, d / 2, -d / 2, 0.1, maxY + 20);
-  cam.position.set(0, maxY + 10, 0);
+  // The far plane has to clear the BOTTOM of the range, not just Y=0 — ground
+  // authored below the marker plane is exactly what this bake exists to capture,
+  // and a far plane that stops at 0 would clip it away instead of encoding it.
+  const camY = maxY + 10;
+  const cam = new THREE.OrthographicCamera(-w / 2, w / 2, d / 2, -d / 2, 0.1, camY - minY + 10);
+  cam.position.set(0, camY, 0);
   cam.rotation.set(-Math.PI / 2, 0, 0);
   cam.updateMatrixWorld();
 
@@ -215,7 +261,7 @@ function bakeHeightfield(group, w, d, maxY, renderer) {
   const prevTarget = renderer.getRenderTarget();
   const prevClear = renderer.getClearColor(new THREE.Color());
   const prevAlpha = renderer.getClearAlpha();
-  renderer.setClearColor(0x000000, 1); // empty pixels read as height 0
+  renderer.setClearColor(0x000000, 1); // no geometry: the B flag stays 0
   renderer.setRenderTarget(rt);
   renderer.render(bakeScene, cam);
 
@@ -230,7 +276,13 @@ function bakeHeightfield(group, w, d, maxY, renderer) {
 
   const data = new Float32Array(cols * rows);
   for (let i = 0; i < cols * rows; i++) {
-    data[i] = ((pixels[i * 4] * 256 + pixels[i * 4 + 1]) / 65535) * maxY;
+    // Unwritten pixels still decode to height 0 (the marker plane), NOT to the
+    // bottom of the range: the 240 m of breathing room around the authored map
+    // has no geometry in it, and dropping it to the range floor would turn the
+    // whole border into a pit you fall into on the way out of bounds.
+    data[i] = pixels[i * 4 + 2] === 0
+      ? 0
+      : minY + ((pixels[i * 4] * 256 + pixels[i * 4 + 1]) / 65535) * spanY;
   }
 
   // Top-down camera: frame top = world -Z; GL readPixels row 0 = frame bottom

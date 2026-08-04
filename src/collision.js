@@ -13,6 +13,16 @@ const _down = new THREE.Vector3(0, -1, 0);
 const _point = new THREE.Vector3();
 const _target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
 
+// How far below the query point an authored floor still counts as "the ground
+// under you". Raising this is FREE: `raycastFirst(ray, side)` leaves its `far`
+// at Infinity, so the BVH already walks all the way down to that floor and the
+// old limit only threw the answer away. It was 8 m, which is shorter than plenty
+// of the real drops on a 1:1-scale map — past it the caller fell back to the
+// heightfield, which reads the TOP surface (wrong under a bridge) and used to be
+// clamped flat below the marker plane (wrong everywhere low). This is a sanity
+// leash on the answer, not a cost.
+const GROUND_REACH = 250;
+
 // Merge every mesh under `parent` into one world-space position-only geometry.
 // `filter(mesh)` optionally rejects meshes (the lobby stage uses it to drop sky
 // and decor nodes, which have no business in a collision hull).
@@ -25,6 +35,22 @@ export function extractWorldGeometry(parent, filter = null) {
     let g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     for (const name of Object.keys(g.attributes)) {
       if (name !== 'position') g.deleteAttribute(name);
+    }
+    // Un-quantize BEFORE baking to world space. `npm run assets` ships every map
+    // through KHR_mesh_quantization, so `position` arrives as a NORMALIZED Int16
+    // whose real scale lives in the node transform — and `applyMatrix4` reads
+    // those ints denormalized (-1..1) but writes the world-space result straight
+    // back into the Int16 array, where a coordinate like 1120 saturates at 32767.
+    // Every compressed map's floor and wall BVH collapsed into a 2 m cube at the
+    // origin: grounding fell through to the heightfield everywhere and walls
+    // stopped blocking, silently, at the moment the map got compressed.
+    const src = g.attributes.position;
+    if (src.normalized || !(src.array instanceof Float32Array)) {
+      const f = new Float32Array(src.count * 3);
+      for (let i = 0; i < src.count; i++) {
+        f[i * 3] = src.getX(i); f[i * 3 + 1] = src.getY(i); f[i * 3 + 2] = src.getZ(i);
+      }
+      g.setAttribute('position', new THREE.BufferAttribute(f, 3));
     }
     g.applyMatrix4(o.matrixWorld);
     parts.push(g);
@@ -51,7 +77,7 @@ export class MapCollision {
   // above head height. Inside a tunnel the ray starts below the roof, so it
   // finds the tunnel floor instead of the hill above it. Returns null if no
   // floor within reach (caller falls back to the heightfield).
-  groundAt(x, y, z, headroom = 1.4, reach = 8) {
+  groundAt(x, y, z, headroom = 1.4, reach = GROUND_REACH) {
     if (!this.floorBvh) return null;
     _ray.origin.set(x, y + headroom, z);
     _ray.direction.copy(_down);

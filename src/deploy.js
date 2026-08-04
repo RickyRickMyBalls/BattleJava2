@@ -21,7 +21,7 @@ const _pe = new THREE.Euler();
 export class DeployScreen {
   constructor(game) {
     this.game = game;
-    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 3000);
+    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 3500);
     this.visible = false;
     this.mode = 'initial';
     this.cx = 0;

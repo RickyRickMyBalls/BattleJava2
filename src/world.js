@@ -124,7 +124,7 @@ export class World {
     this.scene.add(sun);
     // Imported maps are vista-driven — fog reaches further so cliffs stay readable
     this.scene.fog = this.def.type === 'glb'
-      ? new THREE.Fog(0xbcd2e2, 500, 2400)
+      ? new THREE.Fog(0xbcd2e2, 2000, 3500)
       : new THREE.Fog(0xbcd2e2, 260, 950);
     this.scene.background = new THREE.Color(0xa8c6dd);
   }
