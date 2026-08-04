@@ -1741,6 +1741,11 @@ export class Player {
   update(dt) {
     const s = this.soldier;
     if (!s.alive) return;
+    // BEFORE the driving branch returns. Loading a Warthog is the single most
+    // important thing the wheel does — a hog hauls 250 against a backpack's 30 —
+    // and it lives on the far side of this early return, so a copy further down
+    // silently never ran while you were in the seat.
+    this.wheel.update(dt);
     if (this.vehicle) { this._updateDriving(dt); return; }
     this.exitCooldown = Math.max(0, this.exitCooldown - dt);
 
@@ -1860,10 +1865,6 @@ export class Player {
       }
     }
     this.syncBodyVisibility();
-    // Before the interact chain, and it does not suppress it: E and the wheel
-    // answer different questions, and a casualty at your feet must still be
-    // revivable while you are looking at a depot.
-    this.wheel.update(dt);
     this._updateInteract(dt);
     // ---- Aim: everything the weapon's `ads` block drives -------------------
     // One rate for the whole pose so the gun arrives together, and the weapon

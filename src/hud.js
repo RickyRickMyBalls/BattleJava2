@@ -6,6 +6,10 @@ import { Visor } from './visor.js';
 
 const BLUE = '#3aa0ff', RED = '#ff5a4d', NEUTRAL = '#9ab4c4';
 const DOWN = '#ffd66e';
+// Vehicles get the visor cyan rather than team blue: on a minimap already
+// carrying blue HQs, blue sectors and blue infantry, a fourth blue thing reads
+// as one of them. Same reasoning as the rally beacon's colour on the deploy map.
+const CYAN = '#7fd4ff';
 const D = CFG.downed;
 const _p = new THREE.Vector3();
 
@@ -540,6 +544,37 @@ export class Hud {
     for (const [s] of this.spottedShooters) {
       if (!s.alive) continue;
       ctx.fillRect(X(s.pos.x) - 1.5, Z(s.pos.z) - 1.5, 3, 3);
+    }
+    // Friendly vehicles, and what is in them. This is the map you look at while
+    // hauling — the deploy screen is not open at 20 m/s — so a loaded hog has
+    // to be findable here or the number is in the wrong place. Drawn after the
+    // infantry so a hog is never hidden under the squad riding in it.
+    const fleet = this.game.vehicles ? this.game.vehicles.vehicles : null;
+    if (fleet) {
+      for (const v of fleet) {
+        if (v.team !== this.game.playerTeam) continue;
+        const x = X(v.pos.x), z = Z(v.pos.z);
+        ctx.fillStyle = CYAN;
+        ctx.beginPath();
+        ctx.moveTo(x, z - 3.4);
+        ctx.lineTo(x + 2.8, z + 2.8);
+        ctx.lineTo(x - 2.8, z + 2.8);
+        ctx.closePath();
+        ctx.fill();
+        if (v.cargo > 0) {
+          // Offset right, stroked first: at this size it lands on top of
+          // terrain, sector rings and other markers constantly.
+          ctx.font = '600 8px Arial';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(4,10,18,0.9)';
+          ctx.strokeText(Math.floor(v.cargo), x + 5, z);
+          ctx.fillStyle = '#ffd66e';
+          ctx.fillText(Math.floor(v.cargo), x + 5, z);
+          ctx.textAlign = 'center';
+        }
+      }
     }
     // Downed friendlies. Drawn after the living so a casualty is never painted
     // over by a squadmate standing on top of them, and as a cross rather than a
