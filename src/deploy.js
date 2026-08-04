@@ -125,6 +125,7 @@ export class DeployScreen {
       pipHp: el.querySelector('#dpPipHp'),
       pipView: el.querySelector('#dpPipView'),
       pipKia: el.querySelector('#dpPipKia'),
+      hint: el.querySelector('.dp-hint'),
     };
     el.querySelector('#dpPipClose').onclick = () => this.unwatch();
     this.watched = null;
@@ -256,18 +257,38 @@ export class DeployScreen {
   }
 
   // ------------------------------------------------------------- lifecycle --
+  // Modes: 'initial' and 'dead' are the deploy screen proper — you are off the
+  // field and picking where to enter it. 'live' is the same screen opened with
+  // M while fielded: nothing is being chosen, so every control that CHOOSES
+  // something (deploy, loadout, team) is taken out, and the framing starts on
+  // you rather than on the whole map.
   show(mode, killerName) {
+    const live = mode === 'live';
     this.mode = mode;
     this.visible = true;
     this.transition = null;
     this.game.menuOpen = true;
     this.el.root.style.display = 'block';
     this.el.root.classList.remove('transitioning');
+    this.el.root.classList.toggle('live', live);
     this.el.killed.textContent = killerName ? `KILLED BY ${killerName}` : '';
+    this.el.hint.textContent = live
+      ? 'SCROLL zoom · DRAG pan · M or ESC to close'
+      : 'SCROLL zoom · DRAG pan · CLICK a spawn point';
     this.el.root.querySelector('.dp-map').textContent = (this.game.world.def.name || 'DEMO MAP').toUpperCase();
-    this.cx = 0;
-    this.cz = 0;
-    this.h = Math.max(600, this.game.world.mapD * 1.28);
+    if (live) {
+      // Centred on the player and zoomed in far enough to read the fight they
+      // are standing in. The zoom carries across openings (see hide) because a
+      // map you re-frame every time you glance at it is a map you stop opening.
+      this.cx = this.game.player.pos.x;
+      this.cz = this.game.player.pos.z;
+      this.h = this._liveH || Math.max(240, this.game.world.mapD * 0.55);
+      this._clampPan();
+    } else {
+      this.cx = 0;
+      this.cz = 0;
+      this.h = Math.max(600, this.game.world.mapD * 1.28);
+    }
     if (!this._spawnOk(this.selected)) this.selected = 'hq';
     this._buildMarkers();
     this._buildChips();
@@ -316,9 +337,11 @@ export class DeployScreen {
   }
 
   hide() {
+    if (this.mode === 'live') this._liveH = this.h;
     this.visible = false;
     this.unwatch();
     this.el.root.style.display = 'none';
+    this.el.root.classList.remove('live');
     this.game.refreshMenuOpen();
     const fog = this.game.scene.fog;
     if (fog && this._fogFar) { fog.near = this._fogNear; fog.far = this._fogFar; }
@@ -703,6 +726,13 @@ export class DeployScreen {
     const { x, z } = this.transition;
     this.transition = null;
     this.game.deployPlayerAt(x, z);
+    this.returnToFps();
+  }
+
+  // The two ways off this screen — the dive finishing, and the live map being
+  // closed — differ only in whether a spawn happened first. Everything after
+  // that is the same three steps, so they live in one place.
+  returnToFps() {
     this.hide();
     this.game.hud.setMode('fps');
     this.game.player.requestLock();
@@ -822,11 +852,41 @@ export class DeployScreen {
       ctx.arc(p.sx, p.sy, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    // You. Deliberately not a dot like everyone else: the loop above skips the
+    // player's own soldier, and on a map you opened mid-fight the thing you
+    // need first is which way you are FACING. Drawn in every mode — it is
+    // simply absent from the dead/undeployed ones, where playerActive is false.
+    if (g.playerActive()) {
+      const p = this._project(g.player.pos.x, g.player.pos.z);
+      if (!p.behind) {
+        // The camera looks straight down with no yaw, so world +X is screen
+        // right and world +Z is screen down. The eye faces (-sin, -cos) — the
+        // camera convention, not the body's (see player.update).
+        const a = Math.atan2(-Math.cos(g.player.yaw), -Math.sin(g.player.yaw));
+        ctx.save();
+        ctx.translate(p.sx, p.sy);
+        ctx.rotate(a);
+        ctx.fillStyle = '#eaf6ff';
+        ctx.beginPath();
+        ctx.moveTo(7.5, 0);
+        ctx.lineTo(-5, 5);
+        ctx.lineTo(-5, -5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
   }
 
   _updateDeployButton() {
     const waiting = this.timer > 0;
-    const ok = this._spawnOk(this.selected) && !waiting && !this.game.gameOver;
+    // CSS hides the button in live mode; this keeps it inert as well, so a
+    // click that lands on it anyway cannot start a dive that `deployPlayerAt`
+    // would then refuse (game.deployPlayerAt returns false while fielded) —
+    // which would drop you back to FPS having gone nowhere.
+    const ok = this._spawnOk(this.selected) && !waiting && !this.game.gameOver
+      && this.mode !== 'live';
     this.el.deploy.disabled = !ok;
     this.el.deploy.textContent = waiting ? `DEPLOY IN ${Math.ceil(this.timer)}` : 'DEPLOY';
   }

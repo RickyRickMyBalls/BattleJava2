@@ -357,6 +357,35 @@ export class Game {
     this.setTimeScale(seq[(seq.indexOf(this.timeScale) + 1) % seq.length]);
   }
 
+  // The live tactical map (M): the deploy screen again, in a mode where nothing
+  // is being chosen. The sim keeps running underneath — you are standing on the
+  // field with your hands off the controls, which is the cost of looking.
+  //
+  // `show()` BEFORE `exitPointerLock()` is load-bearing. show sets `menuOpen`,
+  // and that flag is the whole reason pausemenu does not read the dropped lock
+  // as a request for the settings menu (see pausemenu._onLockChange).
+  toggleMap() {
+    const d = this.deployScreen;
+    if (!d) return false;
+    if (d.visible) return this.closeMap();
+    // Downed is excluded on purpose: the bleedout bar and the give-up prompt
+    // live in the FPS chrome that map mode hides, so this would take away the
+    // only readout that matters while it is running.
+    if (this.gameOver || this.playerDead || this.menuOpen || this.playerSoldier.downed) return false;
+    d.show('live');
+    document.exitPointerLock();
+    return true;
+  }
+
+  // No-op unless the LIVE map is up. The dead/undeployed map is not dismissible
+  // — there is nowhere to dismiss it to — so ESC has to fall through it.
+  closeMap() {
+    const d = this.deployScreen;
+    if (!d || !d.visible || d.mode !== 'live' || d.transition) return false;
+    d.returnToFps();
+    return true;
+  }
+
   toggleFreecam() {
     if (this.gameOver || this.playerDead) return; // the map screen is the dead/undeployed view
     this.spectating = !this.spectating;

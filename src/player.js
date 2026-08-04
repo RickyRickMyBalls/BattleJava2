@@ -249,9 +249,15 @@ export class Player {
       // does, so the edge is captured for them.
       const repeat = !!this.keys[e.code];
       this.keys[e.code] = true;
+      // The map toggle sits ABOVE the menu guard, alone. Opening the map is
+      // what sets `menuOpen`, so a guarded M could open it and never close it.
+      // Both calls do their own "does some OTHER screen own the screen" check,
+      // and ESC only claims the key when there was in fact a map to close —
+      // otherwise it falls through to the pause menu's own listener.
+      if (e.code === 'KeyM') { this.game.toggleMap?.(); return; }
+      if (e.code === 'Escape' && this.game.closeMap?.()) return;
       if (this.game.menuOpen) return; // armory owns the keyboard
       if (e.code === 'KeyR' && !this.freecam) this.startReload();
-      if (e.code === 'KeyM') document.exitPointerLock();
       if (e.code === 'KeyF') this.game.toggleFreecam();
       if (e.code === 'KeyO' && !this.freecam) this.setThirdPerson(!this.thirdPerson);
       if (e.code === 'KeyP') this.game.togglePause();
@@ -1696,6 +1702,14 @@ export class Player {
     this.exitCooldown = Math.max(0, this.exitCooldown - dt);
 
     // ---- Movement ----
+    // A screen that owns the keyboard owns the legs too. Without this, opening
+    // the map with W held walks you blind while the mouse is free — and a
+    // driver already stops dead on exactly this condition (see _updateDriving),
+    // so infantry not doing the same was the inconsistency, not this.
+    //
+    // Only the INTENT is gated. Crouch and the stance flags are held states,
+    // and clearing those would stand you up the moment you opened the map.
+    const live = this.locked && !this.game.menuOpen;
     this.walking = !!this.keys['ControlLeft'];
     this.sprinting = !!this.keys['ShiftLeft'] && !this.ads && !this.walking;
     this.crouching = !!this.keys['KeyC'];
@@ -1703,10 +1717,12 @@ export class Player {
     this.eye += (targetEye - this.eye) * Math.min(1, dt * 10);
 
     let mx = 0, mz = 0;
-    if (this.keys['KeyW']) mz += 1;
-    if (this.keys['KeyS']) mz -= 1;
-    if (this.keys['KeyA']) mx -= 1;
-    if (this.keys['KeyD']) mx += 1;
+    if (live) {
+      if (this.keys['KeyW']) mz += 1;
+      if (this.keys['KeyS']) mz -= 1;
+      if (this.keys['KeyA']) mx -= 1;
+      if (this.keys['KeyD']) mx += 1;
+    }
     const moving = mx !== 0 || mz !== 0;
     // Hoisted out of the speed line because three things need the same answer:
     // the multiplier, the stamina drain, and the body's sprint clip. `mz` is
@@ -1739,7 +1755,7 @@ export class Player {
     const col = this.game.world.collision;
     let ground = col ? col.groundAt(this.pos.x, this.pos.y, this.pos.z) : null;
     if (ground === null) ground = this.game.world.heightAt(this.pos.x, this.pos.z);
-    if (this.onGround && this.keys['Space']) {
+    if (this.onGround && live && this.keys['Space']) {
       this.velY = s.jumpVel; // height, and everything from it, lives on the soldier
       this.onGround = false;
     }

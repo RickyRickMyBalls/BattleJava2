@@ -63,6 +63,10 @@ export class Hud {
     this.msgTimer = 0;
     this.spottedShooters = new Map(); // soldier -> ttl, for minimap enemy blips
     this.mmTimer = 0;
+    // Which chrome this HUD is showing (see setMode). Held rather than only
+    // applied, because the per-frame writers — the downed vignette above all —
+    // need to know whether the crosshair is theirs to restore.
+    this.mode = 'fps';
 
     // Cleared first: one `#sectors` element outlives every Hud built against
     // it, and a host with no sectors at all (the lobby arena) is legal.
@@ -176,7 +180,12 @@ export class Hud {
     const v = this.el.downVignette;
     if (!on) {
       v.style.opacity = 0;
-      this.el.crosshair.style.display = '';
+      // Through `armed`, not a bare '': the mode may have taken the crosshair
+      // away for its own reasons since this hid it. Being picked up with the
+      // tactical map open is exactly that case — the map runs the sim, so this
+      // transition lands while a screen that has no business showing a
+      // crosshair is up, and a bare restore would paint one over the map.
+      this.setCrosshairVisible(true);
       return;
     }
     // Ease so the closing accelerates: the last seconds should feel worse than
@@ -361,8 +370,13 @@ export class Hud {
 
   // The crosshair marks where the shot goes, so it has no business being up in
   // a view that cannot shoot (third person).
+  // Is this HUD showing a gun? 'fps' and 'range' are; 'map' is not.
+  armed() {
+    return this.mode === 'fps' || this.mode === 'range';
+  }
+
   setCrosshairVisible(on) {
-    if (this.el.crosshair) this.el.crosshair.style.display = on ? '' : 'none';
+    if (this.el.crosshair) this.el.crosshair.style.display = on && this.armed() ? '' : 'none';
   }
 
   // Map-hub chrome, first-person chrome, or the lobby range.
@@ -374,6 +388,7 @@ export class Hud {
   // and the minimap have no data in the lobby; the hint is off because the
   // lobby prints its own ("ESC RETURN TO SETUP").
   setMode(mode) {
+    this.mode = mode;
     const fps = mode === 'fps';
     const armed = fps || mode === 'range';
     const set = (el, on) => { if (el) el.style.display = on ? '' : 'none'; };

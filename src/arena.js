@@ -152,6 +152,12 @@ export function makeLobbyArena({ scene, camera, assets, session, world }) {
     togglePause() {},
     cycleTimeScale() {},
 
+    // No deploy screen here, so there is no tactical map to open and nothing
+    // for ESC to close. `closeMap` must return false or it would swallow the
+    // key from the pause menu.
+    toggleMap() { return false; },
+    closeMap() { return false; },
+
     toggleFreecam() {
       if (!arena.player) return;
       arena.spectating = !arena.spectating;

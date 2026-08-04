@@ -321,6 +321,16 @@
     .dp-chrome { position: absolute; inset: 0; pointer-events: none; transition: opacity 0.3s; }
     #deploy.transitioning .dp-chrome, #deploy.transitioning #dpMapLayer, #deploy.transitioning #dpDots { opacity: 0; pointer-events: none; }
     .dp-chrome > * { pointer-events: auto; }
+    /* Live tactical map (M). The same screen with everything that CHOOSES
+       something removed — you are already on the field, so there is no spawn to
+       pick, no kit to swap and no team to defect to. The two panels that were
+       anchored off the (now absent) loadout bar reclaim its height. */
+    #deploy.live .dp-bottom,
+    #deploy.live .dp-load2,
+    #deploy.live .dp-killed,
+    #deploy.live #dpTeamBtn { display: none; }
+    #deploy.live .dp-squad { bottom: 24px; }
+    #deploy.live .dp-hint { bottom: 22px; }
     .dp-title { position: absolute; top: 16px; left: 24px; pointer-events: none; }
     .dp-title .dp-mode { font-size: 20px; letter-spacing: 5px; color: #e8f4fc; font-weight: 300; }
     .dp-title .dp-map { font-size: 11px; letter-spacing: 3px; color: #6e93a8; margin-top: 2px; }
