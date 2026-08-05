@@ -49,6 +49,9 @@ const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _box = new THREE.Box3();
 const _Y = new THREE.Vector3(0, 1, 0);
+// The retracted gear pose. Identity is not a magic number here — it is what the
+// rig authors: every leg carries its DEPLOYED rotation, so zero is up.
+const _qIdent = new THREE.Quaternion();
 const _Z = new THREE.Vector3(0, 0, 1);
 const DEG = Math.PI / 180;   // the linkage table is authored in degrees
 const _X = new THREE.Vector3(1, 0, 0);
@@ -327,6 +330,8 @@ export class Vehicle {
     this._measureLinkage();
     this._measureDoors();
     this._measureVectorRig();
+    this._measureGear();
+    this._measureButtons();
 
     // Hull sample points. An AUTHORED list in the tune block wins, because the
     // eight-corner derivation below is only defensible when the shell is a
@@ -921,6 +926,145 @@ export class Vehicle {
     // recovery, it is a soft-lock with a progress bar.
     if (!this.isAircraft) this._flipCheck(h, upright);
     this._sleepCheck(h);
+  }
+
+  // -------------------------------------------------------- gear rig --
+
+  // The retracted pose is IDENTITY. The owner authored the DEPLOYED pose as a
+  // rotation on each leg, so raising the gear is a slerp toward zero — no
+  // second pose to author, and the tuner this phase was supposed to need does
+  // not have to exist.
+  //
+  // The node list is in config rather than discovered, and that is not laziness:
+  // `LandingGear_*` also matches the wheels and axles hanging under each leg,
+  // and rotating those would spin the tyres into the bodywork.
+  _measureGear() {
+    this.gear = null;
+    const G = this.tune.gear;
+    if (!G || !G.nodes) return;
+    const byName = {};
+    this.group.traverse((o) => { if (o.name) byName[o.name.replace(/\./g, '')] = o; });
+    const parts = [];
+    for (const name of G.nodes) {
+      const node = byName[name.replace(/\./g, '')];
+      if (!node) { console.warn(`[vehicle] ${this.key}: gear node ${name} missing`); continue; }
+      if (Math.abs(node.quaternion.w) > 0.9999) {
+        // Nothing to slerp to. Says so rather than silently animating nothing —
+        // the nose leg is exactly this case and it is a Blender gap, not a bug.
+        console.warn(`[vehicle] ${this.key}: gear node ${name} is already at identity — it has no deployed pose to retract FROM`);
+        continue;
+      }
+      parts.push({ node, down: node.quaternion.clone() });
+    }
+    if (!parts.length) return;
+    this.gear = { parts, pos: 1, target: 1 };   // 1 = down, 0 = up
+  }
+
+  // Eased on real frame time, outside the physics substep — cosmetic, and a
+  // parked aircraft still has to be able to cycle its gear.
+  updateGear(dt) {
+    const g = this.gear;
+    if (!g || g.pos === g.target) return;
+    const rate = dt / Math.max(0.01, this.tune.gear.time);
+    g.pos += Math.sign(g.target - g.pos) * Math.min(rate, Math.abs(g.target - g.pos));
+    for (const p of g.parts) {
+      // Slerp from identity toward the authored deployed pose. `slerpQuaternions`
+      // takes the short arc, which is what a leg swinging 60 degrees wants.
+      p.node.quaternion.slerpQuaternions(_qIdent, p.down, g.pos);
+    }
+  }
+
+  toggleGear() {
+    if (!this.gear) return null;
+    this.gear.target = this.gear.target > 0.5 ? 0 : 1;
+    return this.gear.target > 0.5;      // true = coming down
+  }
+
+  get gearDown() { return this.gear ? this.gear.target > 0.5 : true; }
+
+  // ------------------------------------------------------ button rig --
+
+  // Cockpit and hull switches. Discovered off `Button_*` and mapped to an
+  // action by config, so the rig names what exists and config says what it does.
+  //
+  // THE TRAP THIS WALKS INTO: `npm run assets` quantizes geometry, which moves
+  // a named node's mesh onto an auto-named CHILD — so `Button_RearRamp_Exterior`
+  // is an Object3D carrying no geometry at all, and reading `node.geometry` for
+  // its bounds gets undefined. Traversing for the mesh is the only correct
+  // idiom, and it is the one `_measureDoors` already uses. Documented at intake
+  // in AIR_VEHICLE_PLAN.md; this is the phase where it would have bitten.
+  _measureButtons() {
+    this.buttons = [];
+    const B = this.tune.buttons;
+    if (!B || !B.actions) return;
+    this.group.traverse((o) => {
+      if (!/^Button_/i.test(o.name || '')) return;
+      const key = Object.keys(B.actions).find(
+        (k) => k.replace(/\./g, '').toLowerCase() === o.name.replace(/\./g, '').toLowerCase(),
+      );
+      if (!key) return;
+      _box.makeEmpty();
+      let found = false;
+      o.traverse((c) => {
+        if (!c.isMesh || !c.geometry) return;
+        found = true;
+        c.geometry.computeBoundingBox();
+        _box.union(_tmpBox.copy(c.geometry.boundingBox).applyMatrix4(c.matrixWorld));
+      });
+      if (!found) return;
+      // Into the BUTTON'S own space, the same conversion the doors do — storing
+      // the chassis-space centre and then applying the node's world matrix at
+      // query time would transform it twice.
+      const centre = _box.getCenter(new THREE.Vector3())
+        .applyMatrix4(_mat.copy(o.matrixWorld).invert());
+      this.buttons.push({ node: o, action: B.actions[key], localCentre: centre });
+    });
+  }
+
+  buttonWorldCentre(b, out) {
+    return out.copy(b.localCentre).applyMatrix4(b.node.matrixWorld);
+  }
+
+  // Nearest button to the crosshair by ANGLE, same rule as `doorAtReticle` —
+  // distance would let a big far panel beat the small near switch you are
+  // actually looking at.
+  buttonAtReticle(origin, dir, range, cone) {
+    if (!this.buttons || !this.buttons.length) return null;
+    let best = null, bestAng = cone;
+    for (const b of this.buttons) {
+      this.buttonWorldCentre(b, _v1).sub(origin);
+      const dist = _v1.length();
+      if (dist > range || dist < 1e-3) continue;
+      const ang = Math.acos(Math.max(-1, Math.min(1, _v1.dot(dir) / dist)));
+      if (ang < bestAng) { bestAng = ang; best = b; }
+    }
+    return best;
+  }
+
+  // What a button does. Kept on the vehicle rather than in the controller so
+  // the same switch works from the cockpit, from inside the bay and from the
+  // ground without three copies of the mapping.
+  pressButton(b) {
+    if (b.action === 'ramp') {
+      // Both halves together — a tail hatch is one door with two panels, and
+      // opening half of it is not a thing anybody wants.
+      const top = this.doorByName('ref_door_rear_top');
+      const bottom = this.doorByName('ref_door_rear_bottom');
+      const opening = !(bottom || top || {}).target;
+      for (const d of [top, bottom]) if (d) d.target = opening ? 1 : 0;
+      return opening ? 'RAMP OPEN' : 'RAMP CLOSED';
+    }
+    if (b.action === 'gear') {
+      const down = this.toggleGear();
+      if (down === null) return 'NO GEAR';
+      return down ? 'GEAR DOWN' : 'GEAR UP';
+    }
+    if (b.action === 'engine') {
+      this.enginesOn = !this.enginesOn;
+      if (this.enginesOn) this.wake();
+      return this.enginesOn ? 'ENGINES ON' : 'ENGINES OFF';
+    }
+    return null;
   }
 
   // ------------------------------------------------------- vector rig --
@@ -2090,6 +2234,7 @@ export class VehicleManager {
     // the sleep check — a parked hog still has to be able to open a door.
     for (const v of this.vehicles) {
       v.updateDoors(dt);
+      v.updateGear(dt);
       v.updateVector(dt);
       v.syncVisuals();
       v.syncOccupants();

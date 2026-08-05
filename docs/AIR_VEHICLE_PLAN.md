@@ -837,11 +837,89 @@ across a RESTART MATCH is an engine nobody can find to switch off.
 engine audio for the whole map is a different feature and wants a pooled,
 distance-attenuated path like `playShotAt`, not two more loops per airframe.
 
-### Phase 5 — Gear, hatch and buttons
+### Phase 5 — Gear, hatch and buttons ✅ DONE
 
-Gear retract/deploy, the two-piece rear hatch, the bulkhead, and the button
-interaction system. Wants a tuner for the gear poses — the same shape as the
-DOOR tab, for the same reason.
+**The tuner this phase was supposed to need does not exist, and that is the
+owner's doing rather than a shortcut.** The plan called for a GEAR tab because
+the rig had no retracted pose. The owner authored it the other way round: every
+leg carries its DEPLOYED rotation, so **retracted is identity** and raising the
+gear is a slerp toward zero. Nothing to tune, nothing to guess.
+
+Measured deployed angles: 60.8° and 62.2° on the main legs, 122.2° on each nose
+bay door.
+
+**The node list is config, not discovery**, and that is load-bearing:
+`LandingGear_*` also matches the wheels and axles hanging under each leg, and
+rotating those would spin the tyres into the bodywork.
+
+**The hatch** works because the owner also re-authored it — `ref_door_rear_top`
+and `ref_door_rear_bottom` are now parent empties with the meshes at identity
+underneath, so the existing `/^ref_door/i` discovery finds them with no code.
+Both hinge axes were **measured, not guessed**: with the refs at identity inside
+the raw model frame a node's local Z is the chassis's X, so both halves swing
+about local Z and both want a NEGATIVE angle. Probing 0/45/90 about all three
+axes showed +90 swinging the ramp down and *forward into the hull*, which is
+what says the sign is the other way.
+
+The ramp stops near horizontal because the hinge geometry says so — it is
+2.39 m long on a hinge 2.58 m up, so it was never going to reach the ground.
+Troops step down.
+
+**Buttons** are discovered off `Button_*` and mapped to an action by config, so
+the rig names what exists and config says what it does — which is why four ramp
+buttons scattered across the aircraft cost one entry's worth of behaviour.
+`pressButton` lives on the vehicle rather than the controller so the same switch
+works from the cockpit, from inside the bay and from the ground without three
+copies of the mapping. A switch under the crosshair **outranks the seat offer**:
+standing at the tail looking at the ramp control and pressing E must work the
+ramp, not sit you down.
+
+**This is the phase the intake trap was waiting for.** `npm run assets`
+quantizes geometry, which moves a named node's mesh onto an auto-named child —
+so `Button_RearRamp_Exterior` is an `Object3D` carrying no geometry, and reading
+`node.geometry` for its bounds gets `undefined`. Traversing for the mesh is the
+only correct idiom. Flagged at intake in phase 0; it would have cost an
+afternoon here.
+
+**Verified:** all 8 buttons mapped; gear retracts to exactly 0° and returns to
+its authored angles; the ramp drives both halves together and closes; engines
+toggle.
+
+**`N` toggles the gear**, as a shortcut rather than a replacement — the in-world
+switches still work. Gear earns a key where the ramp does not, and the
+difference is *when* you use them: the ramp is a deliberate action taken on foot
+with time to look at what you are pressing, and the gear comes up seconds after
+takeoff while you are looking where you are going. A switch you have to aim at
+is the wrong shape for that. Any seat, because a copilot raising the gear is a
+normal division of labour.
+
+**The interaction ray starts at the SEAT'S EYE, not the camera**, and this was
+found the only way it could be — by the owner trying to raise the gear and not
+being able to. The ray was built from `camera.position`, which in third person
+is 38 m behind the hull, so every cockpit switch sat outside the 4.5 m reach and
+E fell straight through to "get out". Third person is a choice about where the
+CAMERA is, not about where you are sitting. Measured with the camera 48.1 m out:
+the old ray found `nothing`, the seat-eye ray finds the switch. It had killed
+the ramp and engine switches too, in the exact camera mode the aircraft is most
+often flown in.
+
+**Two things it does NOT do, both deliberate:**
+
+**Gear is cosmetic.** The suspension's contact points are measured once at
+construction in the chassis frame, so retracting the gear does not move them —
+an aircraft landed gear-up still lands on its invisible struts. Making that hurt
+is a damage-model question, not an animation one.
+
+**Engines start on entry and the button toggles them**, rather than the button
+being the only way to start. A pilot who sits down and cannot work out why the
+aircraft will not fly is a worse problem than a switch that is merely useful.
+
+**Still open, and both are small Blender asks:**
+
+| Gap | Effect |
+| --- | --- |
+| `LandingGear_front_middle` is at identity | The nose leg has no deployed pose to retract FROM, so it stays down with the gear up. It warns at load rather than silently animating nothing. It wants a rotation authored the way the other four have one. |
+| `door_interior` was not renamed | The cockpit bulkhead is not discovered, so it does not open. `ref_door_interior` is the whole fix. |
 
 ### Phase 6 — Seats and guns
 

@@ -27,6 +27,9 @@ const _level = new THREE.Quaternion();   // horizon-locked view frame
 const _lookPitch = new THREE.Quaternion();
 const _YAXIS = new THREE.Vector3(0, 1, 0);
 const _XAXIS = new THREE.Vector3(1, 0, 0);
+// What a switch is called in the prompt. Keyed by ACTION rather than by node,
+// because four different ramp buttons all read the same to the player.
+const LABELS = { ramp: 'REAR RAMP', gear: 'LANDING GEAR', engine: 'ENGINES' };
 // The camera's own view axis. Rolling about it is the one attitude term a
 // cockpit can inherit without moving the aim — see the aircraft first-person
 // branch in updateVehicleCamera.
@@ -308,6 +311,21 @@ export class Player {
       // (it would still change seat once per press) but it is the reason this
       // binding is worth a second look if the game ever leaves Windows.
       if (e.code === 'CapsLock' && this.vehicle && !repeat) this.changeSeat();
+      // Landing gear. A SHORTCUT for the in-world switch, not a replacement —
+      // `Button_Landinggear.*` still works and still says GEAR UP/DOWN.
+      //
+      // Gear earns a key where the ramp does not, and the difference is when you
+      // use them: the ramp is a deliberate action taken on foot with time to
+      // look at what you are pressing, and the gear comes up seconds after
+      // takeoff while you are looking where you are going. A switch you have to
+      // aim at is the wrong shape for that.
+      //
+      // Any seat, not just the pilot's: a copilot raising the gear is a normal
+      // division of labour and there is no reason to refuse it.
+      if (e.code === 'KeyN' && this.vehicle && this.vehicle.isAircraft && !repeat) {
+        const down = this.vehicle.toggleGear();
+        if (down !== null) this.game.hud.message(down ? 'GEAR DOWN' : 'GEAR UP', 1.4);
+      }
       if (!this.freecam) {
         // Number keys follow the loadout's slot order: 1-2 weapons, 3-4 gadgets.
         // Grenade and melee get their own keys when those slots are implemented.
@@ -1214,6 +1232,51 @@ export class Player {
     this.doorHeld = false;
   }
 
+  // A switch under the crosshair. Shared by the on-foot path and the seated one
+  // rather than duplicated, because the ramp control exists on the hull, in the
+  // bay AND in the cockpit and all three have to behave the same.
+  //
+  // It outranks the seat offer: standing at the tail looking at the ramp button
+  // and pressing E must work the ramp, not put you on a seat. Which one you get
+  // is decided by where the crosshair is, the same way which SEAT you get is
+  // decided by where your feet are.
+  //
+  // Edge-triggered on E — held everywhere else in this file, and a switch that
+  // toggled for as long as the key was down would be unusable.
+  _buttonPrompt(v) {
+    if (!v || !v.buttons || !v.buttons.length) return false;
+    const B = v.tune.buttons;
+    v.group.updateMatrixWorld(true);
+    if (this.vehicle === v && v.isAircraft) {
+      // SEATED: the ray starts at the seat's eye and runs down the look, NOT
+      // from the camera. Third person is a choice about where the camera is, not
+      // about where you are sitting — and the boom puts it 38 m behind the hull,
+      // so every cockpit switch fell outside the 4.5 m reach and E dropped
+      // straight through to "get out". The ramp and engine switches were dead in
+      // the exact camera mode the aircraft is most often flown in.
+      //
+      // `yaw`/`pitch` are ABSOLUTE in an aircraft, so this is the same vector
+      // the flight command is built from — the reticle and the nose agree by
+      // construction rather than by coincidence.
+      v.seatEye(this.vehicleSeatIdx, _from);
+      const cp = Math.cos(this.pitch);
+      _dir.set(cp * Math.sin(this.yaw), Math.sin(this.pitch), cp * Math.cos(this.yaw));
+    } else {
+      this.camera.getWorldDirection(_dir);
+      _from.copy(this.camera.position);
+    }
+    const b = v.buttonAtReticle(_from, _dir, B.reticleRange, B.reticleCone);
+    if (!b) { this.buttonHeld = false; return false; }
+
+    this.game.hud.setPrompt(`E — ${LABELS[b.action] || b.action.toUpperCase()}`, 0);
+    if (this.keys['KeyE'] && this.locked && !this.buttonHeld && !this.actionBusy()) {
+      const msg = v.pressButton(b);
+      if (msg) this.game.hud.message(msg, 1.6);
+    }
+    this.buttonHeld = !!this.keys['KeyE'];
+    return true;
+  }
+
   // A vehicle in reach owns the interact key ahead of a crate, on exactly the
   // rule casualties use against both: the crate will still be there in ten
   // seconds. Returns true when it has claimed the prompt.
@@ -1245,6 +1308,8 @@ export class Player {
     }
 
     this.rightTimer = 0;
+    // A switch under the crosshair beats the seat offer — see _buttonPrompt.
+    if (this._buttonPrompt(v)) return true;
     // Which seat you get is decided by which one you are STANDING NEAREST, so
     // the prompt names it and walking round the vehicle changes the offer. No
     // menu, no cycle key — the position of your feet is the input.
@@ -1638,7 +1703,11 @@ export class Player {
       this._fireTurret(dt, live);
     }
 
-    if (live && this.keys['KeyE'] && this.exitCooldown <= 0) {
+    // From a seat, the cockpit switches are on the same key. Checked BEFORE the
+    // exit test so looking at the ramp control and pressing E works the ramp
+    // rather than putting you on the ground beside the aircraft.
+    const onButton = live && this.exitCooldown <= 0 && this._buttonPrompt(v);
+    if (!onButton && live && this.keys['KeyE'] && this.exitCooldown <= 0) {
       // Stepping out at altitude is not a dismount. `exitPoint` puts you on the
       // ground beside the hull, which from 300 m is a teleport — and refusing is
       // both the honest answer and the one that stops a pilot losing an aircraft

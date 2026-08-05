@@ -1025,6 +1025,83 @@ export const CFG = {
           ref: null, offset: [0.6, 2.4, 10.5], camera: 'ref_camera_copilot',
           pose: { pos: [0, 0, 0], rot: [0, 0, 0] } },
       ],
+      // Doors. MEASURED off the rig rather than guessed: with the ref empties
+      // at identity inside the raw model frame, a node's local Z is the
+      // chassis's X — the lateral axis — so both halves of the tail hatch hinge
+      // about local Z, and both want a NEGATIVE angle. Probed at 0/45/90 about
+      // all three axes: +90 about Z swings the ramp DOWN AND FORWARD into the
+      // hull, which is the giveaway that the sign is the other way.
+      //
+      // The ramp stops near horizontal because that is as far as the hinge
+      // geometry goes — it is 2.39 m long on a hinge 2.58 m up, so it cannot
+      // reach the ground and was never going to. Troops step down.
+      doors: {
+        openTime: 1.6,         // a 4 m tail hatch is not a car door
+        outlineRange: 14,
+        // A 33 m airframe needs more reach than a Warthog's 5 m or the ramp
+        // control is unusable from anywhere you can see the ramp from.
+        reticleRange: 11,
+        reticleCone: 0.30,
+        defaultAxis: 'z',
+        defaultDegrees: -85,
+        overrides: {
+          ref_door_rear_bottom: { axis: 'z', degrees: -95 },
+          ref_door_rear_top: { axis: 'z', degrees: -80 },
+        },
+      },
+
+      // ---------------------------------------------------------------
+      // GEAR. The retracted pose is IDENTITY — the owner authored the deployed
+      // pose as a rotation on each leg, so raising the gear is a slerp to zero
+      // and there is no second pose to author and no tuner to build.
+      //
+      // Listed rather than discovered, because `LandingGear_*` also matches the
+      // wheels and axles hanging under each leg and rotating those would spin
+      // the tyres into the bodywork. Measured rotations: 60.8 and 62.2 degrees
+      // on the main legs, 122.2 on each bay door.
+      //
+      // COSMETIC ONLY, and worth saying because it looks like it should not be:
+      // the suspension's contact points are measured once at construction in
+      // the chassis frame, so retracting the gear does not move them. An
+      // aircraft landed gear-up still lands on its (invisible) struts. Making
+      // that hurt is a damage-model question, not an animation one.
+      // ---------------------------------------------------------------
+      gear: {
+        nodes: [
+          'LandingGear_back_left',
+          'LandingGear_back_right',
+          'LandingGear_front_middle_door_left',
+          'LandingGear_front_middle_door_right',
+          // NOT `LandingGear_front_middle`: measured at identity, so it has no
+          // deployed pose to retract from and the nose leg stays down. It wants
+          // a rotation authored in Blender the way the other four have one.
+        ],
+        time: 2.4,             // seconds, down to up
+      },
+
+      // Cockpit and hull switches. The rig NAMES what exists and this says what
+      // each one DOES — which is why the ramp has four buttons scattered across
+      // the aircraft and only one entry's worth of behaviour.
+      //
+      // Blender's dots are stripped by the loader, so `Button_Landinggear.001`
+      // arrives as `Button_Landinggear001`; the lookup normalizes both ends.
+      buttons: {
+        // Generous, because these are 15 cm switches on a 33 m airframe and the
+        // exterior ramp control is used while standing next to the tail.
+        reticleRange: 4.5,
+        reticleCone: 0.22,
+        actions: {
+          Button_RearRamp_Exterior: 'ramp',
+          Button_RearRamp_Interior: 'ramp',
+          Button_RearRamp_Pilot: 'ramp',
+          Button_RearRamp_Copilot: 'ramp',
+          Button_EngineStart_Pilot: 'engine',
+          Button_EngineStart_Copilot: 'engine',
+          'Button_Landinggear.001': 'gear',
+          'Button_Landinggear.002': 'gear',
+        },
+      },
+
       // ---------------------------------------------------------------
       // VECTOR — one parameter, three outputs. AIR_VEHICLE_PLAN.md phase 4.
       //
