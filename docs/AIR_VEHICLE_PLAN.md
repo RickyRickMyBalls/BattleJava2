@@ -914,12 +914,28 @@ is a damage-model question, not an animation one.
 being the only way to start. A pilot who sits down and cannot work out why the
 aircraft will not fly is a worse problem than a switch that is merely useful.
 
-**Still open, and both are small Blender asks:**
+**The rig has TWO retraction mechanisms, not one**, and reading the nose leg's
+identity rotation as a missing pose was wrong. The main legs and the bay doors
+*swing* — they carry a deployed rotation and fold to identity. The nose leg is a
+strut that *slides*: it has no rotation because it only ever translates straight
+up into its bay. A part with no rotation is not always a gap; sometimes it is a
+different machine.
 
-| Gap | Effect |
-| --- | --- |
-| `LandingGear_front_middle` is at identity | The nose leg has no deployed pose to retract FROM, so it stays down with the gear up. It warns at load rather than silently animating nothing. It wants a rotation authored the way the other four have one. |
-| `door_interior` was not renamed | The cockpit bulkhead is not discovered, so it does not open. `ref_door_interior` is the whole fix. |
+So a gear part declares `lift` (translate) or nothing (rotate), and the nose leg
+lifts 1.55 m — enough to carry the wheel from y −0.03 to **1.52**, clear of the
+closed door line at 1.32. Its wheel and its `ref_contact_front_middle` are both
+children of that one node, so a single translation takes the whole assembly.
+
+**`phase` sequences the nose bay**, and without it the doors close through the
+wheel. Retracting (1 → 0) the leg lifts over 1.0 → 0.4 and only then do the
+doors swing shut over 0.4 → 0; deploying runs the same order backwards, doors
+first. Measured through a full cycle: at pos 0.58 the leg is at y 0.96 with the
+doors still at their full 122.2°, and the doors do not begin moving until the
+leg has stopped.
+
+**Still open, one small Blender ask:** `door_interior` was not renamed, so the
+cockpit bulkhead is not discovered and does not open. `ref_door_interior` is the
+whole fix.
 
 ### Phase 6 — Seats and guns
 

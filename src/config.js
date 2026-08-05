@@ -1066,17 +1066,32 @@ export const CFG = {
       // aircraft landed gear-up still lands on its (invisible) struts. Making
       // that hurt is a damage-model question, not an animation one.
       // ---------------------------------------------------------------
+      // Parts retract in one of two ways, because the rig has two mechanisms.
+      // The main legs and the bay doors SWING — they carry a deployed rotation
+      // and fold to identity. The nose leg does not rotate at all: it is a
+      // strut that TRANSLATES straight up into its bay, so it has no rotation
+      // to fold and lifting it is the only thing that could work. Measured at
+      // identity, which is exactly what a part that only ever slides looks like.
+      //
+      // `phase` is the slice of the travel a part moves during, and it is what
+      // keeps the doors from closing through the wheel. Retracting (1 → 0) the
+      // nose leg lifts over 1.0 → 0.4 and only then do the doors swing shut over
+      // 0.4 → 0; deploying runs the same order backwards, doors first.
       gear: {
-        nodes: [
-          'LandingGear_back_left',
-          'LandingGear_back_right',
-          'LandingGear_front_middle_door_left',
-          'LandingGear_front_middle_door_right',
-          // NOT `LandingGear_front_middle`: measured at identity, so it has no
-          // deployed pose to retract from and the nose leg stays down. It wants
-          // a rotation authored in Blender the way the other four have one.
-        ],
         time: 2.4,             // seconds, down to up
+        parts: [
+          { node: 'LandingGear_back_left' },
+          { node: 'LandingGear_back_right' },
+          // The nose bay doors. The ref empties are at identity and the MESHES
+          // carry the 122.2 degree open pose, so the meshes are what fold.
+          { node: 'LandingGear_front_middle_door_left', phase: [0, 0.4] },
+          { node: 'LandingGear_front_middle_door_right', phase: [0, 0.4] },
+          // The nose leg, wheel and its `ref_contact_front_middle` all ride on
+          // this one node, so a single translation takes the whole assembly.
+          // 1.55 m clears the wheel (bottom at y -0.03) above the closed door
+          // line (y 1.32) with a little to spare.
+          { node: 'LandingGear_front_middle', lift: 1.55, phase: [0.4, 1] },
+        ],
       },
 
       // Cockpit and hull switches. The rig NAMES what exists and this says what

@@ -941,20 +941,28 @@ export class Vehicle {
   _measureGear() {
     this.gear = null;
     const G = this.tune.gear;
-    if (!G || !G.nodes) return;
+    if (!G || !G.parts) return;
     const byName = {};
     this.group.traverse((o) => { if (o.name) byName[o.name.replace(/\./g, '')] = o; });
     const parts = [];
-    for (const name of G.nodes) {
-      const node = byName[name.replace(/\./g, '')];
-      if (!node) { console.warn(`[vehicle] ${this.key}: gear node ${name} missing`); continue; }
-      if (Math.abs(node.quaternion.w) > 0.9999) {
-        // Nothing to slerp to. Says so rather than silently animating nothing —
-        // the nose leg is exactly this case and it is a Blender gap, not a bug.
-        console.warn(`[vehicle] ${this.key}: gear node ${name} is already at identity — it has no deployed pose to retract FROM`);
+    for (const def of G.parts) {
+      const node = byName[def.node.replace(/\./g, '')];
+      if (!node) { console.warn(`[vehicle] ${this.key}: gear node ${def.node} missing`); continue; }
+      const phase = def.phase || [0, 1];
+      if (def.lift) {
+        // A sliding strut. Its rest position is the DEPLOYED one and it rises
+        // by `lift` to stow, which is why it carries no rotation to fold.
+        parts.push({ node, mode: 'lift', restY: node.position.y, rise: def.lift, phase });
         continue;
       }
-      parts.push({ node, down: node.quaternion.clone() });
+      if (Math.abs(node.quaternion.w) > 0.9999) {
+        // Nothing to slerp to. Says so rather than silently animating nothing:
+        // a swinging part with no deployed pose is a Blender gap, and a part
+        // that only ever slides should have declared `lift` instead.
+        console.warn(`[vehicle] ${this.key}: gear node ${def.node} is at identity and has no lift — nothing to animate`);
+        continue;
+      }
+      parts.push({ node, mode: 'rotate', down: node.quaternion.clone(), phase });
     }
     if (!parts.length) return;
     this.gear = { parts, pos: 1, target: 1 };   // 1 = down, 0 = up
@@ -968,9 +976,18 @@ export class Vehicle {
     const rate = dt / Math.max(0.01, this.tune.gear.time);
     g.pos += Math.sign(g.target - g.pos) * Math.min(rate, Math.abs(g.target - g.pos));
     for (const p of g.parts) {
-      // Slerp from identity toward the authored deployed pose. `slerpQuaternions`
-      // takes the short arc, which is what a leg swinging 60 degrees wants.
-      p.node.quaternion.slerpQuaternions(_qIdent, p.down, g.pos);
+      // Each part only moves during its own slice of the travel, which is what
+      // sequences the nose bay: leg up first, doors shut after.
+      const [a, b] = p.phase;
+      const u = b - a < 1e-6 ? 1 : Math.max(0, Math.min(1, (g.pos - a) / (b - a)));
+      if (p.mode === 'lift') {
+        p.node.position.y = p.restY + p.rise * (1 - u);
+      } else {
+        // Slerp from identity toward the authored deployed pose.
+        // `slerpQuaternions` takes the short arc, which is what a leg swinging
+        // 60 degrees — or a bay door swinging 122 — wants.
+        p.node.quaternion.slerpQuaternions(_qIdent, p.down, u);
+      }
     }
   }
 
