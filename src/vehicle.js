@@ -248,6 +248,9 @@ export class Vehicle {
     this.enginesOn = false;
     this.airborne = false;
     this.hoverBlend = 0;                 // 0 on the gear, 1 in the air, eased
+    // One parameter, three outputs: nacelle tilt, plume crossfade, engine note.
+    // 0 is hover, 1 is cruise. See CFG.vehicle.pelican.vector.
+    this.vector = 0;
 
     this.wheels = [];
     this.hullPoints = [];                // chassis-frame hull sample points
@@ -323,6 +326,7 @@ export class Vehicle {
     this._measureTurret();
     this._measureLinkage();
     this._measureDoors();
+    this._measureVectorRig();
 
     // Hull sample points. An AUTHORED list in the tune block wins, because the
     // eight-corner derivation below is only defensible when the shell is a
@@ -919,6 +923,137 @@ export class Vehicle {
     this._sleepCheck(h);
   }
 
+  // ------------------------------------------------------- vector rig --
+
+  // The nacelles and the plumes. Discovered, not listed: anything matching
+  // `Wing_<family>_<side>_root` is a pod hinge, which means a fifth pod costs
+  // an export and no code.
+  //
+  // MEASURED rather than assumed, and it needed to be. Each root's local Z maps
+  // to the CHASSIS X axis, so a rotation about it tilts the pod fore and aft —
+  // the obvious guess (a wing hinges about the fore-aft axis, like a control
+  // surface) is right for a wing and wrong for a nacelle, and would have rolled
+  // the engines sideways.
+  _measureVectorRig() {
+    this.pods = [];
+    this.glow = null;
+    if (!this.rig.flight) return;
+
+    this.group.traverse((o) => {
+      const m = /^Wing_(front|rear)_(left|right)_root$/i.exec(o.name || '');
+      if (m) {
+        this.pods.push({
+          node: o,
+          base: o.quaternion.clone(),
+          family: m[1].toLowerCase(),
+          // +1 left, -1 right. The differential term needs a side; nothing else
+          // does, because both pods on an axle tilt together.
+          side: m[2].toLowerCase() === 'left' ? 1 : -1,
+        });
+      }
+    });
+    if (!this.pods.length) return;
+
+    // The plume materials, CLONED PER VEHICLE. `template.clone(true)` shares
+    // materials, so animating them in place would light up every Pelican on the
+    // map together — the third time this project has met the same trap, after
+    // ammodisplay.js's digit atlas and the Warthog's brake lamps.
+    //
+    // Keyed by ROLE rather than by node, because the two nozzles on a pod are
+    // separate meshes with separate materials and the crossfade is between the
+    // roles, not between the sides.
+    const roles = { down: [], forward: [], hover: [] };
+    const seen = new Map();
+    this.group.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      const out = mats.map((mat) => {
+        const n = (mat.name || '').toLowerCase();
+        let role = null;
+        if (/^thrustglow_.*_down$/.test(n)) role = 'down';
+        else if (/^thrustglow_.*_forward$/.test(n)) role = 'forward';
+        else if (/^hover_thrusters$/.test(n)) role = 'hover';
+        if (!role) return mat;
+        // One clone per SOURCE material, not per mesh: the left and right down
+        // nozzles are separate materials and stay separate, but a material used
+        // by two meshes must not be cloned twice or only one would animate.
+        let c = seen.get(mat);
+        if (!c) {
+          c = mat.clone();
+          seen.set(mat, c);
+          // WHICH KNOB the material actually responds to, decided per material
+          // rather than assumed. `thrustglow_*` carry a real emissive (#bdffff)
+          // so intensity drives them; `hover_thrusters` is a transparent
+          // MeshPhysicalMaterial whose emissive is pure BLACK, and writing
+          // emissiveIntensity to that is a silent no-op — the value changes,
+          // nothing renders differently, and it looks like the crossfade works.
+          const lit = c.emissive && (c.emissive.r + c.emissive.g + c.emissive.b) > 0;
+          roles[role].push({ mat: c, drive: lit ? 'emissive' : 'opacity' });
+        }
+        return c;
+      });
+      o.material = Array.isArray(o.material) ? out : out[0];
+    });
+    this.glow = roles;
+  }
+
+  // Drive the pods, the plumes and (via `vector`) the engine note off ONE
+  // parameter. Runs on real frame time outside the physics substep — it is
+  // cosmetic, and a parked aircraft still has to be able to sit with its
+  // nozzles cold.
+  updateVector(dt) {
+    if (!this.isAircraft || !this.pods || !this.pods.length) return;
+    const K = this.tune.vector;
+    if (!K) return;
+
+    // Forward airspeed, not total: an aircraft sliding sideways at 30 m/s is
+    // not cruising, and using the speed magnitude would have it transition to
+    // cruise in the middle of the very slide the drag model exists to produce.
+    _fA.set(0, 0, 1).applyQuaternion(this.quat);
+    const along = Math.max(0, this.vel.dot(_fA));
+    const grounded = this.wheels.some((w) => w.grounded);
+    const want = (!this.enginesOn || grounded)
+      ? K.groundVector
+      : Math.max(0, Math.min(1, along / Math.max(1e-3, K.cruiseSpeed)));
+
+    const step = K.rate * dt;
+    this.vector += Math.max(-step, Math.min(step, want - this.vector));
+
+    // Differential: the pods tilt asymmetrically with the roll and yaw command,
+    // so the engines are visibly doing the thing that is turning you.
+    // Both terms mean LEFT when positive — `roll` by the convention above, and
+    // `angVel.y` because a positive rotation about world up swings the nose
+    // toward +X, which is the chassis's left. So they ADD. Subtracting them
+    // cancelled the differential in exactly the case it exists for: a turn
+    // where the pilot is both banking and yawing the same way.
+    const cmd = Math.max(-1, Math.min(1, this.flightCmd.roll + this.angVel.y));
+    for (const p of this.pods) {
+      const span = p.family === 'front' ? K.wingFront : K.wingRear;
+      const deg = span[0] + (span[1] - span[0]) * this.vector
+        + cmd * p.side * K.differential * this.hoverBlend;
+      p.node.quaternion.copy(p.base).multiply(_q2.setFromAxisAngle(_Z, deg * DEG));
+    }
+
+    if (this.glow) {
+      const on = this.enginesOn ? 1 : 0;
+      // `amount` is 0..1 and `peak` is the configured full-brightness value, so
+      // an emissive material and a transparent one take the same call and each
+      // applies it to the knob it actually has.
+      const set = (list, amount, peak) => {
+        for (const e of list) {
+          if (e.drive === 'emissive') e.mat.emissiveIntensity = peak * amount;
+          else e.mat.opacity = Math.max(0, Math.min(1, peak * amount));
+        }
+      };
+      // Crossfaded, not switched. Both nozzles are physically present on the
+      // pod at all times — see the config note — so what changes between hover
+      // and cruise is which one is lit.
+      set(this.glow.down, on * (1 - this.vector), K.glowDown);
+      set(this.glow.forward, on * this.vector, K.glowForward);
+      set(this.glow.hover, on * (1 - this.vector), K.glowHover);
+    }
+  }
+
   // ------------------------------------------------------------- flight --
 
   // Mode 1: point the camera, the ship goes there, with weight.
@@ -973,8 +1108,18 @@ export class Vehicle {
 
     // Bank into the turn, off the yaw rate the body actually has rather than
     // the one commanded — so the lean follows the turn instead of leading it.
+    // `roll` carries the SAME handedness as a ground vehicle's `steer`:
+    // positive is left, because +X is chassis left and A means left everywhere
+    // else in the game. The negation is what converts that into a bank angle
+    // about the forward axis, where positive drops the RIGHT wing.
+    //
+    // It was missing, so A rolled right and D rolled left. The auto term was
+    // already correct, which is what made it findable: the two are summed, and
+    // measured in a right-hand turn the automatic part banked right (-26 deg)
+    // while holding A banked the other way (-30 deg for a left-hand input).
+    // Two terms feeding one angle and disagreeing about which way is left.
     const bank = Math.max(-F.bankMax, Math.min(F.bankMax, -this.angVel.y * F.bankPerYaw))
-      + c.roll * F.bankManual;
+      - c.roll * F.bankManual;
 
     // Basis. `left = up x forward`, matching the chassis convention (+X left)
     // that settleAt and every seat offset already use. The degenerate case is
@@ -1943,7 +2088,12 @@ export class VehicleManager {
     }
     // Doors run on real frame time, not the physics accumulator, and outside
     // the sleep check — a parked hog still has to be able to open a door.
-    for (const v of this.vehicles) { v.updateDoors(dt); v.syncVisuals(); v.syncOccupants(); }
+    for (const v of this.vehicles) {
+      v.updateDoors(dt);
+      v.updateVector(dt);
+      v.syncVisuals();
+      v.syncOccupants();
+    }
   }
 
   // Every vehicle within `range` of a point. The ALT outline needs the set, not

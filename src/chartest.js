@@ -872,6 +872,14 @@ async function boot() {
   airRange.buildInputs(document.getElementById('airInputs'), dumpAir);
   document.getElementById('airReset').onclick = () => airRange.reset();
   document.getElementById('airAll').onclick = () => airRange.startAll();
+  {
+    // The scrub is what makes the pods TUNABLE rather than just animated: hold
+    // the transition still at any point and read the angle off the model.
+    const sl = document.getElementById('airScrub');
+    const auto = document.getElementById('airScrubAuto');
+    sl.oninput = () => { airRange.setScrub(Number(sl.value)); auto.classList.remove('sel'); };
+    auto.onclick = () => { airRange.setScrub(null); auto.classList.add('sel'); };
+  }
   document.getElementById('airCam').onclick = () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC' }));
   };

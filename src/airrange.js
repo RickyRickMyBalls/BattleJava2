@@ -153,6 +153,18 @@ const FIELDS = [
     ['lateral', 'flight.dragLat', 0.005],
     ['vertical', 'flight.dragVert', 0.005],
   ]],
+  ['VECTOR — nacelles, plumes, engine note', [
+    ['cruise m/s', 'vector.cruiseSpeed', 1],
+    ['rate 1/s', 'vector.rate', 0.05],
+    ['front hover', 'vector.wingFront[0]', 1],
+    ['front cruise', 'vector.wingFront[1]', 1],
+    ['rear hover', 'vector.wingRear[0]', 1],
+    ['rear cruise', 'vector.wingRear[1]', 1],
+    ['differential', 'vector.differential', 0.5],
+    ['glow down', 'vector.glowDown', 0.25],
+    ['glow fwd', 'vector.glowForward', 0.25],
+    ['glow hover', 'vector.glowHover', 0.25],
+  ]],
   ['BODY & GEAR', [
     ['mass', 'mass', 250],
     ['com y', 'com[1]', 0.05],
@@ -223,6 +235,30 @@ export function dumpFlight(T) {
   L.push('        ceiling: ' + f2(F.ceiling) + ',');
   L.push('        exitMaxHeight: ' + f2(F.exitMaxHeight) + ',');
   L.push('      },');
+  // The vector block rides along, because the pods and the flight model are
+  // tuned in the same sitting and splitting the paste is how one of them gets
+  // pasted and the other forgotten — the same argument the SEAT tab makes for
+  // emitting the whole seats array rather than just the poses.
+  const K = T.vector;
+  if (K) {
+    L.push('');
+    L.push('      vector: {');
+    L.push('        cruiseSpeed: ' + f2(K.cruiseSpeed) + ',');
+    L.push('        rate: ' + f2(K.rate) + ',');
+    L.push('        groundVector: ' + f2(K.groundVector) + ',');
+    L.push(`        wingFront: [${K.wingFront.map(f2).join(', ')}],`);
+    L.push(`        wingRear: [${K.wingRear.map(f2).join(', ')}],`);
+    L.push('        differential: ' + f2(K.differential) + ',');
+    L.push('        glowDown: ' + f2(K.glowDown) + ',');
+    L.push('        glowForward: ' + f2(K.glowForward) + ',');
+    L.push('        glowHover: ' + f2(K.glowHover) + ',');
+    L.push('        glowIdle: ' + f2(K.glowIdle) + ',');
+    L.push('        volHover: ' + f2(K.volHover) + ',');
+    L.push('        volEngine: ' + f2(K.volEngine) + ',');
+    L.push('        rateBase: ' + f2(K.rateBase) + ',');
+    L.push('        rateSpan: ' + f2(K.rateSpan) + ',');
+    L.push('      },');
+  }
   return '// paste into CFG.vehicle.pelican in config.js\n' + L.join('\n');
 }
 
@@ -268,6 +304,8 @@ export function createAirRange(assets) {
   // panel. The MOUSE version is the game — this exists so a change can be felt
   // between two scripted runs, not so the model can be flown properly.
   let cmdYaw = 0, cmdPitch = 0;
+  // null = let airspeed drive it; 0..1 = hold it there and look at it.
+  let scrub = null;
   const _dir = new THREE.Vector3();
 
   const keys = {};
@@ -564,6 +602,14 @@ export function createAirRange(assets) {
       accum -= h;
       steps++;
     }
+    // Cosmetics on real frame time, outside the substep loop — the same rule
+    // VehicleManager follows. A SCRUBBED vector overrides the computed one so
+    // the transition can be held still and looked at, which is the whole
+    // difference between tuning the pods and watching them go past.
+    // dt of 0 leaves the rate limiter with nothing to move, so the scrubbed
+    // value survives the call and only the pods and the plumes are re-applied.
+    if (scrub === null) pel.updateVector(dt);
+    else { pel.vector = scrub; pel.updateVector(0); }
     pel.syncVisuals();
     updateCamera(dt);
   }
@@ -587,6 +633,8 @@ export function createAirRange(assets) {
       `DRIFT    ${drift.toFixed(1)}deg  (velocity vs nose)   lat ${latG.toFixed(2)} g`,
       `rates    pitch ${rate.x.toFixed(2)}  yaw ${rate.y.toFixed(2)}  roll ${rate.z.toFixed(2)} rad/s`,
       `          limits ${F.turnRate.map((v) => v.toFixed(2)).join(' / ')}`,
+      `vector   ${pel.vector.toFixed(2)}  ${pel.vector < 0.5 ? 'HOVER' : 'CRUISE'}`
+        + `${scrub === null ? '  (from airspeed)' : '  [SCRUBBED]'}`,
       `engines  ${pel.enginesOn ? 'ON' : 'off'}   authority ${pel.hoverBlend.toFixed(2)}`
         + `   ${grounded ? `${grounded} STRUT${grounded > 1 ? 'S' : ''} DOWN` : 'airborne'}`,
       run ? `RUNNING  ${run.name}   t ${run.t.toFixed(1)} s` : '',
@@ -634,6 +682,9 @@ export function createAirRange(assets) {
     get vehicle() { return pel; },
     get camName() { return CAMS[camMode]; },
     get running() { return run ? run.name : null; },
+    get vector() { return pel ? pel.vector : 0; },
+    get scrub() { return scrub; },
+    setScrub(v) { scrub = v === null ? null : Math.max(0, Math.min(1, v)); if (pel) pel.enginesOn = true; },
     start,
     // Run the whole suite back to back, so one click re-measures everything
     // after a change instead of six.

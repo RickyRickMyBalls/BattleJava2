@@ -1449,6 +1449,7 @@ export class Player {
     // existing camera expression `R_y(PI + vCamYaw + yaw)` collapse to a plain
     // world heading — which is why the boom, the FP eye and `exitVehicle`'s
     // hand-back all keep working untouched.
+    if (v.isAircraft) this._startEngineAudio(v);
     this.yaw = v.isAircraft ? v.yaw : 0;
     this.pitch = 0;
     this.vCamYaw = v.isAircraft ? 0 : null;   // null = snap the chase heading in
@@ -1491,6 +1492,46 @@ export class Player {
     return false;
   }
 
+  // Engine audio. Two loops crossfaded by the SAME `vector` the nacelles and
+  // the plumes run on, so the aircraft can never sound like it is in a
+  // configuration it does not look like it is in.
+  //
+  // Owned by the controller rather than by `Vehicle`, deliberately: `Vehicle`
+  // takes a `world` and nothing else, and that narrow surface is what lets the
+  // physics be lifted onto the AIR tab with no Game in sight. Handing it an
+  // audio system would cost that for one crossfade.
+  //
+  // Only the aircraft the PLAYER is in is voiced. Positional engine audio for
+  // every Pelican on the map is a different feature and wants a pooled,
+  // distance-attenuated path like `playShotAt`, not two more loops per airframe.
+  _startEngineAudio(v) {
+    this._stopEngineAudio();
+    const a = this.game.audio;
+    if (!a || !a.loop) return;
+    this._engHover = a.loop('pelicanHover', 0);
+    this._engCruise = a.loop('pelicanEngine', 0);
+  }
+
+  _stopEngineAudio() {
+    if (this._engHover) { this._engHover.stop(); this._engHover = null; }
+    if (this._engCruise) { this._engCruise.stop(); this._engCruise = null; }
+  }
+
+  _updateEngineAudio(v) {
+    if (!this._engHover && !this._engCruise) return;
+    const K = v.tune.vector;
+    if (!K) return;
+    // Silent with the engines off rather than idling — there is no start-up
+    // spool yet, and a loop that fades in from nothing on the first frame of
+    // throttle reads better than one that was always quietly running.
+    const on = v.enginesOn ? 1 : 0;
+    _fwd.set(0, 0, 1).applyQuaternion(v.quat);
+    const along = Math.abs(v.vel.dot(_fwd));
+    const rate = K.rateBase + K.rateSpan * Math.min(1, along / v.rig.flight.topSpeed);
+    if (this._engHover) this._engHover.set(on * K.volHover * (1 - v.vector), rate);
+    if (this._engCruise) this._engCruise.set(on * K.volEngine * v.vector, rate);
+  }
+
   // Height above the ground the aircraft is actually over, not above its own
   // spawn or above sea level — the same two-tier query the vehicle flies by.
   _aircraftTooHigh(v) {
@@ -1507,6 +1548,7 @@ export class Player {
     const v = this.vehicle;
     if (!v) return;
     // The last pilot out shuts the engines down, which also re-arms sleep.
+    if (v.isAircraft) this._stopEngineAudio();
     if (v.isAircraft && this.vehicleRole === 'drive') {
       v.enginesOn = false;
       v.flightCmd.throttle = 0;
@@ -1567,7 +1609,9 @@ export class Player {
       v.flightCmd.roll = live ? (this.keys['KeyA'] ? 1 : 0) - (this.keys['KeyD'] ? 1 : 0) : 0;
       v.enginesOn = true;
       v.wake();
-    } else if (role === 'drive') {
+    }
+    if (v.isAircraft) this._updateEngineAudio(v);
+    if (role === 'drive' && !v.isAircraft) {
       const fwd = live && !!this.keys['KeyW'];
       const back = live && !!this.keys['KeyS'];
       let steer = 0;

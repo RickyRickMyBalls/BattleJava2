@@ -11,6 +11,10 @@ export class GameAudio {
     this.master = null;
     this.buffers = {};
     this._pending = []; // AI shots queued this frame, spent by update()
+    // Live loops (engines). Tracked so a match teardown can stop them: unlike
+    // every other sound here a loop never ends on its own, and one left running
+    // across a RESTART MATCH is an engine nobody can find to switch off.
+    this._loops = [];
   }
 
   init(buffers) {
@@ -36,6 +40,8 @@ export class GameAudio {
   // asset library and is only being let go of, not freed.
   dispose() {
     this._pending.length = 0;
+    for (const h of this._loops) h.stop();
+    this._loops.length = 0;
     this.buffers = {};
     this.noise = null;
     this.master = null;
@@ -82,6 +88,53 @@ export class GameAudio {
     }
     node.connect(this.master);
     src.start();
+  }
+
+  // A LOOP with a live handle. Everything else in this file is fire-and-forget:
+  // a shot starts, decays and is gone, so the caller never needs to hold it.
+  // An engine is the opposite — it runs for as long as the pilot is aboard and
+  // its gain and pitch are being written every frame — so this is the one path
+  // that hands back something to keep.
+  //
+  // Returns null when there is no context or no buffer, and every method on the
+  // handle tolerates that, so a caller never has to null-check the audio system
+  // before it can crossfade.
+  loop(key, volume = 0, rate = 1) {
+    const buffer = this.buffers && this.buffers[key];
+    if (!this.ctx || !buffer) return null;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    // Set on the param rather than through `setTargetAtTime`: the caller is
+    // already easing this every frame off `vector`, and a second smoothing
+    // stage here would fight it and lag the crossfade behind the visuals.
+    g.gain.value = volume;
+    src.connect(g).connect(this.master);
+    src.start();
+    const h = {
+      stopped: false,
+      set(v, r) {
+        if (h.stopped) return;
+        g.gain.value = Math.max(0, v);
+        if (r !== undefined) src.playbackRate.value = r;
+      },
+      stop() {
+        if (h.stopped) return;
+        h.stopped = true;
+        try { src.stop(); } catch { /* already stopped with the context */ }
+        try { src.disconnect(); g.disconnect(); } catch { /* ditto */ }
+      },
+    };
+    // Prune spent handles as we go. `_loops` exists only so teardown can find
+    // anything still running, and getting in and out of an aircraft twenty
+    // times should not leave twenty dead entries in it.
+    for (let i = this._loops.length - 1; i >= 0; i--) {
+      if (this._loops[i].stopped) this._loops.splice(i, 1);
+    }
+    this._loops.push(h);
+    return h;
   }
 
   // Cutoff for a sound `d` metres off. See the CFG.audio comment: the ear reads

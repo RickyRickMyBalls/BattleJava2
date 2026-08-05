@@ -1025,6 +1025,86 @@ export const CFG = {
           ref: null, offset: [0.6, 2.4, 10.5], camera: 'ref_camera_copilot',
           pose: { pos: [0, 0, 0], rot: [0, 0, 0] } },
       ],
+      // ---------------------------------------------------------------
+      // VECTOR — one parameter, three outputs. AIR_VEHICLE_PLAN.md phase 4.
+      //
+      // 0 is full hover (VTOL nozzles lit, hover loop) and 1 is full cruise
+      // (rear exhaust lit, engine loop). It drives the nacelle tilt, the plume
+      // crossfade and the audio crossfade TOGETHER, which is the whole reason
+      // it is one number: an aircraft that looks like it is hovering while it
+      // sounds like it is cruising is worse than one that does neither.
+      //
+      // MEASURED off the rig before any of these were chosen. All four
+      // `Wing_*_root` nodes are hinges whose local Z maps to the chassis's X —
+      // the lateral axis — so rotating about it tilts the pod fore and aft. The
+      // two plume cards on each pod sit exactly 90 degrees apart about that
+      // pivot, and at the AUTHORED pose the down nozzle is 24.6 degrees aft of
+      // vertical while the rear nozzle is 24.2 degrees above horizontal. They
+      // are two real nozzles on one pod, both present at all times — so the
+      // hover/cruise switch is the GLOW, and the tilt is a vectoring flourish
+      // on top of it rather than the thing doing the work.
+      // ---------------------------------------------------------------
+      vector: {
+        // Where the parameter comes from. FORWARD airspeed, not total speed —
+        // an aircraft sliding sideways at 30 m/s is not cruising.
+        cruiseSpeed: 32,     // m/s of forward speed at which vector reaches 1
+        // Rate-limited so it reads as machinery rather than as a slider being
+        // dragged. Roughly a second and a half, stop to stop.
+        rate: 0.7,           // 1/s
+        // Weight on the gear forces hover, whatever the speed says.
+        groundVector: 0,
+
+        // Nacelle tilt in DEGREES at [hover, cruise], per family, as a delta
+        // from the authored pose.
+        //
+        // MEASURED, and the measurement changed these. Each pod's two nozzles
+        // are perpendicular — 89.5 degrees apart on the front pods, 98 on the
+        // rear — so ONE rotation points the VTOL nozzle straight down AND the
+        // rear exhaust straight aft at the same time. That angle is −24.7 deg
+        // on the front pods (the two independent solutions agree to within half
+        // a degree: 24.7 and 24.2) and +4.6 on the rear.
+        //
+        // The consequence is worth stating plainly: THE PODS DO NOT NEED TO
+        // ROTATE for the nozzles to be right. One authored pose serves both
+        // configurations, which is why the plume crossfade is what actually
+        // sells hover-versus-cruise.
+        //
+        // And the swing has to stay SMALL, which is a rig limit rather than a
+        // taste call: `Wing_*_root` is the parent of the whole wing, not just
+        // the nacelle, so rotating it rotates the AEROFOIL TOO. Looked at over
+        // a sweep, 25 degrees stops reading as "the pods are vectoring" and
+        // starts reading as "the wing is drooping". Centred on the AUTHORED
+        // pose rather than on the computed alignment above, because the authored
+        // pose is the one the artist composed to look right and the plume cards
+        // are glowing quads whose exact aim nobody can see.
+        //
+        // A real VTOL pod rotation wants a `ref_pod_*` node authored BETWEEN the
+        // wing and the engine. Until that exists this is the honest amount.
+        wingFront: [-10, 4],
+        wingRear: [-6, 3],
+        // Added asymmetrically from the roll and yaw command, so the engines
+        // are visibly doing the thing that is turning you. Small on purpose.
+        differential: 7,     // degrees at full command
+
+        // Emissive intensity on the CLONED glow materials — see the note in
+        // _measureVectorRig about why they must be cloned.
+        glowDown: 3.0,       // the VTOL nozzles, at hover
+        glowForward: 4.0,    // the rear exhaust, at cruise
+        // An OPACITY, not an intensity: hover_thrusters is a transparent card
+        // whose emissive is black, so it fades in and out rather than lighting
+        // up. Driving the wrong knob on it changed a number and rendered
+        // nothing — see _measureVectorRig.
+        glowHover: 0.85,     // the hover_thrusters card, at hover (0..1)
+        glowIdle: 0.0,       // everything, with the engines off
+
+        // Engine audio. The volumes are the loop gains at each end of the
+        // crossfade; the pitch rises with airspeed so a fast pass reads as one.
+        volHover: 0.5,
+        volEngine: 0.6,
+        rateBase: 0.85,      // playback rate at a standstill
+        rateSpan: 0.35,      // added by topSpeed
+      },
+
       // A 33 m aircraft framed by an 11 m boom is a close-up of a wing.
       thirdPerson: { dist: 38, lift: 9, minDist: 8, skin: 1.0, lerp: 4 },
 
@@ -3032,6 +3112,11 @@ export const ASSET_PATHS = {
     pistolShot2: '/UNSC/weapons/pistol/Pistol_shot2.mp3',
     pistolReload: '/UNSC/weapons/pistol/Pistol_reload.mp3',
     reload: '/UNSC/weapons/assault rifle/audio/assault-rifle-reload-1.mp3',
+    // Pelican engines. Two LOOPS crossfaded by the same `vector` parameter that
+    // turns the nacelles and lights the plumes — one number, three outputs, so
+    // the aircraft can never sound like it is in a configuration it is not in.
+    pelicanHover: '/UNSC/Air Vehicles/Pelican/Pelican_hover_loop.wav',
+    pelicanEngine: '/UNSC/Air Vehicles/Pelican/Pelican_engine_loop.wav',
     empty: '/UNSC/weapons/pistol/empty_sound.mp3',
   },
 };

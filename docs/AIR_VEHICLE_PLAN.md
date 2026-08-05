@@ -671,6 +671,21 @@ said third person "works pretty good", which is a sentence with a shape.**
    a 14.2 degree bank: the camera rolls about its own view axis, which points
    the opposite way to the hull's forward.
 
+5. **A and D were swapped.** `roll` carries the same handedness as a ground
+   vehicle's `steer` — positive is left, because +X is chassis left and A means
+   left everywhere else in the game — but the negation that turns that into a
+   bank angle was missing, so A rolled right and D rolled left.
+
+   Two things made it findable rather than a matter of opinion. The auto-bank
+   term was already correct, and the two are **summed into one angle**, so the
+   model contained two terms disagreeing about which way left is. And the
+   result was **asymmetric** — −30.2° holding A against +41.7° holding D —
+   because the manual term subtracted from the auto term on one side and added
+   on the other. It is ±41.7° now, with the automatic behaviour unchanged.
+
+   The pod differential had the same error: `roll − angVel.y`, where both terms
+   mean left when positive, so it cancelled in exactly the case it exists for.
+
 **Two integration notes worth keeping:**
 
 **In an aircraft the pilot's `yaw` is ABSOLUTE**, where in a ground vehicle it
@@ -751,10 +766,76 @@ that releasing the throttle at cruise costs 770 m to shed half your speed. That
 may be exactly the heavy, spacecraft-like feel wanted, or it may be too much;
 it is now a number on a panel rather than a thing nobody had looked at.
 
-### Phase 4 — Wings, plumes and engines
+### Phase 4 — Wings, plumes and engines ✅ DONE
 
-The `vector` parameter and everything it drives. Purely cosmetic, and only
-possible once there is real motion to drive it from.
+`Vehicle._measureVectorRig` / `updateVector`, `GameAudio.loop`, and the engine
+crossfade in `player.js`. One parameter — `vector`, 0 hover to 1 cruise — drives
+the pod tilt, the plume crossfade and the engine note together, so the aircraft
+can never sound like it is in a configuration it does not look like it is in.
+It comes from FORWARD airspeed (an aircraft sliding sideways at 30 m/s is not
+cruising), is forced to hover by weight on the gear, and is rate-limited so it
+reads as machinery.
+
+Pods and materials are **discovered, not listed** — anything matching
+`Wing_<family>_<side>_root` is a hinge — so a fifth pod costs an export and no
+code.
+
+**What the rig actually turned out to be, and it changed the design twice:**
+
+1. **The pods' two nozzles are perpendicular** — 89.5° apart on the front pods,
+   98° on the rear — so a SINGLE rotation points the VTOL nozzle straight down
+   *and* the rear exhaust straight aft. On the front pods that angle is −24.7°,
+   and the two independent solutions agree to within half a degree (24.7 and
+   24.2), which is what says it is real and not a coincidence. **The pods
+   therefore do not need to rotate at all for the nozzles to be correct.** One
+   authored pose serves both configurations, so the plume crossfade is what
+   actually sells hover-versus-cruise and the tilt is a flourish on top.
+
+2. **`Wing_*_root` is the parent of the whole wing, not just the nacelle**, so
+   rotating it rotates the AEROFOIL. Swept across 0 / −12 / −25 / −35°, the
+   25° pose stops reading as "the pods are vectoring" and starts reading as
+   "the wing is drooping". The swing is therefore small and centred on the
+   AUTHORED pose rather than on the computed alignment — the authored pose is
+   the one the artist composed to look right, and the plume cards are glowing
+   quads whose exact aim nobody can see.
+
+   **This is the Blender ask if a real VTOL pod rotation is wanted:** a
+   `ref_pod_*` node authored BETWEEN the wing and the engine. Until that exists,
+   ±10° is the honest amount.
+
+**Two bugs, and the second is the kind that hides:**
+
+1. **Glow materials must be cloned per vehicle.** `template.clone(true)` shares
+   them, so animating in place would light every Pelican on the map together.
+   The third time this project has met the same trap, after `ammodisplay.js`'s
+   digit atlas and the Warthog's brake lamps. Verified: zero materials shared
+   between the two spawned Pelicans.
+
+2. **`hover_thrusters` has emissive `#000000`.** It is a transparent
+   `MeshPhysicalMaterial`, so writing `emissiveIntensity` to it changed a number
+   and rendered *nothing at all* — a silent no-op that looked exactly like a
+   working crossfade. Which knob a material responds to is now decided per
+   material at clone time: `thrustglow_*` carry a real emissive (`#bdffff`) and
+   take intensity, `hover_thrusters` takes opacity.
+
+**Measured**, engines off → all cold; at hover → down nozzles 3.0, hover card
+0.85 opacity, rear exhaust 0; at cruise → rear exhaust 4.0, everything else 0;
+at 0.5 → all mid. In-game the parameter reached 1 at 58.7 m/s against a
+`cruiseSpeed` of 32, and both audio loops started on entry, crossfaded with the
+parameter and were released on exit.
+
+**Audio is owned by the controller, not by `Vehicle`** — deliberately.
+`Vehicle` takes a `world` and nothing else, and that narrow surface is what lets
+the physics be lifted onto the AIR tab with no Game in sight; handing it an
+audio system would cost that for one crossfade. `GameAudio.loop` is the one
+non-fire-and-forget path in that file, and it returns a handle because an engine
+runs for as long as the pilot is aboard. Live loops are tracked so a match
+teardown can stop them: a loop never ends on its own, and one left running
+across a RESTART MATCH is an engine nobody can find to switch off.
+
+**Still not voiced:** every Pelican except the one the player is in. Positional
+engine audio for the whole map is a different feature and wants a pooled,
+distance-attenuated path like `playShotAt`, not two more loops per airframe.
 
 ### Phase 5 — Gear, hatch and buttons
 
